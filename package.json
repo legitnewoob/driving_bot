@@ -2,10 +2,10 @@
   "name": "whatsapp-driving-bot",
   "version": "1.0.0",
   "description": "WhatsApp bot for driving test bookings",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node app.js",
+    "dev": "nodemon app.js"
   },
   "dependencies": {
     "axios": "^1.4.0",

@@ -68,8 +68,9 @@ class WebhookController {
             
             // Fixed typo: messageContent instead of mestsageContent
             const aiResponse = await aiService.getResponse(messageContent, session.conversationHistory, from);
+            console.log("aiResponse" , aiResponse);
             const { hasBookingAction, bookingData, responseText } = aiService.extractActions(aiResponse);
-            
+            console.log(hasBookingAction , bookingData , responseText);
             if (responseText) {
                 await whatsappService.sendTextMessage(from, responseText);
             }
@@ -118,7 +119,7 @@ class WebhookController {
                 `💰 Price: ${booking.lessonPrice}`,
                 "",
                 "📧 A calendar invitation has been sent to your instructor.",
-                "📞 You'll receive a confirmation call 24 hours before your lesson.",
+                // "📞 You'll receive a confirmation call 24 hours before your lesson.",
                 "",
                 "Good luck with your driving lesson! 🚗💨"
             ].join('\n');

@@ -2,11 +2,14 @@ const express = require('express');
 // const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 // const testRoutes = require('./src/routes/test');
+const connectDB = require("./src/config/database");
 
 const app = express();
 
 // Middleware
 app.use(express.json());
+connectDB();
+
 
 // Routes
 // app.use('/auth', authRoutes);

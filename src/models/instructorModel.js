@@ -39,7 +39,7 @@ function getAvailableDates() {
     const dates = [];
     const today = new Date();
     
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= 30; i++) {
         const date = new Date(today);
         date.setDate(today.getDate() + i);
         
@@ -48,7 +48,7 @@ function getAvailableDates() {
             dates.push(date.toISOString().split('T')[0]);
         }
         
-        if (dates.length >= 7) break;
+        // if (dates.length >= 7) break;
     }
     
     return dates;

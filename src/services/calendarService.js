@@ -22,7 +22,8 @@ class CalendarService {
             if (isNaN(startDateTime.getTime())) {
                 console.error(`❌ Invalid date/time format: ${date} ${time}`);
                 return { isAvailable: false, error: 'Invalid date/time format' };
-            }
+            }  
+            
 
             const response = await calendar.events.list({
                 calendarId: instructor.googleCalendarId,
@@ -33,6 +34,8 @@ class CalendarService {
             });
 
             const events = response.data.items || [];
+            // console.log("EVENTS" , events);
+
             const conflictingEvents = events.filter(event => {
                 if (!event.start || !event.end) return false;
                 

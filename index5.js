@@ -713,7 +713,7 @@ async function handleIncomingMessage(from, messageContent) {
         
         // Extract actions from response
         const { hasBookingAction, bookingData, responseText } = extractActions(aiResponse);
-        
+        console.log(hasBookingAction , bookingData , responseText);
         // Send the response text to user
         if (responseText) {
             console.log(`📤 Sending response to user: "${responseText}"`);

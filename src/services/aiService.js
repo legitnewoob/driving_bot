@@ -1,8 +1,13 @@
 const openai = require("../config/openai");
 const calendarService = require("./calendarService");
 const dateTimeService = require("./dateTimeService");
+const dateTimeUtils = require("../utils/dateTimeUtils");
 
 class AIService {
+  constructor() {
+    // temporary store keyed by user phone number
+    this.pendingContext = {};
+  }
   async getSystemPrompt(instructorId) {
     const busySlots = await calendarService.getCalendarContext(instructorId);
 
@@ -13,6 +18,7 @@ class AIService {
         .join("\n")}`;
     }
 
+    // console.log("BUSY SLOTS" , busySlotsText);
     return `You are an AI assistant for Raj Agrawal's Driving School WhatsApp bot. Your role is to:
 
 1. Have natural conversations with users about booking driving lessons
@@ -29,7 +35,22 @@ IMPORTANT BOOKING INFORMATION:
 - Each lesson is 1 hour long
 - Booking must be at least 24 hours in advance
 
-${busySlotsText}
+
+IMPORTANT: The system will automatically check availability when users mention dates and times. You will receive availability information to help guide the conversation. Use this information to:
+- Confirm if requested slots are available
+- Suggest alternative times when requested slots are busy
+- Guide users toward available options
+
+CONVERSATION RULES:
+1. Be friendly, professional, and helpful
+2. Ask follow-up questions to clarify user needs
+3. If user wants to book, collect: preferred date, time, and lesson type
+4. Use the availability information provided by the system to guide users
+5. If a time slot is not available, suggest alternative times from the available options
+6. Confirm all details before finalizing booking
+7. Handle objections and questions naturally
+8. If you need to perform a booking action, end your message with: [ACTION:BOOK] followed by booking details in JSON format
+
 
 BOOKING JSON FORMAT:
 [ACTION:BOOK]
@@ -41,23 +62,34 @@ BOOKING JSON FORMAT:
   "specialRequests": "any special requirements"
 }
 
-Current date: ${new Date().toISOString().split("T")[0]}`;
+Current date: ${new Date().toISOString().split("T")[0]}
+Remember to be conversational and not robotic. The system handles availability checking automatically, so focus on guiding users through the booking process naturally.`;
   }
 
   async getResponse(userMessage, conversationHistory, userPhone) {
     try {
-      const dateTimeInfo =
+      const dateTimeInfoUnchecked =
         dateTimeService.extractDateTimeFromMessage(userMessage);
-
+      console.log(this.pendingContext);
       let enhancedMessage = userMessage;
-
+      console.log(dateTimeInfoUnchecked);
+      const dateTimeInfo = dateTimeUtils.sanitize(dateTimeInfoUnchecked, this.pendingContext[userPhone]);
+      console.log(dateTimeInfo);
+      
       if (dateTimeInfo.hasDateTime && dateTimeInfo.date && dateTimeInfo.time) {
+        // console.log("IM HERE");
+        // Save the context for this user
+        this.pendingContext[userPhone] = {
+          date: dateTimeInfo.date || this.pendingContext[userPhone]?.date,
+          time: dateTimeInfo.time || this.pendingContext[userPhone]?.time,
+        };
+
         const availabilityInfo = await this.getAvailabilityInfo(
           dateTimeInfo.date,
           dateTimeInfo.time,
           process.env.PHONE_NUMBER_ID
         );
-
+        console.log("availabilityinfo" , availabilityInfo);
         if (availabilityInfo.isValidRequest) {
           enhancedMessage += `\n\n[SYSTEM AVAILABILITY INFO for ${
             dateTimeInfo.date
@@ -74,7 +106,7 @@ Current date: ${new Date().toISOString().split("T")[0]}`;
 - All available times: ${availabilityInfo.allAvailableTimes.join(", ")}]`;
         }
       }
-
+      console.log(enhancedMessage);
       const systemPrompt = await this.getSystemPrompt(
         process.env.PHONE_NUMBER_ID
       );

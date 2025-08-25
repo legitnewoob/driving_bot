@@ -156,6 +156,83 @@ class CalendarService {
             throw error;
         }
     }
+
+     /**
+     * Update an existing calendar event
+     * @param {string} eventId - ID of the event to update
+     * @param {Object} bookingData - Updated booking data
+     * @returns {Promise<Object>} Updated event data
+     */
+    async updateEvent(eventId, bookingData) {
+        try {
+            oauth2Client.setCredentials({
+                refresh_token: process.env.REMOVED_TOKEN
+            });
+
+            const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
+            const startDateTime = new Date(`${bookingData.date}T${bookingData.time}:00`);
+            const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+
+            const event = {
+                summary: `Driving Lesson - ${bookingData.lessonType} - ${bookingData.userPhone}`,
+                description: `Driving lesson booking\nPhone: ${bookingData.userPhone}\nLesson Type: ${bookingData.lessonType}\nSpecial Requests: ${bookingData.specialRequests || 'None'}`,
+                start: {
+                    dateTime: startDateTime.toISOString(),
+                    timeZone: 'America/New_York',
+                },
+                end: {
+                    dateTime: endDateTime.toISOString(),
+                    timeZone: 'America/New_York',
+                },
+                attendees: [
+                    { email: instructor.googleCalendarId }
+                ],
+            };
+
+            const response = await calendar.events.update({
+                calendarId: instructor.googleCalendarId,
+                eventId: eventId,
+                resource: event,
+            });
+
+            console.log(`✅ Calendar event updated: ${eventId}`);
+            return response.data;
+        } catch (error) {
+            console.error('❌ Error updating calendar event:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete a calendar event
+     * @param {string} eventId - ID of the event to delete
+     * @returns {Promise<Object>} Result of the deletion operation
+     */
+    async deleteEvent(eventId) {
+        try {
+            if (!eventId) {
+                throw new Error('Event ID is required for deletion');
+            }
+
+            oauth2Client.setCredentials({
+                refresh_token: process.env.REMOVED_TOKEN
+            });
+
+            const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
+            
+            const response = await calendar.events.delete({
+                calendarId: instructor.googleCalendarId,
+                eventId: eventId
+            });
+
+            console.log(`✅ Calendar event deleted: ${eventId}`);
+            return { success: true, eventId };
+        } catch (error) {
+            console.error('❌ Error deleting calendar event:', error.message);
+            throw error;
+        }
+    }
+
 }
 
 module.exports = new CalendarService();

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const os = require('os');
+const { basicAuth } = require('../middleware/auth');
 
 // Basic system information
 const startTime = Date.now();
@@ -8,7 +9,7 @@ const startTime = Date.now();
 /**
  * Health endpoint to monitor application status and performance
  */
-router.get('/health', (req, res) => {
+router.get('/health', basicAuth, (req, res) => {
   const uptime = Math.floor((Date.now() - startTime) / 1000); // in seconds
 
   const healthData = {
@@ -48,8 +49,7 @@ router.get('/health', (req, res) => {
   const statusColor = healthData.status === 'UP' ? 'green' : 'red';
   const memoryUsagePercent = parseInt(healthData.system.memory.usage);
   const memoryBarColor = memoryUsagePercent < 70 ? 'green' : memoryUsagePercent < 90 ? 'orange' : 'red';
-  const refreshInterval = 1000; // 10 seconds
-
+  const refreshInterval = 1000; // 1 second
   const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -305,7 +305,7 @@ router.get('/health', (req, res) => {
     <div class="auto-refresh">
       <div>
         <span class="refresh-indicator"></span>
-        Auto-refreshing every ${refreshInterval / 1000} seconds
+        Auto-refreshing every ${refreshInterval / 1000} second${refreshInterval / 1000 > 1 ? 's' : ''}
       </div>
       <div>Last updated: <span id="lastRefresh">${new Date().toLocaleTimeString()}</span></div>
     </div>
@@ -319,7 +319,8 @@ router.get('/health', (req, res) => {
 </body>
 </html>
   `;
-
+  
+  // console.log('Rendering health status page with data:', healthData);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });

@@ -4,24 +4,41 @@ const {
   getInstructor,
 } = require("../models/instructorModel");
 const Booking = require("../models/bookingModel");
+const { customAlphabet } = require("nanoid");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
-    return await Booking.find({ userPhone, status: "confirmed" }).sort({
+    return await Booking.find({ userPhone , status : "confirmed"}).sort({
       date: 1,
       time: 1,
     });
   }
 
   async cancelBooking(bookingId) {
-    const booking = await Booking.findById(bookingId);
-    if (!booking) throw new Error("Booking not found");
+    try {
+      // Find by custom bookingId field instead of _id
+      const booking = await Booking.findOne({ bookingId });
 
-    await calendarService.deleteEvent(booking.calendarEventId);
-    booking.status = "cancelled";
-    await booking.save();
+      if (!booking) {
+        return null; // signal not found
+      }
 
-    return booking;
+      // Delete calendar event (optional, catch if external API fails)
+      try {
+        await calendarService.deleteEvent(booking.calendarEventId);
+      } catch (err) {
+        console.error("Calendar deletion failed:", err.message);
+        // continue cancellation even if calendar event deletion fails
+      }
+
+      booking.status = "cancelled";
+      await booking.save();
+
+      return booking;
+    } catch (err) {
+      console.error("Cancel booking error:", err);
+      throw new Error("Internal server error while cancelling booking.");
+    }
   }
   async validateBooking(bookingData) {
     console.log(
@@ -43,6 +60,7 @@ class BookingService {
     if (errors.length > 0) return errors;
 
     // Validate date
+    console.log(availableDates);
     if (!availableDates.includes(bookingData.date)) {
       errors.push(
         "Date is not available. Please choose from available weekdays."
@@ -135,7 +153,11 @@ class BookingService {
 
     const calendarEvent = await calendarService.createEvent(bookingData);
 
+    const nanoid = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4); // no O/0/I/1 confusion
+    const bookingId = `DL-${nanoid()}`;
+    
     const newBooking = await Booking.create({
+      bookingId : bookingId,
       userPhone: bookingData.userPhone,
       date: bookingData.date,
       time: bookingData.time,

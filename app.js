@@ -1,5 +1,5 @@
 const express = require('express');
-// const authRoutes = require('./src/routes/auth');
+const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 // const testRoutes = require('./src/routes/test');
 const connectDB = require("./src/config/database");
@@ -14,6 +14,7 @@ connectDB();
 // Routes
 // app.use('/auth', authRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/auth' , authRoutes);
 // app.use('/test', testRoutes);
 
 // Root endpoint

@@ -24,8 +24,8 @@ jobs:
 
       - name: Build and push App image
         run: |
-          docker build -t yourusername/driving_bot_app:latest ./ 
-          docker push yourusername/driving_bot_app:latest
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/driving_bot_app:latest ./ 
+          docker push ${{ secrets.DOCKER_USERNAME }}/driving_bot_app:latest
 
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v0.1.7
@@ -35,5 +35,5 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /home/rajagrawal/driving_bot
-            docker pull yourusername/driving_bot_app:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/driving_bot_app:latest
             docker compose -f docker-compose.yml up -

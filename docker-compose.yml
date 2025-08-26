@@ -9,7 +9,6 @@ services:
     ports:
       - "3000" # Exposing this port is optional if only accessed via Nginx
     volumes:
-      - ./logs:/usr/src/app/logs
       - ./logger.js:/usr/src/app/logger.js
     networks:
       - app_net # All services will share this network

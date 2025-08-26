@@ -1,0 +1,44 @@
+version: "3.9"
+services:
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./logging/loki-config.yaml:/etc/loki/local-config.yaml
+      - ./logging/loki/wal:/wal
+      - ./logging/loki/chunks:/loki/chunks
+    networks:
+      - logging_net
+
+  promtail:
+    image: grafana/promtail:2.8.0
+    container_name: promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # ⚡ important!
+      - ./logging/promtail-config.yaml:/etc/promtail/config.yaml
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      - logging_net
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    networks:
+      - logging_net
+
+networks:
+  logging_net:
+    driver: bridge
+volumes:
+  grafana-data:

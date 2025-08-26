@@ -1,0 +1,78 @@
+# version: "3.9"
+# services:
+#   app:
+#     build: .
+#     container_name: driving_bot_app
+#     restart: always
+#     ports:
+#       - "3000"
+#     volumes:
+#       - ./logs:/usr/src/app/logs
+#       - ./logger.js:/usr/src/app/logger.js
+#     command: sh -c "node server.js >> /usr/src/app/logs/app.log 2>&1"
+
+#   nginx:
+#     image: nginx:latest
+#     container_name: driving_bot_nginx
+#     restart: always
+#     ports:
+#       - "80:80"
+#       - "443:443"
+#     volumes:
+#       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+#       - ./nginx/ssl:/etc/nginx/ssl:ro
+     
+# docker-compose.yml for driving_bot_app and nginx
+
+version: "3.9"
+
+services:
+  # Your Node.js application service
+  app:
+    build: .
+    container_name: driving_bot_app
+    restart: always
+    # Note: When behind a reverse proxy like Nginx, you typically don't need to expose the port to the host.
+    # Nginx will handle the traffic. If you still need direct access during development, you can use "3000:3000".
+    ports:
+      - "3000"
+    volumes:
+      - ./logs:/usr/src/app/logs
+      - ./logger.js:/usr/src/app/logger.js
+    # --- NETWORKING CONFIGURATION ---
+    # Connects the app to its internal network and the shared logging network
+    networks:
+      - default
+      - logging_net
+
+  # Nginx reverse proxy service
+  nginx:
+    image: nginx:latest
+    container_name: driving_bot_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    # --- NETWORKING CONFIGURATION ---
+    # Connects Nginx to the same networks so it can proxy requests to the app
+    # and so its logs can be scraped by Promtail.
+    networks:
+      - default
+      - logging_net
+    # Depends on the app service to ensure the app starts before Nginx
+    depends_on:
+      - app
+
+# This top-level section defines the networks used by the services above.
+networks:
+  # This is the default, internal network for your application and nginx.
+  default:
+    driver: bridge
+
+  # This defines the shared logging network as "external",
+  # meaning it was created by another docker-compose file (your logging stack).
+  logging_net:
+    external: true

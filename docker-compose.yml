@@ -1,11 +1,19 @@
 version: "3.9"
+
 services:
+  # --- Your Application Services ---
   app:
     build: .
     container_name: driving_bot_app
     restart: always
     ports:
-      - "3000"
+      - "3000" # Exposing this port is optional if only accessed via Nginx
+    volumes:
+      - ./logs:/usr/src/app/logs
+      - ./logger.js:/usr/src/app/logger.js
+    networks:
+      - app_net # All services will share this network
+
 
   nginx:
     image: nginx:latest
@@ -17,3 +25,54 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    networks:
+      - app_net
+
+  # --- Your Logging Services ---
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./logging/loki-config.yaml:/etc/loki/local-config.yaml
+      - ./logging/loki/wal:/wal
+      - ./logging/loki/chunks:/loki/chunks
+    networks:
+      - app_net
+
+  promtail:
+    image: grafana/promtail:2.8.0
+    container_name: promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./logging/promtail-config.yaml:/etc/promtail/config.yaml
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      - app_net
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    networks:
+      - app_net
+
+# Define the single network that all services will use
+networks:
+  app_net:
+    driver: bridge
+
+# Define the persistent volume for Grafana data
+volumes:
+  grafana-data:

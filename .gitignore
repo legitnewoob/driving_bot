@@ -1,3 +1,4 @@
 node_modules
 .env
 logging/loki/wal/**
+logging/loki/chunks/**

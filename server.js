@@ -1,10 +1,6 @@
 require('dotenv').config();
 const app = require('./app');
 
-const logger = require('./logger');
-
-logger.info('Server started');
-logger.error('Something went wrong');
 
 const PORT = process.env.PORT || 3000;
 

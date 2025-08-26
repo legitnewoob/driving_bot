@@ -56,8 +56,7 @@ services:
     container_name: grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
-    ports:
-      - "3001:3000"
+    ports: []
     volumes:
       - grafana-data:/var/lib/grafana
     depends_on:

@@ -417,7 +417,7 @@ class AIService {
     // console.log("AIRESPONSE" , aiResponse);
     // Match any action marker like [ACTION:BOOK], [ACTION:UPDATE], [ACTION:CANCEL], [ACTION:SHOW]
     const actionMatch = aiResponse.match(
-      /\[ACTION:(BOOK|UPDATE|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\]\s*({.*?})?/s
+      /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\]\s*({.*?})?/s
     );
     // console.log("actionMatch", actionMatch[2]);
     if (actionMatch) {
@@ -431,7 +431,7 @@ class AIService {
 
         // Remove action markup from user-facing text
         result.responseText = aiResponse
-          .replace(/\[ACTION:(BOOK|UPDATE|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\].*$/s, "")
+          .replace(/\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\].*$/s, "")
           .trim();
       } catch (error) {
         console.error("Error parsing action JSON:", error);

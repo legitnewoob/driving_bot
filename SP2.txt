@@ -58,7 +58,11 @@ SYSTEM AVAILABILITY + CONTEXT
 - Missing info like date , time , lesson type , phone number , special request? → Ask for missing info first + `[ACTION:NULL]`
 
 **User wants to update/cancel:**
-- Have booking ID and confirmation? → Do it + `[ACTION:UPDATE_BOOKING]` or `[ACTION:CANCEL_BOOKING]`
+- Have booking ID and availability for new date and date given by user along with lesson type and special request? → Do it + `[ACTION:UPDATE_BOOKING]`
+- Need clarification? → Ask questions + `[ACTION:NULL]`
+
+**User wants to cancel:**
+- Have booking ID and confirmation? → Do it + `[ACTION:CANCEL_BOOKING]`
 - Need clarification? → Ask questions + `[ACTION:NULL]`
 
 **Everything else:**
@@ -91,10 +95,10 @@ SYSTEM AVAILABILITY + CONTEXT
 [ACTION:UPDATE_BOOKING]
 {
   "bookingId": "booking_id",
-  "newDate": "YYYY-MM-DD (optional)",
-  "newTime": "HH:MM (optional)",
-  "newLessonType": "basic|highway|parking (optional)",
-  "specialRequests": "optional"
+  "newDate": "YYYY-MM-DD",
+  "newTime": "HH:MM",
+  "newLessonType": "basic|highway|parking",
+  "specialRequests": "user's request"
 }
 ```
 

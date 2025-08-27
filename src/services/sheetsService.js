@@ -55,6 +55,12 @@ class SheetsService {
      */
     async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create') {
         try {
+            console.log(`📊 Updating learner record - SpreadsheetID: ${spreadsheetId}, Phone: ${learnerData.phoneNumber}, Action: ${action}`);
+            
+            if (!spreadsheetId) {
+                throw new Error('Spreadsheet ID is required but not provided');
+            }
+
             await this.initializeCredentials();
 
             const learnerRow = await this.findLearnerRow(spreadsheetId, learnerData.phoneNumber);
@@ -64,13 +70,17 @@ class SheetsService {
 
             if (learnerRow.exists) {
                 // Update existing learner
+                console.log(`👤 Updating existing learner at row ${learnerRow.rowIndex}`);
                 rowData = await this.buildUpdatedRowData(learnerRow.data, bookingData, action);
                 range = `A${learnerRow.rowIndex}:I${learnerRow.rowIndex}`;
             } else {
                 // Create new learner record
+                console.log(`👤 Creating new learner record at row ${learnerRow.nextEmptyRow}`);
                 rowData = await this.buildNewRowData(learnerData, bookingData);
                 range = `A${learnerRow.nextEmptyRow}:I${learnerRow.nextEmptyRow}`;
             }
+
+            console.log(`📝 Writing to range: ${range}, Data:`, rowData);
 
             const response = await this.sheets.spreadsheets.values.update({
                 spreadsheetId,
@@ -157,13 +167,16 @@ class SheetsService {
      * Get instructor's spreadsheet ID from environment or config
      */
     getInstructorSpreadsheetId(instructorId) {
-        // You can store this in your instructor model or environment variables
-        const spreadsheetMap = {
-            [process.env.PHONE_NUMBER_ID]: process.env.GOOGLE_SPREADSHEET_ID,
-            // Add more instructors as needed
-        };
+        // Always return the main spreadsheet ID for now
+        const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
         
-        return spreadsheetMap[instructorId] || process.env.GOOGLE_SPREADSHEET_ID;
+        if (!spreadsheetId) {
+            console.error('❌ GOOGLE_SPREADSHEET_ID not found in environment variables');
+            throw new Error('Google Spreadsheet ID not configured');
+        }
+        
+        console.log(`📊 Using spreadsheet ID: ${spreadsheetId} for instructor: ${instructorId}`);
+        return spreadsheetId;
     }
 
     /**

@@ -1,4 +1,5 @@
 const calendarService = require("./calendarService");
+const sheetsService = require("./sheetsService"); // Add this import
 const {
   getAvailableDates,
   getInstructor,
@@ -6,11 +7,10 @@ const {
 const Booking = require("../models/bookingModel");
 const { customAlphabet } = require("nanoid");
 
-
 class BookingService {
   async getBookingsByUser(userPhone) {
     console.log("Fetching bookings for user:", userPhone);
-    return await Booking.find({ userPhone , status : ["confirmed" , "rescheduled"]}).sort({
+    return await Booking.find({ userPhone, status: ["confirmed", "rescheduled"] }).sort({
       date: 1,
       time: 1,
     });
@@ -33,6 +33,26 @@ class BookingService {
         // continue cancellation even if calendar event deletion fails
       }
 
+      // Update Google Sheets
+      try {
+        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
+        const learnerName = await sheetsService.getLearnerName(booking.userPhone, booking);
+        
+        await sheetsService.updateLearnerRecord(
+          spreadsheetId,
+          {
+            phoneNumber: booking.userPhone,
+            name: learnerName,
+            location: booking.location || ''
+          },
+          booking,
+          'cancel'
+        );
+      } catch (err) {
+        console.error("Sheets update failed during cancellation:", err.message);
+        // Continue with cancellation even if sheets update fails
+      }
+
       booking.status = "cancelled";
       await booking.save();
 
@@ -42,6 +62,7 @@ class BookingService {
       throw new Error("Internal server error while cancelling booking.");
     }
   }
+
   async validateBooking(bookingData) {
     console.log(
       "🔍 Validating booking data:",
@@ -119,10 +140,10 @@ class BookingService {
     return errors;
   }
 
-  async rescheduleBooking(from , bookingData) {
+  async rescheduleBooking(from, bookingData) {
     // Use findOne instead of findById
-    const { newDate, newTime , bookingId} = bookingData;
-    console.log("From user:", from , "bookingData:", bookingData);
+    const { newDate, newTime, bookingId } = bookingData;
+    console.log("From user:", from, "bookingData:", bookingData);
     const booking = await Booking.findOne({ bookingId: bookingId });
 
     if (!booking) throw new Error("Booking not found");
@@ -139,6 +160,26 @@ class BookingService {
     // Update in calendar
     await calendarService.updateEvent(booking.calendarEventId, bookingData, from);
 
+    // Update Google Sheets
+    try {
+      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
+      const learnerName = await sheetsService.getLearnerName(from, booking);
+      
+      await sheetsService.updateLearnerRecord(
+        spreadsheetId,
+        {
+          phoneNumber: from,
+          name: learnerName,
+          location: booking.location || ''
+        },
+        bookingData,
+        'reschedule'
+      );
+    } catch (err) {
+      console.error("Sheets update failed during rescheduling:", err.message);
+      // Continue with rescheduling even if sheets update fails
+    }
+
     // Update in Mongo
     booking.date = newDate;
     booking.time = newTime;
@@ -147,6 +188,7 @@ class BookingService {
 
     return booking;
   }
+
   async createBooking(bookingData) {
     const validationErrors = await this.validateBooking(bookingData);
 
@@ -160,7 +202,7 @@ class BookingService {
     const bookingId = `DL-${nanoid()}`;
     
     const newBooking = await Booking.create({
-      bookingId : bookingId,
+      bookingId: bookingId,
       userPhone: bookingData.userPhone,
       date: bookingData.date,
       time: bookingData.time,
@@ -174,6 +216,27 @@ class BookingService {
     const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
     const lessonPrice = instructor.rates[bookingData.lessonType];
 
+    // Update Google Sheets
+    try {
+      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(process.env.PHONE_NUMBER_ID);
+      const learnerName = await sheetsService.getLearnerName(bookingData.userPhone, bookingData);
+      
+      await sheetsService.updateLearnerRecord(
+        spreadsheetId,
+        {
+          phoneNumber: bookingData.userPhone,
+          name: learnerName,
+          location: bookingData.location || ''
+        },
+        bookingData,
+        'create'
+      );
+    } catch (err) {
+      console.error("Sheets update failed during booking creation:", err.message);
+      // Continue with booking creation even if sheets update fails
+      // You might want to add this to a retry queue
+    }
+
     return {
       booking: newBooking,
       calendarEvent,
@@ -181,6 +244,43 @@ class BookingService {
       lessonPrice,
       bookingData,
     };
+  }
+
+  /**
+   * Mark a booking as completed (useful for post-lesson updates)
+   */
+  async completeBooking(bookingId) {
+    try {
+      const booking = await Booking.findOne({ bookingId });
+      if (!booking) return null;
+
+      // Update Google Sheets
+      try {
+        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
+        const learnerName = await sheetsService.getLearnerName(booking.userPhone, booking);
+        
+        await sheetsService.updateLearnerRecord(
+          spreadsheetId,
+          {
+            phoneNumber: booking.userPhone,
+            name: learnerName,
+            location: booking.location || ''
+          },
+          booking,
+          'complete'
+        );
+      } catch (err) {
+        console.error("Sheets update failed during completion:", err.message);
+      }
+
+      booking.status = "completed";
+      await booking.save();
+
+      return booking;
+    } catch (err) {
+      console.error("Complete booking error:", err);
+      throw new Error("Internal server error while completing booking.");
+    }
   }
 }
 

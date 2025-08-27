@@ -34,6 +34,6 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /home/agrawalraj918/driving_bot
+            cd /home/agrawalraj918/Projects/driving_bot
             docker pull ${{ secrets.DOCKER_USERNAME }}/driving_bot_app:latest
             docker compose -f docker-compose.yml up -d

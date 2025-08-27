@@ -124,7 +124,7 @@ class WebhookController {
   }
 
   async updateBooking(from, bookingData) {
-    const updated = await bookingService.updateBooking(from, bookingData);
+    const updated = await bookingService.rescheduleBooking(from, bookingData);
 
     if (!updated) {
       return whatsappService.sendTextMessage(
@@ -135,7 +135,7 @@ class WebhookController {
 
     await whatsappService.sendTextMessage(
       from,
-      `✅ Booking updated to ${bookingData.date} at ${bookingData.time}`
+      `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`
     );
   }
 
@@ -160,7 +160,7 @@ class WebhookController {
           `⚠️ No booking found with ID: ${bookingId}`
         );
       }
-
+      
       if (booking.status === "cancelled") {
         return whatsappService.sendTextMessage(
           from,
@@ -184,6 +184,7 @@ class WebhookController {
 
   async processBooking(from, bookingData) {
     try {
+      console.log("📝 Processing booking for:", from, bookingData);
       const booking = await bookingService.createBooking(bookingData);
       console.log(booking);
       const confirmationMessage = [
@@ -317,7 +318,7 @@ class WebhookController {
             await this.showBookings(from);
             break;
 
-          case "update":
+          case "update_booking":
             await this.updateBooking(from, bookingData);
             break;
 

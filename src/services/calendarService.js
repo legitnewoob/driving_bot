@@ -163,19 +163,19 @@ class CalendarService {
      * @param {Object} bookingData - Updated booking data
      * @returns {Promise<Object>} Updated event data
      */
-    async updateEvent(eventId, bookingData) {
+    async updateEvent(eventId, bookingData , fromUser) {
         try {
             oauth2Client.setCredentials({
                 refresh_token: process.env.GOOGLE_REFRESH_TOKEN
             });
 
             const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
-            const startDateTime = new Date(`${bookingData.date}T${bookingData.time}:00`);
+            const startDateTime = new Date(`${bookingData.newDate}T${bookingData.newTime}:00`);
             const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
 
             const event = {
-                summary: `Driving Lesson - ${bookingData.lessonType} - ${bookingData.userPhone}`,
-                description: `Driving lesson booking\nPhone: ${bookingData.userPhone}\nLesson Type: ${bookingData.lessonType}\nSpecial Requests: ${bookingData.specialRequests || 'None'}`,
+                summary: `Driving Lesson - ${bookingData.newLessonType} - ${fromUser}`,
+                description: `Driving lesson booking\nPhone: ${fromUser}\nLesson Type: ${bookingData.newLessonType}\nSpecial Requests: ${bookingData.specialRequests || 'None'}`,
                 start: {
                     dateTime: startDateTime.toISOString(),
                     timeZone: 'America/New_York',
@@ -196,6 +196,7 @@ class CalendarService {
             });
 
             console.log(`✅ Calendar event updated: ${eventId}`);
+            console.log("Updated Event Data:", response.data);
             return response.data;
         } catch (error) {
             console.error('❌ Error updating calendar event:', error.message);

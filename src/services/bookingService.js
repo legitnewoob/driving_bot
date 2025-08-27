@@ -6,9 +6,11 @@ const {
 const Booking = require("../models/bookingModel");
 const { customAlphabet } = require("nanoid");
 
+
 class BookingService {
   async getBookingsByUser(userPhone) {
-    return await Booking.find({ userPhone , status : "confirmed"}).sort({
+    console.log("Fetching bookings for user:", userPhone);
+    return await Booking.find({ userPhone , status : ["confirmed" , "rescheduled"]}).sort({
       date: 1,
       time: 1,
     });
@@ -117,8 +119,12 @@ class BookingService {
     return errors;
   }
 
-  async rescheduleBooking(bookingId, newDate, newTime) {
-    const booking = await Booking.findById(bookingId);
+  async rescheduleBooking(from , bookingData) {
+    // Use findOne instead of findById
+    const { newDate, newTime , bookingId} = bookingData;
+    console.log("From user:", from , "bookingData:", bookingData);
+    const booking = await Booking.findOne({ bookingId: bookingId });
+
     if (!booking) throw new Error("Booking not found");
 
     // Check new slot availability
@@ -131,10 +137,7 @@ class BookingService {
       throw new Error(validationErrors.join(". "));
 
     // Update in calendar
-    await calendarService.updateEvent(booking.calendarEventId, {
-      date: newDate,
-      time: newTime,
-    });
+    await calendarService.updateEvent(booking.calendarEventId, bookingData, from);
 
     // Update in Mongo
     booking.date = newDate;

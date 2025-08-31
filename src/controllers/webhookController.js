@@ -6,10 +6,11 @@ const {
   updateUserSession,
   getInstructor,
 } = require("../models/instructorModel");
+const timezoneUtils = require("../utils/timezoneUtils");
 
 class WebhookController {
   /* ========== HELPER METHOD ========== */
-  
+
   clearUserConversationHistoryAndContext(from) {
     const session = getUserSession(from);
     session.conversationHistory = [];
@@ -29,29 +30,34 @@ class WebhookController {
         from,
         "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬"
       );
-      
+
       // Clear conversation history and pending context after showing empty bookings
       this.clearUserConversationHistoryAndContext(from);
       return;
     }
 
     // Sort bookings by date (earliest first)
+    // const sortedBookings = bookings.sort(
+    //   (a, b) => new Date(a.date) - new Date(b.date)
+    // );
     const sortedBookings = bookings.sort(
-      (a, b) => new Date(a.date) - new Date(b.date)
+      (a, b) =>
+        timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
     );
-    const now = new Date();
+
+    // const now = new Date();
+    const nowStr = timezoneUtils.getCurrentDateString();
+    const now = timezoneUtils.getCurrentDate(); // actual Date object in timezone
 
     let message = `*🗓️ YOUR BOOKINGS* (${sortedBookings.length})\n`;
     message += "━━━━━━━━━━━━━━━━━\n\n";
 
     sortedBookings.forEach((booking, index) => {
       const bookingId = booking.bookingId;
-      const date = new Date(booking.date);
-      const isToday = date.toDateString() === now.toDateString();
-      const isTomorrow =
-        date.toDateString() ===
-        new Date(now.getTime() + 86400000).toDateString();
-      const isPast = date < now && !isToday;
+      const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
+      const isToday = timezoneUtils.isToday(dateStr);
+      const isTomorrow = timezoneUtils.isTomorrow(dateStr);
+      const isPast = timezoneUtils.toTimezone(booking.date) < now && !isToday;
 
       // Smart date formatting
       let dateDisplay;
@@ -60,11 +66,10 @@ class WebhookController {
       } else if (isTomorrow) {
         dateDisplay = "⭐ *TOMORROW*";
       } else {
-        const formattedDate = date.toLocaleDateString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-        });
+        const formattedDate = timezoneUtils.formatDate(
+          booking.date,
+          "ddd, MMM D"
+        );
         dateDisplay = isPast ? `✅ ${formattedDate}` : `📅 ${formattedDate}`;
       }
 
@@ -103,7 +108,9 @@ class WebhookController {
 
     // Add helpful footer
     const upcomingCount = sortedBookings.filter(
-    (b) => new Date(b.date) >= now && (b.status === "confirmed" || b.status === "rescheduled")
+      (b) =>
+        timezoneUtils.toTimezone(b.date) >= now &&
+        (b.status === "confirmed" || b.status === "rescheduled")
     ).length;
 
     if (upcomingCount > 0) {
@@ -117,7 +124,7 @@ class WebhookController {
     }
 
     await whatsappService.sendTextMessage(from, message);
-    
+
     // Clear conversation history and pending context after showing bookings
     this.clearUserConversationHistoryAndContext(from);
   }
@@ -136,7 +143,7 @@ class WebhookController {
       from,
       `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`
     );
-    
+
     // Clear conversation history and pending context after successful update
     this.clearUserConversationHistoryAndContext(from);
   }
@@ -162,13 +169,13 @@ class WebhookController {
           `⚠️ No booking found with ID: ${bookingId}`
         );
       }
-      
+
       if (booking.status === "cancelled") {
         await whatsappService.sendTextMessage(
           from,
           `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`
         );
-        
+
         // Clear conversation history and pending context after successful cancellation
         this.clearUserConversationHistoryAndContext(from);
         return;
@@ -199,7 +206,7 @@ class WebhookController {
         `🆔 Booking ID: ${booking.booking.bookingId}`,
         "✅ Your driving lesson has been successfully booked:",
         "",
-        
+
         `👨‍🏫 Instructor: ${booking.instructor.name}`,
         `📅 Date: ${new Date(bookingData.date).toLocaleDateString("en-US", {
           weekday: "long",
@@ -215,10 +222,9 @@ class WebhookController {
       ].join("\n");
 
       await whatsappService.sendTextMessage(from, confirmationMessage);
-      
+
       // Clear conversation history and pending context after successful booking
       this.clearUserConversationHistoryAndContext(from);
-      
     } catch (error) {
       console.log(error);
       console.error("❌ Booking error:", error.message);
@@ -228,7 +234,7 @@ class WebhookController {
         : "❌ Sorry, there was an error processing your booking. Please try again.";
 
       await whatsappService.sendTextMessage(from, errorMessage);
-      
+
       // Don't clear context on booking errors - user might want to retry with same date/time
     }
   }
@@ -317,8 +323,11 @@ class WebhookController {
 
       // Check if an action will be performed - if so, don't update conversation history
       // as it will be cleared after the action completes
-      const willPerformAction = hasAction && 
-        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(actionType);
+      const willPerformAction =
+        hasAction &&
+        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(
+          actionType
+        );
 
       if (hasAction) {
         switch (actionType) {
@@ -355,7 +364,9 @@ class WebhookController {
 
         const conversationHistoryLength = 10;
         if (session.conversationHistory.length > conversationHistoryLength) {
-          session.conversationHistory = session.conversationHistory.slice(-conversationHistoryLength);
+          session.conversationHistory = session.conversationHistory.slice(
+            -conversationHistoryLength
+          );
         }
 
         updateUserSession(from, session);

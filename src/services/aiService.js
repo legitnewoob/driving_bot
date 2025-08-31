@@ -2,6 +2,7 @@ const openai = require("../config/openai");
 const calendarService = require("./calendarService");
 const dateTimeService = require("./dateTimeService copy");
 const dateTimeUtils = require("../utils/dateTimeUtils");
+const timezoneUtils = require("../utils/timezoneUtils");
 const fs = require("fs");
 const path = require("path");
 
@@ -43,51 +44,60 @@ class AIService {
   }
 
   // Helper method to check if booking is within 24 hours
+  // isWithin24Hours(dateRequested, timeRequested = null) {
+  //   if (!dateRequested) return false;
+
+  //   const now = new Date();
+  //   const requestedDateTime = new Date(dateRequested);
+
+  //   // If time is provided, set it on the date
+  //   if (timeRequested) {
+  //     const [hours, minutes] = timeRequested.split(":").map(Number);
+  //     requestedDateTime.setHours(hours, minutes, 0, 0);
+  //   } else {
+  //     // If no time provided, assume start of day for the check
+  //     requestedDateTime.setHours(0, 0, 0, 0);
+  //   }
+
+  //   const timeDifference = requestedDateTime.getTime() - now.getTime();
+  //   const hoursUntilBooking = timeDifference / (1000 * 60 * 60);
+
+  //   return hoursUntilBooking < 24;
+  // }
   isWithin24Hours(dateRequested, timeRequested = null) {
-    if (!dateRequested) return false;
-
-    const now = new Date();
-    const requestedDateTime = new Date(dateRequested);
-
-    // If time is provided, set it on the date
-    if (timeRequested) {
-      const [hours, minutes] = timeRequested.split(":").map(Number);
-      requestedDateTime.setHours(hours, minutes, 0, 0);
-    } else {
-      // If no time provided, assume start of day for the check
-      requestedDateTime.setHours(0, 0, 0, 0);
-    }
-
-    const timeDifference = requestedDateTime.getTime() - now.getTime();
-    const hoursUntilBooking = timeDifference / (1000 * 60 * 60);
-
-    return hoursUntilBooking < 24;
+    return timezoneUtils.isWithin24Hours(dateRequested, timeRequested);
   }
 
   // Helper method to check if date is weekend
-  isWeekend(dateRequested) {
-    if (!dateRequested) return false;
+  // isWeekend(dateRequested) {
+  //   if (!dateRequested) return false;
 
-    const requestedDate = new Date(dateRequested);
-    const dayOfWeek = requestedDate.getDay();
-    return dayOfWeek === 0 || dayOfWeek === 6; // Sunday = 0, Saturday = 6
+  //   const requestedDate = new Date(dateRequested);
+  //   const dayOfWeek = requestedDate.getDay();
+  //   return dayOfWeek === 0 || dayOfWeek === 6; // Sunday = 0, Saturday = 6
+  // }
+  isWeekend(dateRequested) {
+    return timezoneUtils.isWeekend(dateRequested);
   }
 
   // Helper method to get day name
-  getDayName(dateRequested) {
-    if (!dateRequested) return null;
+  // getDayName(dateRequested) {
+  //   if (!dateRequested) return null;
 
-    const requestedDate = new Date(dateRequested);
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
-    return days[requestedDate.getDay()];
+  //   const requestedDate = new Date(dateRequested);
+  //   const days = [
+  //     "Sunday",
+  //     "Monday",
+  //     "Tuesday",
+  //     "Wednesday",
+  //     "Thursday",
+  //     "Friday",
+  //     "Saturday",
+  //   ];
+  //   return days[requestedDate.getDay()];
+  // }
+   getDayName(dateRequested) {
+    return timezoneUtils.getDayName(dateRequested);
   }
 
   // Helper method to update pending context
@@ -263,7 +273,7 @@ class AIService {
       const systemPrompt = await this.getSystemPrompt(
         process.env.PHONE_NUMBER_ID
       );
-      const today = "Today's date: " + new Date().toISOString().split("T")[0];
+      const today = `Today's date (${process.env.APP_TIMEZONE || 'Asia/Kolkata'}): ${timezoneUtils.getCurrentDateString()}`;
 
       console.log("Today:", today);
 
@@ -318,9 +328,10 @@ class AIService {
           instructorId
         );
 
-      const requestedDate = new Date(dateRequested);
-      const isWeekend =
-        requestedDate.getDay() === 0 || requestedDate.getDay() === 6;
+      // const requestedDate = new Date(dateRequested);
+      // const isWeekend =
+      //   requestedDate.getDay() === 0 || requestedDate.getDay() === 6;
+      const isWeekend = timezoneUtils.isWeekend(dateRequested);
       const isValidBusinessDay = !isWeekend;
 
       // If specific time is requested, check its availability

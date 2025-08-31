@@ -273,7 +273,7 @@ class AIService {
       const systemPrompt = await this.getSystemPrompt(
         process.env.PHONE_NUMBER_ID
       );
-      const today = `Today's date (${process.env.APP_TIMEZONE || 'Asia/Kolkata'}): ${timezoneUtils.getCurrentDateString()}`;
+      const today = `(${process.env.APP_TIMEZONE || 'Asia/Kolkata'}): ${timezoneUtils.getCurrentDateString()}`;
 
       console.log("Today:", today);
 

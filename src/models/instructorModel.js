@@ -1,3 +1,4 @@
+const timezoneUtils = require("../utils/timezoneUtils");
 // Store user sessions with conversation history
 const userSessions = {};
 
@@ -20,14 +21,14 @@ function getUserSession(phone) {
     if (!userSessions[phone]) {
         userSessions[phone] = {
             conversationHistory: [],
-            lastActivity: new Date()
+            lastActivity: timezoneUtils.getCurrentDate()
         };
     }
     return userSessions[phone];
 }
 
 function updateUserSession(phone, session) {
-    session.lastActivity = new Date();
+    session.lastActivity = timezoneUtils.getCurrentDate();
     userSessions[phone] = session;
 }
 
@@ -57,26 +58,24 @@ function getInstructor(instructorId) {
 
 function getAvailableDates() {
     const dates = [];
-    const today = new Date();
+    const today = timezoneUtils.getCurrentDate(); // gets current date in IST
     
-    // Use local date to avoid timezone issues
+    // Create today's date at midnight (local)
     const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+
     for (let i = 1; i <= 90; i++) {
         const date = new Date(todayLocal);
         date.setDate(todayLocal.getDate() + i);
-        
-        // Monday=1, Tuesday=2, ..., Friday=5 (excluding Sunday=0, Saturday=6)
-        const dayOfWeek = date.getDay();
+
+        const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
         if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-            // Format as YYYY-MM-DD with zero padding
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');
             dates.push(`${year}-${month}-${day}`);
         }
     }
-    
+
     return dates;
 }
 

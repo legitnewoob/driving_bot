@@ -1,12 +1,14 @@
 const OpenAI = require('openai');
+const timezoneUtils = require('../utils/timezoneUtils');
 
 class DateTimeService {
   static async extractDateTimeFromMessage(message) {
     console.log(`🔍 Extracting date/time from: "${message}"`);
     
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    const currentTime = today.toTimeString().slice(0, 5);
+    // Use timezone-aware current date/time
+    const today = timezoneUtils.getCurrentDate();
+    const todayStr = timezoneUtils.getCurrentDateString();
+    const currentTime = timezoneUtils.getCurrentTimeString();
     
     const result = {
       hasDateTime: false,
@@ -30,26 +32,30 @@ class DateTimeService {
         apiKey: process.env.OPENAI_API_KEY
       });
 
-      // More structured and precise prompt
-      const prompt = `Extract date and time from this message. Current context: ${todayStr} ${currentTime}
+      // Enhanced prompt with timezone context
+      const tomorrowStr = timezoneUtils.getTomorrowDateString();
+      const currentTimezone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+      
+      const prompt = `Extract date and time from this message. Current context (${currentTimezone}): ${todayStr} ${currentTime}
 
 Message: "${message}"
 
 Rules:
 1. Only extract explicitly mentioned dates/times
-2. For day numbers without month (like "17th"): if day < current day (${today.getDate()}), use next month
-3. Relative terms: today=${todayStr}, tomorrow=${new Date(today.getTime() + 86400000).toISOString().split('T')[0]}
+2. For day numbers without month (like "17th"): if day < current day (${timezoneUtils.getCurrentDay()}), use next month
+3. Relative terms: today=${todayStr}, tomorrow=${tomorrowStr}
 4. Time approximations: morning=09:00, afternoon=14:00, evening=19:00, night=21:00
 5. If no clear date/time, return hasDateTime=false
+6. All times should be in 24-hour format (HH:MM)
 
 Respond with valid JSON only:`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo", // Keep your original model
+        model: "gpt-3.5-turbo",
         messages: [
           {
             role: "system",
-            content: `You extract dates and times from text. CRITICAL: You must respond with ONLY valid JSON, no other text.
+            content: `You extract dates and times from text using ${currentTimezone} timezone. CRITICAL: You must respond with ONLY valid JSON, no other text.
 
 Required JSON format:
 {
@@ -69,8 +75,8 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
           }
         ],
         max_tokens: 150,
-        temperature: 0.0, // Zero temperature for consistency
-        stop: ["\n\n", "```"] // Stop at common non-JSON indicators
+        temperature: 0.0,
+        stop: ["\n\n", "```"]
       });
 
       const content = response.choices[0].message.content.trim();
@@ -78,20 +84,15 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
       
       // Clean the response to extract just the JSON part
       let jsonStr = content;
-      
-      // Remove any markdown code blocks
       jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '');
       
-      // Extract JSON from response if it contains extra text
       const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         jsonStr = jsonMatch[0];
       }
       
-      // Parse and validate JSON
       const parsed = JSON.parse(jsonStr);
       
-      // Strict validation
       if (!this.validateExtractedData(parsed)) {
         console.log('⚠️ OpenAI response failed validation, using fallback');
         return this.fallbackExtraction(message);
@@ -106,11 +107,9 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     }
   }
 
-  // Validate the structure and content of extracted data
   static validateExtractedData(data) {
     if (!data || typeof data !== 'object') return false;
     
-    // Check required fields exist
     if (typeof data.hasDateTime !== 'boolean') return false;
     if (!['high', 'medium', 'low'].includes(data.confidence)) return false;
     if (typeof data.explicitDate !== 'boolean') return false;
@@ -121,7 +120,6 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(data.date)) return false;
       
-      // Check if it's a valid date
       const testDate = new Date(data.date);
       if (isNaN(testDate.getTime())) return false;
     }
@@ -135,7 +133,6 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
       if (hours > 23 || minutes > 59) return false;
     }
     
-    // Logic check: if hasDateTime is false, date and time should be null
     if (!data.hasDateTime && (data.date !== null || data.time !== null)) {
       return false;
     }
@@ -143,7 +140,6 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     return true;
   }
 
-  // Normalize and clean the result
   static normalizeResult(data) {
     return {
       hasDateTime: Boolean(data.hasDateTime),
@@ -155,7 +151,6 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     };
   }
 
-  // Enhanced fallback method with better pattern recognition
   static fallbackExtraction(message) {
     console.log('🔄 Using enhanced fallback extraction');
     const result = {
@@ -167,14 +162,12 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
       explicitTime: false
     };
 
-    const today = new Date();
     const msgLower = message.toLowerCase();
 
-    // Date extraction patterns
-    this.extractDate(msgLower, today, result);
+    // Use timezone-aware date extraction
+    this.extractDate(msgLower, result);
     this.extractTime(msgLower, result);
 
-    // Set hasDateTime if we found either date or time
     if (result.date || result.time) {
       result.hasDateTime = true;
     }
@@ -183,7 +176,7 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     return result;
   }
 
-  static extractDate(msgLower, today, result) {
+  static extractDate(msgLower, result) {
     // Explicit date patterns (YYYY-MM-DD, MM/DD/YYYY, etc.)
     const explicitDatePatterns = [
       /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/,
@@ -194,8 +187,7 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     for (const pattern of explicitDatePatterns) {
       const match = msgLower.match(pattern);
       if (match) {
-        // Handle different formats
-        if (pattern.source.includes('(\\d{4})')) { // YYYY-MM-DD or MM/DD/YYYY
+        if (pattern.source.includes('(\\d{4})')) {
           const [, part1, part2, part3] = match;
           if (part1.length === 4) { // YYYY-MM-DD
             result.date = `${part1}-${part2.padStart(2, '0')}-${part3.padStart(2, '0')}`;
@@ -209,59 +201,42 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
       }
     }
 
-    // Relative date patterns
+    // Relative date patterns using timezone utils
     if (msgLower.includes('today')) {
-      result.date = today.toISOString().split('T')[0];
+      result.date = timezoneUtils.getCurrentDateString();
       result.confidence = "high";
       return;
     }
     
     if (msgLower.includes('tomorrow')) {
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-      result.date = tomorrow.toISOString().split('T')[0];
+      result.date = timezoneUtils.getTomorrowDateString();
       result.confidence = "high";
       return;
     }
 
     if (msgLower.includes('yesterday')) {
-      const yesterday = new Date(today);
-      yesterday.setDate(today.getDate() - 1);
-      result.date = yesterday.toISOString().split('T')[0];
+      result.date = timezoneUtils.getYesterdayDateString();
       result.confidence = "high";
       return;
     }
 
-    // Day number patterns (17th, 25th, etc.) - improved logic
+    // Day number patterns using timezone-aware logic
     const dayMatch = msgLower.match(/\b(\d{1,2})(st|nd|rd|th)\b/);
     if (dayMatch) {
       const requestedDay = parseInt(dayMatch[1]);
-      const currentDay = today.getDate();
+      const currentDay = timezoneUtils.getCurrentDay();
       
-      // Validate day is reasonable (1-31)
       if (requestedDay >= 1 && requestedDay <= 31) {
-        let targetDate = new Date(today);
-        
-        if (requestedDay <= currentDay) {
-          // Move to next month
-          targetDate.setMonth(today.getMonth() + 1, requestedDay);
-        } else {
-          // Use current month
-          targetDate.setDate(requestedDay);
-        }
-        
-        result.date = targetDate.toISOString().split('T')[0];
+        result.date = timezoneUtils.getNextOccurrenceOfDay(requestedDay);
         result.explicitDate = true;
         result.confidence = "medium";
-        console.log(`📅 Day ${requestedDay}: Current day ${currentDay}, using ${targetDate.toISOString().split('T')[0]}`);
+        console.log(`📅 Day ${requestedDay}: Current day ${currentDay}, using ${result.date}`);
       }
     }
 
     // Week-based relative dates
     if (msgLower.includes('next week')) {
-      const nextWeek = new Date(today);
-      nextWeek.setDate(today.getDate() + 7);
-      result.date = nextWeek.toISOString().split('T')[0];
+      result.date = timezoneUtils.addDays(timezoneUtils.getCurrentDateString(), 7);
       result.confidence = "medium";
     }
   }
@@ -288,7 +263,6 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
           hour = 0;
         }
         
-        // Validate time
         if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
           result.time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
           result.explicitTime = true;
@@ -317,9 +291,10 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
     }
   }
 
-  // Helper method to test the extraction
   static async testExtraction(testMessages) {
     console.log('🧪 Testing DateTime Extraction');
+    console.log(`🌍 Using timezone: ${process.env.APP_TIMEZONE || 'Asia/Kolkata'}`);
+    console.log(`📅 Current date/time: ${timezoneUtils.getCurrentDateString()} ${timezoneUtils.getCurrentTimeString()}`);
     console.log('================================');
     
     for (const msg of testMessages) {
@@ -331,11 +306,10 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
   }
 }
 
-// Example usage and testing
 if (require.main === module) {
   const testMessages = [
     "Let's meet tomorrow at 3 PM",
-    "Schedule for the 17th",
+    "Schedule for the 17th", 
     "Can we do this on 2024-03-15 at 14:30?",
     "How about this morning?",
     "Let's talk next week",

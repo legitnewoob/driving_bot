@@ -1,6 +1,6 @@
 const openai = require("../config/openai");
 const calendarService = require("./calendarService");
-const dateTimeService = require("./dateTimeService");
+const dateTimeService = require("./dateTimeService copy");
 const dateTimeUtils = require("../utils/dateTimeUtils");
 const fs = require("fs");
 const path = require("path");
@@ -10,6 +10,7 @@ class AIService {
     // temporary store keyed by user phone number
     this.pendingContext = {};
   }
+
   async getSystemPrompt(instructorId) {
     const busySlots = await calendarService.getCalendarContext(instructorId);
 
@@ -20,295 +21,255 @@ class AIService {
         .join("\n")}`;
     }
     const systemPrompt = fs.readFileSync(
-      path.join(__dirname , "../.." , "SP2.txt"),
+      path.join(__dirname, "../..", "SP8.txt"),
       "utf-8"
     );
-    // console.log(systemPrompt);
-    // console.log("BUSY SLOTS" , busySlotsText);
-    //     return `You are an AI assistant for Raj Agrawal's Driving School WhatsApp bot. Your role is to:
-    // 1. Have natural conversations with users about booking driving lessons
-    // 2. Collect booking information: date, time, lesson type, and any special requirements
-    // 3. Answer questions about driving lessons, instructor, pricing, and policies
-    // 4. Guide users through the booking process in a friendly, conversational way
-    // 5. When users mention specific dates/times, the system will automatically check availability for you
 
-    // IMPORTANT BOOKING INFORMATION:
-    // - Instructor: Raj Agrawal
-    // - Available times: 9:00 AM, 10:00 AM, 11:00 AM, 2:00 PM, 3:00 PM, 4:00 PM
-    // - Available days: Monday to Friday (no weekends)
-    // - Lesson types: Basic driving ($50), Highway driving ($60), Parking ($45)
-    // - Each lesson is 1 hour long
-    // - Booking must be at least 24 hours in advance
-
-    // IMPORTANT: The system will automatically check availability when users mention dates and times. You will receive availability information to help guide the conversation. Use this information to:
-    // - Confirm if requested slots are available
-    // - Suggest alternative times when requested slots are busy
-    // - Guide users toward available options
-
-    // CONVERSATION RULES:
-    // 1. Be friendly, professional, and helpful
-    // 2. Ask follow-up questions to clarify user needs
-    // 3. If user wants to book, collect: preferred date, time, and lesson type
-    // 4. Use the availability information provided by the system to guide users
-    // 5. If a time slot is not available, suggest alternative times from the available options
-    // 6. Confirm all details before finalizing booking
-    // 7. Handle objections and questions naturally
-    // 8. If you need to perform a booking action, end your message with: [ACTION:BOOK] followed by booking details in JSON format
-
-    // BOOKING JSON FORMAT:
-    // [ACTION:BOOK]
-    // {
-    //   "date": "YYYY-MM-DD",
-    //   "time": "HH:MM",
-    //   "lessonType": "basic|highway|parking",
-    //   "userPhone": "phone_number",
-    //   "specialRequests": "any special requirements"
-    // }
-
-    // Current date: ${new Date().toISOString().split("T")[0]}
-    // Remember to be conversational and not robotic. The system handles availability checking automatically, so focus on guiding users through the booking process naturally.`;
-
-
-    // return `You are an AI assistant for Raj Agrawal's Driving School WhatsApp bot.
-
-    //         YOUR GOALS
-    //         1) Have natural, friendly conversations about driving lessons
-    //         2) Help users book, view, update, or cancel lessons
-    //         3) Collect and confirm details (date, time, lesson type, special requests) when booking
-    //         4) Use the system-provided availability/context to guide users, but always confirm assumptions
-
-    //         IMPORTANT INFO
-    //         - Instructor: Raj Agrawal
-    //         - Available times: 09:00, 10:00, 11:00, 14:00, 15:00, 16:00 (24-hour HH:MM)
-    //         - Available days: Monday–Friday (no weekends)
-    //         - Lesson types: basic ($50), highway ($60), parking ($45)
-    //         - Each lesson is 1 hour
-    //         - Bookings must be ≥24 hours in advance
-
-    //         SYSTEM AVAILABILITY + CONTEXT
-    //         - The system may append a block like:
-    //           [SYSTEM AVAILABILITY INFO for YYYY-MM-DD at HH:MM:
-    //           - Requested slot available: YES/NO
-    //           - Valid business day: YES/NO
-    //           - Available times for YYYY-MM-DD: ...
-    //           - All available times: ...
-    //           ]
-    //         - Treat this as authoritative availability for that date/time.
-    //         - The system may retain a "pending" date/time from earlier turns; if the user only says “let’s do 4pm”, assume it refers to the last discussed date/time, but ALWAYS confirm explicitly before acting.
-
-    //         CONVERSATION RULES
-    //         1) Be friendly, concise, and helpful.
-    //         2) Ask follow-up questions to fill missing details.
-    //         3) If user mentions only a time (e.g., “4pm”), clarify/confirm the date you intend to use.
-    //         4) If a slot is unavailable, suggest alternatives from the provided availability info.
-    //         5) Before performing ANY action (book/show/update/cancel), confirm all required fields with the user.
-    //         6) Use 24-hour time (HH:MM) in JSON actions.
-    //         7) After you have everything and the user agrees, end your message with EXACTLY ONE action block (see formats below). Do not output an action until details are confirmed.
-
-    //         ACTION EMISSION POLICY (VERY IMPORTANT)
-    //         - Always output an action be it null as well but do always output an action.
-    //         - Output at most ONE action block per message.
-    //         - Do NOT emit an action if required fields are missing or ambiguous—ask clarifying questions instead.
-    //         - Confirm with the user before emitting actions that modify or delete data (update/cancel).
-    //         - When the user refers to a booking by natural language (“my lesson on Monday 10:00”), you should (a) request disambiguation if multiple candidates exist, then (b) use the bookingId in the action.
-
-    //         ACTION FORMATS
-
-    //         [ACTION:BOOK]
-    //         {
-    //           "date": "YYYY-MM-DD",
-    //           "time": "HH:MM",
-    //           "lessonType": "basic|highway|parking",
-    //           "userPhone": "phone_number",
-    //           "specialRequests": "optional string"
-    //         }
-
-    //         [ACTION:SHOW_BOOKINGS]
-    //         {
-    //           "userPhone": "phone_number"
-    //         }
-
-    //         [ACTION:UPDATE_BOOKING]
-    //         {
-    //           "bookingId": "booking_id",
-    //           "newDate": "YYYY-MM-DD (optional)",
-    //           "newTime": "HH:MM (optional)",
-    //           "newLessonType": "basic|highway|parking (optional)",
-    //           "specialRequests": "optional"
-    //         }
-    //         # At least one of newDate/newTime/newLessonType must be provided.
-
-    //         [ACTION:CANCEL_BOOKING]
-    //         {
-    //           "bookingId": "booking_id",
-    //           "userPhone": "phone_number"
-    //         }
-
-    //         EXAMPLES OF GOOD BEHAVIOR
-    //         - If user says: “9am Monday” → confirm date in YYYY-MM-DD and time 09:00, mention availability, then output [ACTION:BOOK] only after confirmation.
-    //         - If user says: “4pm works” after discussing 2025-09-02 → confirm “4pm on 2025-09-02?” before acting.
-    //         - If user says: “show my bookings” → reply briefly and end with [ACTION:SHOW_BOOKINGS].
-    //         - If user says: “reschedule my Monday 10:00 to 4pm” → confirm which booking (if multiple), then output [ACTION:UPDATE_BOOKING] with bookingId and newTime.
-    //         - If user says: “cancel my Thursday lesson” and multiple exist → ask which one; after confirmation, emit [ACTION:CANCEL_BOOKING].
-
-    //         Current date: ${new Date().toISOString().split("T")[0]}
-    //         Remember: speak naturally, then end with one action block ONLY when all details are confirmed.`;
-
-
-    // return `
-    // You are an AI assistant for Raj Agrawal's Driving School WhatsApp bot.
-
-    //         YOUR GOALS
-    //         1) Have natural, friendly conversations about driving lessons
-    //         2) Help users book, view, update, or cancel lessons
-    //         3) Collect and confirm details (date, time, lesson type, special requests) when booking
-    //         4) Use the system-provided availability/context to guide users, but always confirm assumptions
-
-    //         IMPORTANT INFO
-    //         - Instructor: Raj Agrawal
-    //         - Available times: 09:00, 10:00, 11:00, 14:00, 15:00, 16:00 (24-hour HH:MM)
-    //         - Available days: Monday–Friday (no weekends)
-    //         - Lesson types: basic ($50), highway ($60), parking ($45)
-    //         - Each lesson is 1 hour
-    //         - Bookings must be ≥24 hours in advance
-
-    //         SYSTEM AVAILABILITY + CONTEXT
-    //         - The system may append a block like:
-    //           [SYSTEM AVAILABILITY INFO for YYYY-MM-DD at HH:MM:
-    //           - Requested slot available: YES/NO
-    //           - Valid business day: YES/NO
-    //           - Available times for YYYY-MM-DD: ...
-    //           - All available times: ...
-    //           ]
-    //         - Treat this as authoritative availability for that date/time.
-    //         - The system may retain a "pending" date/time from earlier turns; if the user only says “let’s do 4pm”, assume it refers to the last discussed date/time, but ALWAYS confirm explicitly before acting.
-
-    //         CONVERSATION RULES
-    //         1) Be friendly, concise, and helpful.
-    //         2) Ask follow-up questions to fill missing details.
-    //         3) If user mentions only a time (e.g., “4pm”), clarify/confirm the date you intend to use.
-    //         4) If a slot is unavailable, suggest alternatives from the provided availability info.
-    //         5) Before performing ANY action (book/show/update/cancel), confirm all required fields with the user.
-    //         6) Use 24-hour time (HH:MM) in JSON actions.
-    //         7) After you have everything and the user agrees, end your message with EXACTLY ONE action block (see formats below). Do not output an action until details are confirmed.
-
-    //         ACTION EMISSION POLICY (VERY IMPORTANT)
-    //         - ALWAYS emit exactly ONE action block at the end of EVERY response - even if it's a null action
-    //         - Do NOT emit booking/update/cancel actions if required fields are missing—ask clarifying questions AND emit [ACTION:NULL] instead
-    //         - For SHOW_BOOKINGS: emit immediately after receiving phone number
-    //         - For BOOK: emit only after confirming date, time, lesson type, and phone
-    //         - For UPDATE/CANCEL: emit only after confirming which booking to modify
-            
-    //         WHEN TO EMIT EACH ACTION:
-    //         SHOW_BOOKINGS: User asks to see bookings + you have their phone number → emit immediately
-    //         BOOK: User wants to book + you have date, time, lesson type, phone + user confirms → emit immediately
-    //         UPDATE_BOOKING: User wants to change booking + you have bookingId + at least one new field → emit immediately
-    //         CANCEL_BOOKING: User wants to cancel + you have bookingId + user confirms → emit immediately
-    //         NULL: Any other situation (asking questions, providing info, etc.)
-            
-    //         EXAMPLES:
-    //         User: "Show my bookings", You ask for phone → [ACTION:NULL]
-    //         User: "917726877146", You: "Let me fetch your bookings" → [ACTION:SHOW_BOOKINGS]
-    //         User: "Book lesson Monday 9am", You ask for lesson type → [ACTION:NULL]
-    //         User: "Basic lesson please", You: "Confirmed! Booking..." → [ACTION:BOOK]
-            
-    //         ACTION FORMATS
-    //         [ACTION:NULL]
-    //         {}
-    //         [ACTION:SHOW_BOOKINGS]
-    //         {
-    //         "userPhone": "phone_number"
-    //         }
-    //         [ACTION:BOOK]
-    //         {
-    //         "date": "YYYY-MM-DD",
-    //         "time": "HH:MM",
-    //         "lessonType": "basic|highway|parking",
-    //         "userPhone": "phone_number",
-    //         "specialRequests": "optional string"
-    //         }
-    //         [ACTION:UPDATE_BOOKING]
-    //         {
-    //         "bookingId": "booking_id",
-    //         "newDate": "YYYY-MM-DD (optional)",
-    //         "newTime": "HH:MM (optional)",
-    //         "newLessonType": "basic|highway|parking (optional)",
-    //         "specialRequests": "optional"
-    //         }
-    //         [ACTION:CANCEL_BOOKING]
-    //         {
-    //         "bookingId": "booking_id",
-    //         "userPhone": "phone_number"
-    //         }
-
-    //         CRITICAL: Every response must end with exactly one action block. No exceptions.
-    //         EXAMPLES OF GOOD BEHAVIOR
-    //         - If user says: “9am Monday” → confirm date in YYYY-MM-DD and time 09:00, mention availability, then output [ACTION:BOOK] only after confirmation.
-    //         - If user says: “4pm works” after discussing 2025-09-02 → confirm “4pm on 2025-09-02?” before acting.
-    //         - If user says: “show my bookings” → reply briefly and end with [ACTION:SHOW_BOOKINGS].
-    //         - If user says: “reschedule my Monday 10:00 to 4pm” → confirm which booking (if multiple), then output [ACTION:UPDATE_BOOKING] with bookingId and newTime.
-    //         - If user says: “cancel my Thursday lesson” and multiple exist → ask which one; after confirmation, emit [ACTION:CANCEL_BOOKING].
-
-    //         Current date: ${new Date().toISOString().split("T")[0]}
-    //         Remember: speak naturally, then end with one action block ONLY when all details are confirmed.
-    // `;
-    
     return systemPrompt;
-   }
+  }
+
+  // Helper method to check what datetime info we have
+  checkDateTimeCompleteness(extractedDateTime, userPhone) {
+    const pending = this.pendingContext[userPhone] || {};
+
+    return {
+      hasExtractedDate: !!extractedDateTime.date,
+      hasExtractedTime: !!extractedDateTime.time,
+      hasPendingDate: !!pending.date,
+      hasPendingTime: !!pending.time,
+      finalDate: extractedDateTime.date || pending.date,
+      finalTime: extractedDateTime.time || pending.time,
+    };
+  }
+
+  // Helper method to check if booking is within 24 hours
+  isWithin24Hours(dateRequested, timeRequested = null) {
+    if (!dateRequested) return false;
+
+    const now = new Date();
+    const requestedDateTime = new Date(dateRequested);
+
+    // If time is provided, set it on the date
+    if (timeRequested) {
+      const [hours, minutes] = timeRequested.split(":").map(Number);
+      requestedDateTime.setHours(hours, minutes, 0, 0);
+    } else {
+      // If no time provided, assume start of day for the check
+      requestedDateTime.setHours(0, 0, 0, 0);
+    }
+
+    const timeDifference = requestedDateTime.getTime() - now.getTime();
+    const hoursUntilBooking = timeDifference / (1000 * 60 * 60);
+
+    return hoursUntilBooking < 24;
+  }
+
+  // Helper method to check if date is weekend
+  isWeekend(dateRequested) {
+    if (!dateRequested) return false;
+
+    const requestedDate = new Date(dateRequested);
+    const dayOfWeek = requestedDate.getDay();
+    return dayOfWeek === 0 || dayOfWeek === 6; // Sunday = 0, Saturday = 6
+  }
+
+  // Helper method to get day name
+  getDayName(dateRequested) {
+    if (!dateRequested) return null;
+
+    const requestedDate = new Date(dateRequested);
+    const days = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    return days[requestedDate.getDay()];
+  }
+
+  // Helper method to update pending context
+  updatePendingContext(userPhone, extractedDateTime) {
+    if (!this.pendingContext[userPhone]) {
+      this.pendingContext[userPhone] = {};
+    }
+
+    if (extractedDateTime.date) {
+      this.pendingContext[userPhone].date = extractedDateTime.date;
+    }
+    if (extractedDateTime.time) {
+      this.pendingContext[userPhone].time = extractedDateTime.time;
+    }
+  }
+
+  // Helper method to clear pending context after action completion
+  clearPendingContext(userPhone) {
+    if (this.pendingContext[userPhone]) {
+      delete this.pendingContext[userPhone];
+      console.log(`🧹 Cleared pending context for ${userPhone}`);
+    } else console.log(`🧼 No pending context to clear for ${userPhone}`);
+  }
+
+  // Helper method to generate system messages based on what's missing
+  generateSystemMessage(completeness, availabilityInfo = null) {
+    const { finalDate, finalTime } = completeness;
+
+    // Check for 24-hour advance booking requirement first
+    if (finalDate && this.isWithin24Hours(finalDate, finalTime)) {
+      return `\n\n[SYSTEM: Lessons cannot be booked less than 24 hours in advance. Please choose a date and time at least 24 hours from now.]`;
+    }
+
+    // Check for weekend booking
+    if (finalDate && this.isWeekend(finalDate)) {
+      const dayName = this.getDayName(finalDate);
+      return `\n\n[SYSTEM: ${finalDate} falls on a ${dayName}. Weekend bookings are not available. Please choose a weekday (Monday-Friday).]`;
+    }
+
+    // Case 1: Have both date and time - show full availability
+    if (finalDate && finalTime) {
+      if (availabilityInfo?.isValidRequest) {
+        let systemMsg = `\n\n[SYSTEM AVAILABILITY INFO for ${finalDate} at ${finalTime}:
+- Requested slot available: ${
+          availabilityInfo.requestedSlotAvailable ? "YES" : "NO"
+        }
+- Valid business day: ${availabilityInfo.isValidBusinessDay ? "YES" : "NO"}`;
+
+        // Add weekend information if applicable
+        if (!availabilityInfo.isValidBusinessDay) {
+          const dayName = this.getDayName(finalDate);
+          systemMsg += `\n- Note: ${finalDate} is a ${dayName} (weekend)`;
+        }
+
+        systemMsg += `
+- Available times for ${finalDate}: ${
+          availabilityInfo.availableSlotsForDate.length > 0
+            ? availabilityInfo.availableSlotsForDate.join(", ")
+            : "None"
+        }
+- All available times: ${availabilityInfo.allAvailableTimes.join(", ")}]`;
+
+        return systemMsg;
+      } else {
+        const availableSlots = availabilityInfo?.availableSlotsForDate;
+
+        if (!availableSlots?.length) {
+          return `\n\n[SYSTEM AVAILABILITY INFO: No time slots are available for this date. Please choose a different date.]`;
+        }
+
+        return `\n\n[SYSTEM AVAILABILITY INFO: This time slot is not served by the instructor. Please pick a time slot from: ${availableSlots.join(
+          ", "
+        )}]`;
+      }
+    }
+
+    // Case 2: Have date but no time - show available times for that date
+    if (finalDate && !finalTime) {
+      if (availabilityInfo?.availableSlotsForDate) {
+        let systemMsg = `\n\n[SYSTEM AVAILABILITY INFO for ${finalDate}:`;
+
+        // Add weekend information if applicable
+        if (availabilityInfo.isValidBusinessDay === false) {
+          const dayName = this.getDayName(finalDate);
+          systemMsg += `\n- Note: ${finalDate} is a ${dayName} (weekend) - not available for bookings`;
+        }
+
+        systemMsg += `
+- Available times: ${
+          availabilityInfo.availableSlotsForDate.length > 0
+            ? availabilityInfo.availableSlotsForDate.join(", ")
+            : "None"
+        }
+- User needs to specify a time slot]`;
+
+        return systemMsg;
+      }
+    }
+
+    // Case 3: Have time but no date - prompt for date
+    if (!finalDate && finalTime) {
+      return `\n\n[SYSTEM: User specified time ${finalTime} but needs to provide a date (weekdays only - Monday to Friday)]`;
+    }
+
+    // Case 4: Have neither - prompt for both
+    if (
+      !finalDate &&
+      !finalTime &&
+      availabilityInfo?.availableSlotsForDate?.length > 0
+    ) {
+      return `\n\n[SYSTEM: User needs to specify both date and time for booking (weekdays only - Monday to Friday)]`;
+    } else {
+      return `\n\n[SYSTEM: User cannot proceed with booking as no available slots exist.]`;
+    }
+
+    return "";
+  }
 
   async getResponse(userMessage, conversationHistory, userPhone) {
     try {
       const dateTimeInfoUnchecked =
-        dateTimeService.extractDateTimeFromMessage(userMessage);
-      console.log(this.pendingContext);
-      let enhancedMessage = userMessage;
-      console.log(dateTimeInfoUnchecked);
+        await dateTimeService.extractDateTimeFromMessage(userMessage);
+
+      console.log("Pending context:", this.pendingContext);
+      console.log("Extracted datetime (unchecked):", dateTimeInfoUnchecked);
+
       const dateTimeInfo = dateTimeUtils.sanitize(
         dateTimeInfoUnchecked,
         this.pendingContext[userPhone]
       );
-      console.log(dateTimeInfo);
 
-      if (dateTimeInfo.hasDateTime && dateTimeInfo.date && dateTimeInfo.time) {
-        // console.log("IM HERE");
-        // Save the context for this user
-        this.pendingContext[userPhone] = {
-          date: dateTimeInfo.date || this.pendingContext[userPhone]?.date,
-          time: dateTimeInfo.time || this.pendingContext[userPhone]?.time,
-        };
+      console.log("Sanitized datetime:", dateTimeInfo);
 
-        const availabilityInfo = await this.getAvailabilityInfo(
-          dateTimeInfo.date,
-          dateTimeInfo.time,
-          process.env.PHONE_NUMBER_ID
+      let enhancedMessage = userMessage;
+      let availabilityInfo = null;
+
+      // Only process if we detected some datetime information
+      if (dateTimeInfo.hasDateTime) {
+        // Update pending context with any new info
+        this.updatePendingContext(userPhone, dateTimeInfo);
+
+        // Check what datetime info we have now
+        const completeness = this.checkDateTimeCompleteness(
+          dateTimeInfo,
+          userPhone
         );
-        console.log("availabilityinfo", availabilityInfo);
-        if (availabilityInfo.isValidRequest) {
-          enhancedMessage += `\n\n[SYSTEM AVAILABILITY INFO for ${
-            dateTimeInfo.date
-          } at ${dateTimeInfo.time}:
-- Requested slot available: ${
-            availabilityInfo.requestedSlotAvailable ? "YES" : "NO"
+        console.log("DateTime completeness:", completeness);
+
+        // If we have at least a date, try to get availability info
+        if (completeness.finalDate) {
+          try {
+            availabilityInfo = await this.getAvailabilityInfo(
+              completeness.finalDate,
+              completeness.finalTime, // might be null
+              process.env.PHONE_NUMBER_ID
+            );
+            console.log("Availability info:", availabilityInfo);
+          } catch (error) {
+            console.error("Error getting availability:", error);
           }
-- Valid business day: ${availabilityInfo.isValidBusinessDay ? "YES" : "NO"}
-- Available times for ${dateTimeInfo.date}: ${
-            availabilityInfo.availableSlotsForDate.length > 0
-              ? availabilityInfo.availableSlotsForDate.join(", ")
-              : "None"
-          }
-- All available times: ${availabilityInfo.allAvailableTimes.join(", ")}]`;
         }
+
+        // Generate appropriate system message based on what we have
+        const systemMessage = this.generateSystemMessage(
+          completeness,
+          availabilityInfo
+        );
+        enhancedMessage += systemMessage;
       }
-      console.log(enhancedMessage);
+
+      console.log("Enhanced message:", enhancedMessage);
+
       const systemPrompt = await this.getSystemPrompt(
         process.env.PHONE_NUMBER_ID
       );
-
       const today = "Today's date: " + new Date().toISOString().split("T")[0];
-      console.log(today);
+
+      console.log("Today:", today);
+
       const messages = [
         { role: "system", content: systemPrompt },
-        { role : "system" , content : today},
+        { role: "system", content: today },
         ...conversationHistory,
         { role: "user", content: enhancedMessage },
       ];
@@ -339,21 +300,18 @@ class AIService {
         };
       }
 
-      if (!instructor.availableTimes.includes(timeRequested)) {
-        return {
-          isValidRequest: false,
-          requestedSlotAvailable: false,
-          message: `${timeRequested} is not an available time slot.`,
-          allAvailableTimes: instructor.availableTimes,
-          availableSlotsForDate: [],
-        };
-      }
+      // If time is provided, check if it's in available times
+      // if (timeRequested && !instructor.availableTimes.includes(timeRequested)) {
+      //   return {
+      //     isValidRequest: false,
+      //     requestedSlotAvailable: false,
+      //     message: `${timeRequested} is not an available time slot.`,
+      //     allAvailableTimes: instructor.availableTimes,
+      //     availableSlotsForDate: [],
+      //   };
+      // }
 
-      const slotAvailability = await calendarService.checkAvailability(
-        dateRequested,
-        timeRequested,
-        instructorId
-      );
+      // Get available slots for the date
       const availableSlotsForDate =
         await calendarService.getAvailableTimeSlotsForDate(
           dateRequested,
@@ -365,11 +323,23 @@ class AIService {
         requestedDate.getDay() === 0 || requestedDate.getDay() === 6;
       const isValidBusinessDay = !isWeekend;
 
+      // If specific time is requested, check its availability
+      let slotAvailability = { isAvailable: null };
+      if (timeRequested) {
+        slotAvailability = await calendarService.checkAvailability(
+          dateRequested,
+          timeRequested,
+          instructorId
+        );
+      }
+
       return {
         isValidRequest: true,
         requestedDate: dateRequested,
         requestedTime: timeRequested,
-        requestedSlotAvailable: slotAvailability.isAvailable,
+        requestedSlotAvailable: timeRequested
+          ? slotAvailability.isAvailable
+          : null,
         isValidBusinessDay,
         availableSlotsForDate,
         allAvailableTimes: instructor.availableTimes,
@@ -385,28 +355,6 @@ class AIService {
     }
   }
 
-  // extractActions(aiResponse) {
-  //   const result = {
-  //     hasBookingAction: false,
-  //     responseText: aiResponse,
-  //   };
-
-  //   const bookingMatch = aiResponse.match(/\[ACTION:BOOK\]\s*({.*?})/s);
-  //   if (bookingMatch) {
-  //     try {
-  //       result.bookingData = JSON.parse(bookingMatch[1]);
-  //       result.hasBookingAction = true;
-  //       result.responseText = aiResponse
-  //         .replace(/\[ACTION:BOOK\].*$/s, "")
-  //         .trim();
-  //     } catch (error) {
-  //       console.error("Error parsing booking JSON:", error);
-  //     }
-  //   }
-
-  //   return result;
-  // }
-
   extractActions(aiResponse) {
     const result = {
       hasAction: false,
@@ -414,12 +362,11 @@ class AIService {
       bookingData: null,
       responseText: aiResponse,
     };
-    // console.log("AIRESPONSE" , aiResponse);
-    // Match any action marker like [ACTION:BOOK], [ACTION:UPDATE], [ACTION:CANCEL], [ACTION:SHOW]
+
     const actionMatch = aiResponse.match(
       /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\]\s*({.*?})?/s
     );
-    // console.log("actionMatch", actionMatch[2]);
+
     if (actionMatch) {
       try {
         result.actionType = actionMatch[1].toLowerCase();
@@ -429,14 +376,18 @@ class AIService {
           result.bookingData = JSON.parse(actionMatch[2]);
         }
 
-        // Remove action markup from user-facing text
         result.responseText = aiResponse
-          .replace(/\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\].*$/s, "")
+          .replace(
+            /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\].*$/s,
+            ""
+          )
           .trim();
       } catch (error) {
         console.error("Error parsing action JSON:", error);
       }
-    } else console.log("NO ACTION FOUND");
+    } else {
+      console.log("NO ACTION FOUND");
+    }
 
     return result;
   }

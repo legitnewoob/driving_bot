@@ -5,11 +5,13 @@ class DateTimeUtils {
 
     if (!updated.explicitDate && updated.time && pendingContext?.date) {
       // console.log("Case 1: Time was given but NOT an explicit date → use pending date");
+      updated.hasDateTime = true;
       updated.date = pendingContext.date;
     }
 
     else if (!updated.explicitTime && updated.date && pendingContext?.time) {
       // console.log("Case 2: Date was given but NOT an explicit time → use pending time");
+      updated.hasDateTime = true;
       updated.time = pendingContext.time;
     }
 
@@ -17,6 +19,7 @@ class DateTimeUtils {
       // console.log("Case 3: Neither date nor time were explicit → fall back to pending context");
       if (pendingContext.date) updated.date = pendingContext.date;
       if (pendingContext.time) updated.time = pendingContext.time;
+      updated.hasDateTime = true;
     }
 
     return updated;

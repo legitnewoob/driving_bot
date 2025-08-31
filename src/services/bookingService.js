@@ -78,7 +78,7 @@ class BookingService {
     // Check required fields
     if (!bookingData.date) errors.push("Date is required");
     if (!bookingData.time) errors.push("Time is required");
-    if (!bookingData.lessonType) errors.push("Lesson type is required");
+    // if (!bookingData.lessonType) errors.push("Lesson type is required");
 
     if (errors.length > 0) return errors;
 
@@ -99,11 +99,11 @@ class BookingService {
     }
 
     // Validate lesson type
-    if (!["basic", "highway", "parking"].includes(bookingData.lessonType)) {
-      errors.push(
-        "Invalid lesson type. Choose from: basic, highway, or parking"
-      );
-    }
+    // if (!["basic", "highway", "parking"].includes(bookingData.lessonType)) {
+    //   errors.push(
+    //     "Invalid lesson type. Choose from: basic, highway, or parking"
+    //   );
+    // }
 
     // Check calendar availability
     if (errors.length === 0) {
@@ -214,7 +214,7 @@ class BookingService {
     });
 
     const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
-    const lessonPrice = instructor.rates[bookingData.lessonType];
+    // const lessonPrice = instructor.rates[bookingData.lessonType];
 
     // Update Google Sheets
     try {
@@ -241,7 +241,6 @@ class BookingService {
       booking: newBooking,
       calendarEvent,
       instructor,
-      lessonPrice,
       bookingData,
     };
   }

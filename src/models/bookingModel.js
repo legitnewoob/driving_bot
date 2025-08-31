@@ -6,8 +6,6 @@ const bookingSchema = new mongoose.Schema({
   userPhone: { type: String, required: true },
   date: { type: String, required: true },   // "2025-08-27"
   time: { type: String, required: true },   // "09:00"
-  lessonType: { type: String, required: true, enum: ["basic", "highway", "parking"] },
-  specialRequests: { type: String },
   instructorId: { type: String, required: true },
   calendarEventId: { type: String },  // Google Calendar event ID for easy reschedule/cancel
   status: { type: String, enum: ["confirmed", "cancelled", "rescheduled"], default: "confirmed" }

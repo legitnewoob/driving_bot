@@ -129,8 +129,8 @@ class CalendarService {
             const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
 
             const event = {
-                summary: `Driving Lesson - ${bookingData.lessonType} - ${bookingData.userPhone}`,
-                description: `Driving lesson booking\nPhone: ${bookingData.userPhone}\nLesson Type: ${bookingData.lessonType}\nSpecial Requests: ${bookingData.specialRequests || 'None'}`,
+                summary: `Driving Lesson - ${bookingData.userPhone}`,
+                description: `Driving lesson booking\nPhone: ${bookingData.userPhone}`,
                 start: {
                     dateTime: startDateTime.toISOString(),
                     timeZone: 'America/New_York',

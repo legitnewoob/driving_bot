@@ -8,35 +8,31 @@ const {
 } = require("../models/instructorModel");
 
 class WebhookController {
+  /* ========== HELPER METHOD ========== */
+  
+  clearUserConversationHistoryAndContext(from) {
+    const session = getUserSession(from);
+    session.conversationHistory = [];
+    updateUserSession(from, session);
+    console.log(`📝 Cleared conversation history for ${from}`);
+    // Also clear AI service pending context
+    aiService.clearPendingContext(from);
+  }
+
   /* ========== BOOKING ACTIONS ========== */
-
-  //   async showBookings(from) {
-  //     const bookings = await bookingService.getBookingsByUser(from);
-
-  //     if (!bookings.length) {
-  //       return whatsappService.sendTextMessage(from, "📭 You have no bookings.");
-  //     }
-
-  //     const message = bookings
-  //       .map(
-  //         (b) => `📅  ${new Date(b.date).toLocaleDateString()}  at  ${b.time}`
-  //       )
-  //       .join("\n");
-
-  //     await whatsappService.sendTextMessage(
-  //       from,
-  //       "Here are your bookings:\n" + message
-  //     );
-  //   }
 
   async showBookings(from) {
     const bookings = await bookingService.getBookingsByUser(from);
     // console.log(bookings);
     if (!bookings.length) {
-      return whatsappService.sendTextMessage(
+      await whatsappService.sendTextMessage(
         from,
         "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬"
       );
+      
+      // Clear conversation history and pending context after showing empty bookings
+      this.clearUserConversationHistoryAndContext(from);
+      return;
     }
 
     // Sort bookings by date (earliest first)
@@ -107,7 +103,7 @@ class WebhookController {
 
     // Add helpful footer
     const upcomingCount = sortedBookings.filter(
-    (b) => new Date(b.date) >= now && b.status === "confirmed"
+    (b) => new Date(b.date) >= now && (b.status === "confirmed" || b.status === "rescheduled")
     ).length;
 
     if (upcomingCount > 0) {
@@ -121,6 +117,9 @@ class WebhookController {
     }
 
     await whatsappService.sendTextMessage(from, message);
+    
+    // Clear conversation history and pending context after showing bookings
+    this.clearUserConversationHistoryAndContext(from);
   }
 
   async updateBooking(from, bookingData) {
@@ -137,6 +136,9 @@ class WebhookController {
       from,
       `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`
     );
+    
+    // Clear conversation history and pending context after successful update
+    this.clearUserConversationHistoryAndContext(from);
   }
 
   // controller/service layer where WhatsApp reply is sent
@@ -162,10 +164,14 @@ class WebhookController {
       }
       
       if (booking.status === "cancelled") {
-        return whatsappService.sendTextMessage(
+        await whatsappService.sendTextMessage(
           from,
           `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`
         );
+        
+        // Clear conversation history and pending context after successful cancellation
+        this.clearUserConversationHistoryAndContext(from);
+        return;
       }
 
       // fallback (should not usually happen)
@@ -202,11 +208,6 @@ class WebhookController {
           day: "numeric",
         })}`,
         `🕐 Time: ${bookingData.time}`,
-        `🚗 Lesson Type: ${
-          bookingData.lessonType.charAt(0).toUpperCase() +
-          bookingData.lessonType.slice(1)
-        } driving`,
-        `💰 Price: ${booking.lessonPrice}`,
         "",
         "📧 A calendar invitation has been sent to your instructor.",
         "",
@@ -214,7 +215,12 @@ class WebhookController {
       ].join("\n");
 
       await whatsappService.sendTextMessage(from, confirmationMessage);
+      
+      // Clear conversation history and pending context after successful booking
+      this.clearUserConversationHistoryAndContext(from);
+      
     } catch (error) {
+      console.log(error);
       console.error("❌ Booking error:", error.message);
 
       const errorMessage = error.message.includes("validation")
@@ -222,6 +228,8 @@ class WebhookController {
         : "❌ Sorry, there was an error processing your booking. Please try again.";
 
       await whatsappService.sendTextMessage(from, errorMessage);
+      
+      // Don't clear context on booking errors - user might want to retry with same date/time
     }
   }
 
@@ -307,6 +315,11 @@ class WebhookController {
         await whatsappService.sendTextMessage(from, responseText);
       }
 
+      // Check if an action will be performed - if so, don't update conversation history
+      // as it will be cleared after the action completes
+      const willPerformAction = hasAction && 
+        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(actionType);
+
       if (hasAction) {
         switch (actionType) {
           case "book":
@@ -332,17 +345,21 @@ class WebhookController {
         }
       }
 
-      // Maintain conversation history (last 20 turns)
-      session.conversationHistory.push(
-        { role: "user", content: messageContent },
-        { role: "assistant", content: aiResponse }
-      );
+      // Only maintain conversation history if no action was performed
+      // (actions will clear the history themselves)
+      if (!willPerformAction) {
+        session.conversationHistory.push(
+          { role: "user", content: messageContent },
+          { role: "assistant", content: aiResponse }
+        );
 
-      if (session.conversationHistory.length > 20) {
-        session.conversationHistory = session.conversationHistory.slice(-20);
+        const conversationHistoryLength = 10;
+        if (session.conversationHistory.length > conversationHistoryLength) {
+          session.conversationHistory = session.conversationHistory.slice(-conversationHistoryLength);
+        }
+
+        updateUserSession(from, session);
       }
-
-      updateUserSession(from, session);
     } catch (error) {
       console.error("❌ Error handling message:", error.message);
 

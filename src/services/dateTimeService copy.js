@@ -306,7 +306,7 @@ Be conservative - only extract clear, unambiguous date/time references. Do not g
 
     for (const [dayName, dayIndex] of Object.entries(weekdays)) {
       if (msgLower.includes(dayName)) {
-        const todayIndex = timezoneUtils.getCurrentDayOfWeek(); // 0-6
+        const todayIndex = timezoneUtils.getCurrentDay(); // 0-6
         let offset = (dayIndex - todayIndex + 7) % 7;
         if (offset === 0) offset = 7; // "Wednesday" on a Wednesday means NEXT Wednesday
         result.date = timezoneUtils.addDays(

@@ -96,7 +96,7 @@ class AIService {
   //   ];
   //   return days[requestedDate.getDay()];
   // }
-   getDayName(dateRequested) {
+  getDayName(dateRequested) {
     return timezoneUtils.getDayName(dateRequested);
   }
 
@@ -273,13 +273,51 @@ class AIService {
       const systemPrompt = await this.getSystemPrompt(
         process.env.PHONE_NUMBER_ID
       );
-      const today = `(${process.env.APP_TIMEZONE || 'Asia/Kolkata'}): ${timezoneUtils.getCurrentDateString()}`;
+      const today = `(${
+        process.env.APP_TIMEZONE || "Asia/Kolkata"
+      }): ${timezoneUtils.getCurrentDateString()}`;
+
+      const nextAvailableDate = (() => {
+        // Get current date-time (timezone aware if your utils handle it)
+        const now = new Date(timezoneUtils.getCurrentDate()); // Full timestamp
+
+        // Add 24 hours
+        const next = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+        // Check if it's weekend (Saturday = 6, Sunday = 0)
+        let dayOfWeek = next.getDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+          // If weekend, move to next Monday
+          const daysToAdd = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+          next.setDate(next.getDate() + daysToAdd);
+        }
+
+        // Format parts
+        const dayName = next.toLocaleDateString("en-US", { weekday: "long" });
+        const month = next.toLocaleDateString("en-US", { month: "long" });
+        const day = next.getDate();
+        const year = next.getFullYear();
+
+        // Ordinal suffix
+        const getOrdinal = (n) => {
+          const s = ["th", "st", "nd", "rd"];
+          const v = n % 100;
+          return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+
+        return `${dayName}, ${month} ${getOrdinal(day)}, ${year}`;
+      })();
 
       console.log("Today:", today);
+      console.log("Next available booking date:", nextAvailableDate);
 
       const messages = [
         { role: "system", content: systemPrompt },
-        { role: "system", content: today },
+        { role: "system", content: "TODAY's date" + today },
+        {
+          role: "system",
+          content: "[nextAvailableDate]: " + nextAvailableDate,
+        },
         ...conversationHistory,
         { role: "user", content: enhancedMessage },
       ];

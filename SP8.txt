@@ -47,7 +47,7 @@ For bookings, do you have:
 
 **🎯 STEP 3: TAKE ACTION**
 
-**User wants to know the earliest they can book for**
+**ONLY WHEN THE USER EXPLICITYL ASKS => User wants to know the earliest they can book for**
 → Respond with "The earliest available booking is on [nextAvailableDate] would you like to book a lesson for this day?". Use [ACTION:NULL].
 
 **User wants to see their bookings:**

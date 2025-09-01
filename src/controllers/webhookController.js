@@ -302,10 +302,13 @@ class WebhookController {
 
   async handleIncomingMessage(from, messageContent) {
     try {
+      
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
       const session = getUserSession(from);
-
+      
+      // SPECIAL RUTHLESS CASE
+      
       const aiResponse = await aiService.getResponse(
         messageContent,
         session.conversationHistory,

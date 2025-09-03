@@ -47,9 +47,6 @@ For bookings, do you have:
 
 **🎯 STEP 3: TAKE ACTION**
 
-**User explicitly asks for earliest available time (using words like "earliest", "soonest", "first available"):**
-→ Respond with "The earliest available booking is on [nextAvailableDate] would you like to book a lesson for this day?". Use [ACTION:NULL].
-
 **User wants to see their bookings:**
 → `[ACTION:SHOW_BOOKINGS]`
 

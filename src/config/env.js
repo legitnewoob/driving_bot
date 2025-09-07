@@ -2,8 +2,20 @@ const dotenv = require("dotenv");
 const fs = require("fs");
 const path = require("path");
 
+// 1. Load root .env first
+// console.log(process.cwd());
+const rootEnvFile = path.resolve(process.cwd(), ".env");
+if (fs.existsSync(rootEnvFile)) {
+  dotenv.config({ path: rootEnvFile });
+  console.log(`✅ Loaded root .env`);
+}
+
+
 // Pick environment (default: development)
+console.log("LET'S CHECK" , process.env.NODE_ENV);
 const env = process.env.NODE_ENV || "development";
+
+console.log(`Starting in ${env} mode...`);
 
 // Match env file
 console.log(process.cwd());
@@ -19,6 +31,6 @@ if (fs.existsSync(envFile)) {
 
 module.exports = {
   env,
-  dbUrl: process.env.DB_URL,
+  dbUrl: process.env.DB_NAME,
   apiKey: process.env.API_KEY,
 };

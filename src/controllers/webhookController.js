@@ -21,6 +21,13 @@ class WebhookController {
     aiService.clearPendingContext(from);
   }
 
+  clearOnlyUserConversationHistory(from) {
+    const session = getUserSession(from);
+    session.conversationHistory = [];
+    updateUserSession(from, session);
+    console.log(`📝 Cleared conversation history for ${from}`);
+  }
+
   /* ========== BOOKING ACTIONS ========== */
 
   async next_available_slot(from) {
@@ -38,6 +45,7 @@ class WebhookController {
         `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`
       );
       aiService.updatePendingContext(from, earliestSlot);
+      this.clearOnlyUserConversationHistory(from);
       whatsappService.sendTextMessage(from , `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
     } else {
       console.log("Sorry, no appointments are available in the near future.");

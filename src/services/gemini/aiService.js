@@ -106,6 +106,8 @@ class AIService {
 
   // Helper method to update pending context
   updatePendingContext(userPhone, extractedDateTime) {
+    console.log("Extracted datetime for update:", extractedDateTime);
+    
     if (!this.pendingContext[userPhone]) {
       this.pendingContext[userPhone] = {};
     }
@@ -116,6 +118,8 @@ class AIService {
     if (extractedDateTime.time) {
       this.pendingContext[userPhone].time = extractedDateTime.time;
     }
+    console.log("Updating pending context for" , userPhone , ":" , this.pendingContext[userPhone]);  
+
   }
 
   // Helper method to clear pending context after action completion
@@ -457,7 +461,7 @@ class AIService {
     };
 
     const actionMatch = aiResponse.match(
-      /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\]\s*({.*?})?/s
+      /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NEXT_AVAILABLE_SLOT|NULL)\]\s*({.*?})?/s
     );
 
     if (actionMatch) {
@@ -471,7 +475,7 @@ class AIService {
 
         result.responseText = aiResponse
           .replace(
-            /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NULL)\].*$/s,
+            /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NEXT_AVAILABLE_SLOT|NULL)\].*$/s,
             ""
           )
           .trim();

@@ -67,6 +67,9 @@ For bookings, do you have:
 - Have booking ID and confirmation? → `[ACTION:CANCEL_BOOKING]`
 - Missing info → Ask for clarification with `[ACTION:NULL]`
 
+**User wants to know the earliest availability:**
+- Let them know that you are checking your system -> `[ACTION:NEXT_AVAILABLE_SLOT]
+
 **Everything else:**
 → `[ACTION:NULL]`
 
@@ -121,6 +124,13 @@ User wants 1pm → System says "1pm not available" → You say "1pm isn't availa
 [ACTION:CANCEL_BOOKING]
 {
   "bookingId": "booking_id"
+}
+```
+
+**Look for earliest availability:**
+```
+[ACTION:NEXT_AVAILABLE_SLOT]
+{
 }
 ```
 

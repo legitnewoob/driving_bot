@@ -12,7 +12,7 @@ if (fs.existsSync(rootEnvFile)) {
 
 
 // Pick environment (default: development)
-console.log("LET'S CHECK" , process.env.NODE_ENV);
+
 const env = process.env.NODE_ENV || "development";
 
 console.log(`Starting in ${env} mode...`);
@@ -23,12 +23,13 @@ const envFile = path.resolve(process.cwd() , `envs/.env.${env}`);
 console.log(`Loading environment from: ${envFile}`);
 // Check if file exists
 if (fs.existsSync(envFile)) {
-  dotenv.config({ path: envFile });
+  dotenv.config({ path: envFile  , override: true });
   console.log(`✅ Loaded ${env} environment`);
 } else {
   console.warn(`⚠️ No env file found for ${env}`);
 }
 
+console.log("LET'S CHECK" , process.env.PHONE_NUMBER_ID , process.env.DB_NAME);
 module.exports = {
   env,
   dbUrl: process.env.DB_NAME,

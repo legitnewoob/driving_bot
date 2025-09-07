@@ -11,13 +11,13 @@ if (fs.existsSync(rootEnvFile)) {
 }
 
 
-// 1. Load root .env first
-// console.log(process.cwd());
-const rootEnvFile = path.resolve(process.cwd(), ".env");
-if (fs.existsSync(rootEnvFile)) {
-  dotenv.config({ path: rootEnvFile });
-  console.log(`✅ Loaded root .env`);
-}
+// // 1. Load root .env first
+// // console.log(process.cwd());
+// const rootEnvFile = path.resolve(process.cwd(), ".env");
+// if (fs.existsSync(rootEnvFile)) {
+//   dotenv.config({ path: rootEnvFile });
+//   console.log(`✅ Loaded root .env`);
+// }
 
 
 // Pick environment (default: development)

@@ -370,7 +370,7 @@ class AIService {
   ) {
     let conversation = `${systemPrompt}\n\n`;
     conversation += `TODAY's date: ${today}\n\n`;
-    conversation += `[nextAvailableDate]: ${nextAvailableDate}\n\n`;
+    // conversation += `[nextAvailableDate]: ${nextAvailableDate}\n\n`;
 
     conversation += "CONVERSATION HISTORY:\n";
     conversationHistory.forEach((msg, index) => {

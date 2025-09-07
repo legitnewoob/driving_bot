@@ -164,6 +164,51 @@ class GeminiTester {
         expectContains: ["checking", "availabl"],
         expectAction: "NEXT_AVAILABLE_SLOT",
       },
+      {
+        message: "Can you check the earliest slot?",
+        expectContains: ["checking", "earliest", "slot"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "Hi, I need a lesson asap.",
+        expectContains: ["checking", "available", "opening"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "I'd like to book a lesson as soon as possible, please.",
+        expectContains: ["let me check", "soonest"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "What is the soonest I can get an appointment?",
+        expectContains: ["checking", "soonest", "available"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "I need to book a lesson immediately.",
+        expectContains: ["checking", "schedule", "for you"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+       {
+        message: "I urgently need a driving lesson.",
+        expectContains: ["checking", "opening", "for you"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "What's the quickest I can get a lesson booked?",
+        expectContains: ["let me check", "schedule"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "Can I get a booking right away?",
+        expectContains: ["checking", "right now"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
+      {
+        message: "Please find me the next available lesson.",
+        expectContains: ["checking", "next available"],
+        expectAction: "NEXT_AVAILABLE_SLOT",
+      },
     ];
 
     for (const test of basicTests) {

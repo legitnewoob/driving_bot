@@ -381,6 +381,12 @@ You must respond with ONLY valid JSON in this exact format:
   //   }
   // }
   static generateDateHint(message, today) {
+    // First, check for urgency keywords
+    const urgencyMatch = message.match(/\b(asap|as soon as possible|immediately|earliest|soonest|urgently|quickest)\b/i);
+    console.log("Urgency match:", urgencyMatch);
+    if (urgencyMatch) {
+      return `Hint: The user wants the earliest possible date/time ("${urgencyMatch[1]}"). The system handles this automatically, DO NOT RETURN ANY specific date or time. Instead, set "hasDateTime" to false and "confidence" to "medium". `;
+    }
     // Regex for a day number (e.g., "1st", "2nd", "25th")
     const dayRegex = /\b(\d{1,2})(?:st|nd|rd|th)\b/i;
     const dayMatch = message.match(dayRegex);
@@ -397,6 +403,7 @@ You must respond with ONLY valid JSON in this exact format:
     const monthMatch = message.match(monthRegex);
 
     const dayOfMonth = parseInt(dayMatch[1], 10);
+
 
     // Case 1: A month was explicitly mentioned (full or abbreviated).
     if (monthMatch) {

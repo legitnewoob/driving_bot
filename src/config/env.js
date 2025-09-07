@@ -41,7 +41,7 @@ if (fs.existsSync(envFile)) {
   console.warn(`⚠️ No env file found for ${env}`);
 }
 
-console.log("LET'S CHECK" , process.env.PHONE_NUMBER_ID , process.env.DB_NAME);
+console.log("LET'S CHECK" , process.env.GOOGLE_REFRESH_TOKEN , process.env.DB_NAME);
 module.exports = {
   env,
   dbUrl: process.env.DB_NAME,

@@ -9,6 +9,67 @@ class CalendarService {
    * @param {string} instructorId - The ID of the instructor.
    * @returns {Promise<{date: string, time: string} | null>} - The earliest slot or null if none found.
    */
+  // async findEarliestAvailableSlot(instructorId) {
+  //   console.log(
+  //     `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
+  //   );
+  //   try {
+  //     const instructor = getInstructor(instructorId);
+  //     if (!instructor) {
+  //       console.error(`❌ Instructor not found: ${instructorId}`);
+  //       throw new Error("Instructor not found");
+  //     }
+
+  //     // Rule: Start checking from 2 days from now
+  //     const startDate = timezoneUtils.getCurrentDate();
+  //     startDate.setDate(startDate.getDate() + 2);
+  //     console.log(`Starting search from date: ${startDate.toDateString()}`);
+  //     // Search for up to 90 days in the future
+  //     for (let i = 0; i < 90; i++) {
+  //       const dateToCheck = new Date(startDate);
+  //       console.log(`Checking date: ${dateToCheck.toDateString()}`);
+  //       dateToCheck.setDate(startDate.getDate() + i);
+
+  //       // Skip weekends (Saturday=6, Sunday=0)
+  //       const dayOfWeek = dateToCheck.getDay();
+  //       if (dayOfWeek === 0 || dayOfWeek === 6) {
+  //         continue; // Skip to the next day
+  //       }
+
+  //       // Format date to 'YYYY-MM-DD'
+  //       const formattedDate = dateToCheck.toISOString().split("T")[0];
+
+  //       // Check each available time slot for that day
+  //       for (const time of instructor.availableTimes) {
+  //         const availability = await this.checkAvailability(
+  //           formattedDate,
+  //           time,
+  //           instructorId
+  //         );
+
+  //         if (availability.isAvailable) {
+  //           // Found the earliest slot, return it immediately
+  //           console.log(
+  //             `✅ Earliest available slot found: ${formattedDate} at ${time}`
+  //           );
+  //           return { date: formattedDate, time: time };
+  //         }
+  //       }
+  //     }
+
+  //     // If the loop finishes, no slots were found in the 90-day window
+  //     console.log("🤷 No available slots found in the next 90 days.");
+  //     return null;
+  //   } catch (error) {
+  //     console.error(
+  //       "❌ Error finding the earliest available slot:",
+  //       error.message
+  //     );
+  //     return null; // Return null on error to prevent crashes
+  //   }
+  // }
+
+  // ... rest of your CalendarService class
   async findEarliestAvailableSlot(instructorId) {
     console.log(
       `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
@@ -20,28 +81,30 @@ class CalendarService {
         throw new Error("Instructor not found");
       }
 
-      // Rule: Start checking from 2 days from now
-      const startDate = timezoneUtils.getCurrentDate();
-      startDate.setDate(startDate.getDate() + 2);
+      // Rule: Start checking from 2 days from now.
+      // Get today's date string and add 2 days to it.
+      const today = timezoneUtils.getCurrentDateString();
+      let dateToCheck = timezoneUtils.addDays(today, 2);
+
+      console.log(`Starting search from date: ${dateToCheck}`);
 
       // Search for up to 90 days in the future
       for (let i = 0; i < 90; i++) {
-        const dateToCheck = new Date(startDate);
-        dateToCheck.setDate(startDate.getDate() + i);
+        // For every loop after the first, advance the date by one day.
+        if (i > 0) {
+          dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
+        }
+        console.log(`Checking date: ${dateToCheck}`);
 
-        // Skip weekends (Saturday=6, Sunday=0)
-        const dayOfWeek = dateToCheck.getDay();
-        if (dayOfWeek === 0 || dayOfWeek === 6) {
+        // Skip weekends using your new utility function
+        if (timezoneUtils.isWeekend(dateToCheck)) {
           continue; // Skip to the next day
         }
 
-        // Format date to 'YYYY-MM-DD'
-        const formattedDate = dateToCheck.toISOString().split("T")[0];
-
-        // Check each available time slot for that day
+        // The 'dateToCheck' variable is already the correctly formatted string. No more conversions needed!
         for (const time of instructor.availableTimes) {
           const availability = await this.checkAvailability(
-            formattedDate,
+            dateToCheck, // Use the safe string directly
             time,
             instructorId
           );
@@ -49,14 +112,14 @@ class CalendarService {
           if (availability.isAvailable) {
             // Found the earliest slot, return it immediately
             console.log(
-              `✅ Earliest available slot found: ${formattedDate} at ${time}`
+              `✅ Earliest available slot found: ${dateToCheck} at ${time}`
             );
-            return { date: formattedDate, time: time };
+            return { date: dateToCheck, time: time };
           }
         }
       }
 
-      // If the loop finishes, no slots were found in the 90-day window
+      // If the loop finishes, no slots were found
       console.log("🤷 No available slots found in the next 90 days.");
       return null;
     } catch (error) {
@@ -64,11 +127,9 @@ class CalendarService {
         "❌ Error finding the earliest available slot:",
         error.message
       );
-      return null; // Return null on error to prevent crashes
+      return null;
     }
   }
-
-  // ... rest of your CalendarService class
   /**
    * Build start and end DateTime objects in configured timezone
    */

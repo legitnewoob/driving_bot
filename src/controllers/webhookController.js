@@ -1,5 +1,5 @@
 const whatsappService = require("../services/whatsappService");
-const aiService = require("../services/aiService");
+const aiService = require("../services/gemini/aiService");
 const bookingService = require("../services/bookingService");
 const {
   getUserSession,
@@ -315,7 +315,7 @@ class WebhookController {
         from
       );
 
-      console.log("🤖 AI Response:", aiResponse);
+      // console.log("🤖 AI Response:", aiResponse);
 
       const { hasAction, actionType, bookingData, responseText } =
         aiService.extractActions(aiResponse);

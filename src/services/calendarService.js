@@ -16,12 +16,14 @@ class CalendarService {
   async checkAvailability(date, time, instructorId) {
     try {
       console.log(`🔍 Checking availability for ${date} at ${time}...`);
-
+      // console.log("Using instructor ID:", instructorId);
       oauth2Client.setCredentials({
         refresh_token: process.env.REMOVED_TOKEN,
       });
 
+      // console.log("Refresh token:", process.env.REMOVED_TOKEN);
       const instructor = getInstructor(instructorId);
+      // console.log("Using instructor:", instructor);
       if (!instructor) {
         console.error(`❌ Instructor not found: ${instructorId}`);
         return { isAvailable: false, error: "Instructor not found" };

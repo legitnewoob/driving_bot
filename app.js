@@ -32,7 +32,8 @@ app.get('/', (req, res) => {
 });
 
 // Session cleanup
-const { cleanupSessions } = require('./src/utils/helpers');
-setInterval(cleanupSessions, 10 * 60 * 1000);
+const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');
+setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
+setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
 module.exports = app;

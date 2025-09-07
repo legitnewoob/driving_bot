@@ -70,9 +70,35 @@ class TimezoneUtils {
   isWithin24Hours(dateStr, timeStr = '00:00') {
     const now = moment.tz(this.timezone);
     const requestedDateTime = moment.tz(`${dateStr} ${timeStr}`, 'YYYY-MM-DD HH:mm', this.timezone);
-    
+    console.log(`Current time: ${now.format('YYYY-MM-DD HH:mm')}`);
+    console.log(`Requested time: ${requestedDateTime.format('YYYY-MM-DD HH:mm')}`);
     const hoursUntil = requestedDateTime.diff(now, 'hours', true);
+    console.log(`Hours until requested time: ${hoursUntil}`);
     return hoursUntil < 24;
+  }
+
+  isDayRestricted(dateStr , timeStr = '00:00') {
+    // Get the current time in your timezone
+    const now = moment.tz(this.timezone);
+
+    // Set the cutoff time to be exactly 24 hours from now
+    const cutoffTime = now.clone().add(24, 'hours');
+
+    // Get the very beginning (00:00) of the day the user is trying to book
+    const startOfRequestedDay = moment.tz(dateStr, 'YYYY-MM-DD', this.timezone).startOf('day');
+    
+    // The new logic: if the start of the requested day is before our 24-hour
+    // cutoff, then the entire day is considered "within 24 hours" and should be blocked.
+    const isDayRestricted = startOfRequestedDay.isBefore(cutoffTime);
+
+    // --- Optional: Logging to see how it works ---
+    console.log(`Current time:           ${now.format('ddd, MMM D YYYY, h:mm a')}`);
+    console.log(`Cutoff time (+24h):     ${cutoffTime.format('ddd, MMM D YYYY, h:mm a')}`);
+    console.log(`Start of requested day: ${startOfRequestedDay.format('ddd, MMM D YYYY, h:mm a')}`);
+    console.log(`Should this day be blocked? ${isDayRestricted}`);
+    // ---------------------------------------------
+
+    return isDayRestricted;
   }
 
   /**

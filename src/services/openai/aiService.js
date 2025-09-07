@@ -1,8 +1,8 @@
-const openai = require("../config/openai");
-const calendarService = require("./calendarService");
-const dateTimeService = require("./dateTimeService copy");
-const dateTimeUtils = require("../utils/dateTimeUtils");
-const timezoneUtils = require("../utils/timezoneUtils");
+const openai = require("../../config/openai");
+const calendarService = require("../calendarService");
+const dateTimeService = require("../gemini/dateTimeService");
+const dateTimeUtils = require("../../utils/dateTimeUtils");
+const timezoneUtils = require("../../utils/timezoneUtils");
 const fs = require("fs");
 const path = require("path");
 
@@ -309,7 +309,7 @@ class AIService {
       })();
 
       console.log("Today:", today);
-      console.log("Next available booking date:", nextAvailableDate);
+      console.log("Show this Next available booking date if user asks:", nextAvailableDate);
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -338,7 +338,7 @@ class AIService {
 
   async getAvailabilityInfo(dateRequested, timeRequested, instructorId) {
     try {
-      const instructor = require("../models/instructorModel").getInstructor(
+      const instructor = require("../../models/instructorModel").getInstructor(
         instructorId
       );
       if (!instructor) {

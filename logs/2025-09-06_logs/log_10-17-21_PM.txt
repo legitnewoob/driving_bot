@@ -1,0 +1,314 @@
+
+⏰ Testing DateTime Extraction
+------------------------------
+
+🧪 Testing DateTime: "rechedule my lesson to tomorrow at 3 PM"
+🔍 Extracting date/time from: "rechedule my lesson to tomorrow at 3 PM"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 15:00, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "rechedule my lesson to 3rd October at 3 PM"
+🔍 Extracting date/time from: "rechedule my lesson to 3rd October at 3 PM"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 15:00, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "rechedule my lesson to 3rd October"
+🔍 Extracting date/time from: "rechedule my lesson to 3rd October"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "Cancel my bookings"
+🔍 Extracting date/time from: "Cancel my bookings"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What's the earliest available slot?"
+🔍 Extracting date/time from: "What's the earliest available slot?"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What's the earliest availability?"
+🔍 Extracting date/time from: "What's the earliest availability?"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "tomorrow at 3 PM"
+🔍 Extracting date/time from: "tomorrow at 3 PM"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 15:00, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "Show my bookings"
+🔍 Extracting date/time from: "Show my bookings"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "Friday morning"
+🔍 Extracting date/time from: "Friday morning"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 09:00, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "next Monday at 2:30 PM"
+🔍 Extracting date/time from: "next Monday at 2:30 PM"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 14:30, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "the 25th at noon"
+🔍 Extracting date/time from: "the 25th at noon"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected time: 12:00, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 15th"
+🔍 Extracting date/time from: "What’s your availability for 15th"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected date: 2025-09-15, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 23rd"
+🔍 Extracting date/time from: "What’s your availability for 23rd"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected date: 2025-09-23, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 1st"
+🔍 Extracting date/time from: "What’s your availability for 1st"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected date: 2025-10-01, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 2nd"
+🔍 Extracting date/time from: "What’s your availability for 2nd"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected date: 2025-10-02, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 29th"
+🔍 Extracting date/time from: "What’s your availability for 29th"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+❌ Expected hasDateTime: true, got: false
+❌ Expected date: 2025-09-29, got: null
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "random message"
+🔍 Extracting date/time from: "random message"
+🔄 Using fallback extraction
+Current date: Sat Sep 06 2025 22:17:22 GMT+0530 (India Standard Time)
+/Users/rajagrawal/Code/driving_bot/src/services/gemini
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+==================================================
+📊 TEST SUMMARY
+==================================================
+Total Tests: 17
+✅ Passed: 5
+❌ Failed: 12
+📈 Success Rate: 29.4%
+
+⚠️  12 test(s) failed. Check the output above for details.
+📝 Logs written to /Users/rajagrawal/Code/driving_bot/logs/2025-09-06_logs/log_10-17-21_PM.txt

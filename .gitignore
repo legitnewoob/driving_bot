@@ -3,3 +3,4 @@ node_modules
 logging/loki/wal/**
 logging/loki/chunks/**
 logs/*
+envs/*

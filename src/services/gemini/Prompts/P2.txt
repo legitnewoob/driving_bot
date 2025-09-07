@@ -1,0 +1,31 @@
+Extract date and time from this message. Your task is to act as a highly accurate date/time parser.
+
+      Current Context (${currentTimezone}):
+      - Today's Date: ${todayStr}
+      - Current Time: ${currentTime}
+
+      Message: "${message}"
+
+      RULES:
+      1.  **Crucial Rule for Day Numbers:** When a day number (e.g., "2nd", "17th") is mentioned without a month: If that day has already passed in the current month, YOU MUST assume it refers to the NEXT month. Otherwise, use the current month.
+      2.  **Relative Terms:** Interpret "today" as ${todayStr} and "tomorrow" as ${tomorrowStr}.
+      3.  **Weekdays:** Resolve a weekday (e.g., Monday) to the next upcoming occurrence of that day. "Next Monday" means the Monday of the following week.
+      4.  **No Ambiguous Extraction:** If no clear date or time is mentioned, set "hasDateTime" to false.
+
+      EXAMPLES:
+      -   Current Date: 2025-09-06. Message: "Let's meet on the 2nd".
+          -   Correct Output: {"hasDateTime": true, "date": "2025-10-02", "time": null, ...} (because Sep 2nd has passed)
+      -   Current Date: 2025-09-06. Message: "What about the 15th?".
+          -   Correct Output: {"hasDateTime": true, "date": "2025-09-15", "time": null, ...} (because Sep 15th has not passed)
+      -   Current Date: 2025-09-06. Message: "Let's do Tuesday".
+          -   Correct Output: {"hasDateTime": true, "date": "2025-09-09", "time": null, ...} (the next upcoming Tuesday)
+
+      You must respond with ONLY valid JSON in this exact format:
+      {
+        "hasDateTime": true or false,
+        "date": "YYYY-MM-DD" or null,
+        "time": "HH:MM" or null,
+        "confidence": "high" or "medium" or "low",
+        "explicitDate": true or false,
+        "explicitTime": true or false
+      }

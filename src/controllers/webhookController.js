@@ -1,6 +1,7 @@
 const whatsappService = require("../services/whatsappService");
-const aiService = require("../services/aiService");
+const aiService = require("../services/gemini/aiService");
 const bookingService = require("../services/bookingService");
+const calendarService = require("../services/calendarService");
 const {
   getUserSession,
   updateUserSession,
@@ -21,6 +22,28 @@ class WebhookController {
   }
 
   /* ========== BOOKING ACTIONS ========== */
+
+  async next_available_slot(from) {
+    console.log("Let's find the next available appointment...");
+
+    const earliestSlot = await calendarService.findEarliestAvailableSlot(
+      process.env.PHONE_NUMBER_ID
+    );
+
+    if (earliestSlot) {
+      // Here you can store the result or format a message for the user
+      // For example, store it in a user session:
+      // userSession.nextAvailableSlot = earliestSlot;
+      console.log(
+        `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`
+      );
+      aiService.updatePendingContext(from, earliestSlot);
+      whatsappService.sendTextMessage(from , `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
+    } else {
+      console.log("Sorry, no appointments are available in the near future.");
+      return "Sorry, no appointments are available in the near future. Please check back later.";
+    }
+  }
 
   async showBookings(from) {
     const bookings = await bookingService.getBookingsByUser(from);
@@ -302,20 +325,19 @@ class WebhookController {
 
   async handleIncomingMessage(from, messageContent) {
     try {
-      
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
       const session = getUserSession(from);
-      
+
       // SPECIAL RUTHLESS CASE
-      
+
       const aiResponse = await aiService.getResponse(
         messageContent,
         session.conversationHistory,
         from
       );
 
-      console.log("🤖 AI Response:", aiResponse);
+      // console.log("🤖 AI Response:", aiResponse);
 
       const { hasAction, actionType, bookingData, responseText } =
         aiService.extractActions(aiResponse);
@@ -350,7 +372,9 @@ class WebhookController {
           case "cancel_booking":
             await this.cancelBooking(from, bookingData);
             break;
-
+          case "next_available_slot":
+            await this.next_available_slot(from);
+            break;
           case "null":
             // await whatsappService.sendTextMessage(from, "⚠️ ACTION IS NULL");
             break;

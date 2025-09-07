@@ -1,8 +1,8 @@
-const openai = require("../config/openai");
-const calendarService = require("./calendarService");
-const dateTimeService = require("./dateTimeService copy");
-const dateTimeUtils = require("../utils/dateTimeUtils");
-const timezoneUtils = require("../utils/timezoneUtils");
+const { model } = require("../../config/gemini");
+const calendarService = require("../calendarService");
+const dateTimeService = require("./dateTimeService");
+const dateTimeUtils = require("../../utils/dateTimeUtils");
+const timezoneUtils = require("../../utils/timezoneUtils");
 const fs = require("fs");
 const path = require("path");
 
@@ -22,7 +22,7 @@ class AIService {
         .join("\n")}`;
     }
     const systemPrompt = fs.readFileSync(
-      path.join(__dirname, "../..", "SP8.txt"),
+      path.join(__dirname, "../../../", "SP8.txt"),
       "utf-8"
     );
 
@@ -66,6 +66,10 @@ class AIService {
   // }
   isWithin24Hours(dateRequested, timeRequested = null) {
     return timezoneUtils.isWithin24Hours(dateRequested, timeRequested);
+  }
+
+  isDayRestricted(dateRequested, timeRequested = null) {
+    return timezoneUtils.isDayRestricted(dateRequested, timeRequested);
   }
 
   // Helper method to check if date is weekend
@@ -124,10 +128,11 @@ class AIService {
 
   // Helper method to generate system messages based on what's missing
   generateSystemMessage(completeness, availabilityInfo = null) {
+    console.log("Generating system message with:", completeness, availabilityInfo);
     const { finalDate, finalTime } = completeness;
-
+    console.log("Is it within 24hours" ,this.isWithin24Hours(finalDate, finalTime));
     // Check for 24-hour advance booking requirement first
-    if (finalDate && this.isWithin24Hours(finalDate, finalTime)) {
+    if (finalDate && this.isDayRestricted(finalDate, finalTime)) {
       return `\n\n[SYSTEM: Lessons cannot be booked less than 24 hours in advance. Please choose a date and time at least 24 hours from now.]`;
     }
 
@@ -218,6 +223,7 @@ class AIService {
 
   async getResponse(userMessage, conversationHistory, userPhone) {
     try {
+      console.log("Conversation history:", conversationHistory);
       const dateTimeInfoUnchecked =
         await dateTimeService.extractDateTimeFromMessage(userMessage);
 
@@ -234,24 +240,19 @@ class AIService {
       let enhancedMessage = userMessage;
       let availabilityInfo = null;
 
-      // Only process if we detected some datetime information
       if (dateTimeInfo.hasDateTime) {
-        // Update pending context with any new info
         this.updatePendingContext(userPhone, dateTimeInfo);
-
-        // Check what datetime info we have now
         const completeness = this.checkDateTimeCompleteness(
           dateTimeInfo,
           userPhone
         );
         console.log("DateTime completeness:", completeness);
 
-        // If we have at least a date, try to get availability info
         if (completeness.finalDate) {
           try {
             availabilityInfo = await this.getAvailabilityInfo(
               completeness.finalDate,
-              completeness.finalTime, // might be null
+              completeness.finalTime,
               process.env.PHONE_NUMBER_ID
             );
             console.log("Availability info:", availabilityInfo);
@@ -260,7 +261,6 @@ class AIService {
           }
         }
 
-        // Generate appropriate system message based on what we have
         const systemMessage = this.generateSystemMessage(
           completeness,
           availabilityInfo
@@ -277,28 +277,48 @@ class AIService {
         process.env.APP_TIMEZONE || "Asia/Kolkata"
       }): ${timezoneUtils.getCurrentDateString()}`;
 
+      // const nextAvailableDate = (() => {
+      //   const now = new Date(timezoneUtils.getCurrentDate());
+      //   const next = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      //   let dayOfWeek = next.getDay();
+
+      //   if (dayOfWeek === 0 || dayOfWeek === 6) {
+      //     const daysToAdd = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+      //     next.setDate(next.getDate() + daysToAdd);
+      //   }
+
+      //   const dayName = next.toLocaleDateString("en-US", { weekday: "long" });
+      //   const month = next.toLocaleDateString("en-US", { month: "long" });
+      //   const day = next.getDate();
+      //   const year = next.getFullYear();
+
+      //   const getOrdinal = (n) => {
+      //     const s = ["th", "st", "nd", "rd"];
+      //     const v = n % 100;
+      //     return n + (s[(v - 20) % 10] || s[v] || s[0]);
+      //   };
+
+      //   return `${dayName}, ${month} ${getOrdinal(day)}, ${year}`;
+      // })();
+
       const nextAvailableDate = (() => {
-        // Get current date-time (timezone aware if your utils handle it)
-        const now = new Date(timezoneUtils.getCurrentDate()); // Full timestamp
-
-        // Add 24 hours
-        const next = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-        // Check if it's weekend (Saturday = 6, Sunday = 0)
+        const now = new Date(timezoneUtils.getCurrentDate());
+        // The key change is here: add 2 days instead of 1
+        const next = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
         let dayOfWeek = next.getDay();
+
+        // This weekend logic still works perfectly
         if (dayOfWeek === 0 || dayOfWeek === 6) {
-          // If weekend, move to next Monday
-          const daysToAdd = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+          // 0 = Sunday, 6 = Saturday
+          const daysToAdd = dayOfWeek === 0 ? 1 : 2; // If Sunday, add 1 day to get Monday. If Saturday, add 2 days.
           next.setDate(next.getDate() + daysToAdd);
         }
 
-        // Format parts
         const dayName = next.toLocaleDateString("en-US", { weekday: "long" });
         const month = next.toLocaleDateString("en-US", { month: "long" });
         const day = next.getDate();
         const year = next.getFullYear();
 
-        // Ordinal suffix
         const getOrdinal = (n) => {
           const s = ["th", "st", "nd", "rd"];
           const v = n % 100;
@@ -307,38 +327,62 @@ class AIService {
 
         return `${dayName}, ${month} ${getOrdinal(day)}, ${year}`;
       })();
-
       console.log("Today:", today);
       console.log("Next available booking date:", nextAvailableDate);
 
-      const messages = [
-        { role: "system", content: systemPrompt },
-        { role: "system", content: "TODAY's date" + today },
-        {
-          role: "system",
-          content: "[nextAvailableDate]: " + nextAvailableDate,
-        },
-        ...conversationHistory,
-        { role: "user", content: enhancedMessage },
-      ];
+      // **KEY CHANGE: Building conversation for Gemini**
+      const conversationText = this.buildConversationForGemini(
+        systemPrompt,
+        today,
+        nextAvailableDate,
+        conversationHistory,
+        enhancedMessage
+      );
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: messages,
-        max_tokens: 500,
-        temperature: 0.7,
-      });
+      console.log(
+        "Sending to Gemini:",
+        conversationText.substring(0, 500) + "..."
+      );
 
-      return response.choices[0].message.content;
+      // **Gemini API call**
+      const result = await model.generateContent(conversationText);
+      const response = result.response;
+      const text = response.text();
+
+      console.log("🤖 Gemini response:", text);
+      return text;
     } catch (error) {
-      console.error("Error getting AI response:", error);
+      console.error("Error getting Gemini response:", error);
       throw error;
     }
   }
 
+  buildConversationForGemini(
+    systemPrompt,
+    today,
+    nextAvailableDate,
+    conversationHistory,
+    userMessage
+  ) {
+    let conversation = `${systemPrompt}\n\n`;
+    conversation += `TODAY's date: ${today}\n\n`;
+    conversation += `[nextAvailableDate]: ${nextAvailableDate}\n\n`;
+
+    conversation += "CONVERSATION HISTORY:\n";
+    conversationHistory.forEach((msg, index) => {
+      const role = msg.role === "user" ? "User" : "Assistant";
+      conversation += `${role}: ${msg.content}\n`;
+    });
+
+    conversation += `\nUser: ${userMessage}\n\n`;
+    conversation += "Assistant: ";
+
+    return conversation;
+  }
+
   async getAvailabilityInfo(dateRequested, timeRequested, instructorId) {
     try {
-      const instructor = require("../models/instructorModel").getInstructor(
+      const instructor = require("../../models/instructorModel").getInstructor(
         instructorId
       );
       if (!instructor) {

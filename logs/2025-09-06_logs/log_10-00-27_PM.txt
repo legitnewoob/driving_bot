@@ -1,0 +1,486 @@
+
+⏰ Testing DateTime Extraction
+------------------------------
+
+🧪 Testing DateTime: "rechedule my lesson to tomorrow at 3 PM"
+🔍 Extracting date/time from: "rechedule my lesson to tomorrow at 3 PM"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:27 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-07",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-07",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 15:00
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "rechedule my lesson to 3rd October at 3 PM"
+🔍 Extracting date/time from: "rechedule my lesson to 3rd October at 3 PM"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:30 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-10-03",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-10-03",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 15:00
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "rechedule my lesson to 3rd October"
+🔍 Extracting date/time from: "rechedule my lesson to 3rd October"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:31 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-10-03",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-10-03",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "Cancel my bookings"
+🔍 Extracting date/time from: "Cancel my bookings"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:32 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What's the earliest available slot?"
+🔍 Extracting date/time from: "What's the earliest available slot?"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:33 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What's the earliest availability?"
+🔍 Extracting date/time from: "What's the earliest availability?"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:34 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "tomorrow at 3 PM"
+🔍 Extracting date/time from: "tomorrow at 3 PM"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:35 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-07",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-07",
+  "time": "15:00",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 15:00
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "Show my bookings"
+🔍 Extracting date/time from: "Show my bookings"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:36 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "Friday morning"
+🔍 Extracting date/time from: "Friday morning"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:37 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-12",
+  "time": "09:00",
+  "confidence": "medium",
+  "explicitDate": false,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-12",
+  "time": "09:00",
+  "confidence": "medium",
+  "explicitDate": false,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 09:00
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "next Monday at 2:30 PM"
+🔍 Extracting date/time from: "next Monday at 2:30 PM"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:38 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-08",
+  "time": "14:30",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-08",
+  "time": "14:30",
+  "confidence": "high",
+  "explicitDate": false,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 14:30
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "the 25th at noon"
+🔍 Extracting date/time from: "the 25th at noon"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:39 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-25",
+  "time": "12:00",
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": true
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-25",
+  "time": "12:00",
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": true
+}
+✅ DateTime detection: true
+✅ Time matches: 12:00
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What’s your availability for 15th"
+🔍 Extracting date/time from: "What’s your availability for 15th"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:40 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-15",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-15",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+✅ Date matches: 2025-09-15
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What’s your availability for 23rd"
+🔍 Extracting date/time from: "What’s your availability for 23rd"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:41 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-23",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-23",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+✅ Date matches: 2025-09-23
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "What’s your availability for 1st"
+🔍 Extracting date/time from: "What’s your availability for 1st"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:42 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-01",
+  "time": null,
+  "confidence": "medium",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-01",
+  "time": null,
+  "confidence": "medium",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+❌ Expected date: 2025-10-01, got: 2025-09-01
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 2nd"
+🔍 Extracting date/time from: "What’s your availability for 2nd"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:43 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-02",
+  "time": null,
+  "confidence": "medium",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-02",
+  "time": null,
+  "confidence": "medium",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+❌ Expected date: 2025-10-02, got: 2025-09-02
+❌ DateTime test FAILED
+
+🧪 Testing DateTime: "What’s your availability for 29th"
+🔍 Extracting date/time from: "What’s your availability for 29th"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:44 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": true,
+  "date": "2025-09-29",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+```
+✅ Gemini extracted and validated: [object Object]
+📊 Result: {
+  "hasDateTime": true,
+  "date": "2025-09-29",
+  "time": null,
+  "confidence": "high",
+  "explicitDate": true,
+  "explicitTime": false
+}
+✅ DateTime detection: true
+✅ Date matches: 2025-09-29
+✅ DateTime test PASSED
+
+🧪 Testing DateTime: "random message"
+🔍 Extracting date/time from: "random message"
+🔄 Using fallback extraction
+Current day: Sat Sep 06 2025 22:00:45 GMT+0530 (India Standard Time)
+🤖 Sending to Gemini for datetime extraction
+🤖 Gemini raw response: ```json
+{
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": null,
+  "explicitDate": false,
+  "explicitTime": false
+}
+```
+❌ Invalid confidence level
+⚠️ Gemini response failed validation, using fallback
+🔄 Using fallback extraction
+📊 Result: {
+  "hasDateTime": false,
+  "date": null,
+  "time": null,
+  "confidence": "low",
+  "explicitDate": false,
+  "explicitTime": false
+}
+✅ DateTime detection: false
+✅ DateTime test PASSED
+
+==================================================
+📊 TEST SUMMARY
+==================================================
+Total Tests: 17
+✅ Passed: 15
+❌ Failed: 2
+📈 Success Rate: 88.2%
+
+⚠️  2 test(s) failed. Check the output above for details.
+📝 Logs written to /Users/rajagrawal/Code/driving_bot/logs/2025-09-06_logs/log_10-00-27_PM.txt

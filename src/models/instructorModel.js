@@ -5,8 +5,8 @@ const userSessions = {};
 // Instructor data
 const instructors = {
     [process.env.PHONE_NUMBER_ID]: {
-        name: 'Dummy Instructor',
-        googleCalendarId: 'dummyinstructor57@gmail.com',
+        name: 'Dev Instructor',
+        googleCalendarId: 'agrawalraj918@gmail.com',
         availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
         specialties: ['Basic driving', 'Highway driving', 'Parking', 'City driving'],
         rates: {

@@ -1,4 +1,6 @@
-require('dotenv').config();
+const config = require("./src/config/env");
+const logEnvironment = require("./src/utils/envLogger");
+
 const app = require('./app');
 
 
@@ -11,4 +13,6 @@ app.listen(PORT, () => {
     console.log(`🔗 Webhook URL: http://localhost:${PORT}/webhook`);
     console.log(`📅 Google Auth URL: http://localhost:${PORT}/auth/google`);
     console.log(`✨ Enhanced with automatic availability checking!`);
+    logEnvironment(config.env || "development");
+
 });

@@ -1,0 +1,64 @@
+1. Billing for Google Services
+2. Bot is getting slow due to recurrent API Calls so need some architecture changes
+3. Maps API has a seperate Billing on cloud console
+4. 
+
+date , time
+
+{
+    DB -> How many bookings for req. date
+    Calendar -> 9am to 9pm
+}
+
+
+// ADI's 20
+// PDI's 15
+// Driving School => 10 * ~5
+
+2 drivings SCHOOL
+100 pounds 
+
+4 users => x
+5 users => x + 0.01%
+4 => 400
+
+
+Gemini , Whatsapp , Maps , Sheets , Calendar => 30 pounds
+
+Hosting => 15 pounds
+
+5 PDI's
+
+
+// Ideas for more / less optz?? maybe
+
+
+// Ask a postal code always
+// Managing multiple postal codes
+
+1. Premium slots
+
+
+2. Zonal Bookings
+3. Geographic Clustering + Sequential Routing (Recommended)
+4. Penalty Cost
+
+
+
+Dynamic Calendar => 
+
+9 : 45 => 1 hours => 10 : 45
+
+After 15mins 
+
+11 : 00 am lesson 
+
+Donna should compare the distance between these two learner locations and understand if
+11 am works?
+
+
+
+DEV => UAT => OWN(UAT) =>(PROD)
+
+
+

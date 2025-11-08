@@ -2,6 +2,8 @@ const whatsappService = require("../services/whatsappService");
 const aiService = require("../services/gemini/aiService");
 const bookingService = require("../services/bookingService");
 const calendarService = require("../services/calendarService");
+const { ensureUserDetails } = require("../services/userDetailsService");
+
 const {
   getUserSession,
   updateUserSession,
@@ -116,7 +118,7 @@ class WebhookController {
 
       // Add optional details with better formatting
       if (booking.service) message += `🎯 Service: *${booking.service}*\n`;
-      if (booking.location) message += `📍 ${booking.location}\n`;
+      if (booking.postalCode) message += `📍 ${booking.postalCode}\n`;
       if (booking.status) {
         const statusEmoji =
           booking.status.toLowerCase() === "confirmed"
@@ -228,8 +230,9 @@ class WebhookController {
 
   async processBooking(from, bookingData) {
     try {
+      
       console.log("📝 Processing booking for:", from, bookingData);
-      const booking = await bookingService.createBooking(bookingData);
+      const booking = await bookingService.createBooking(from , bookingData);
       console.log(booking);
       const confirmationMessage = [
         "🎉 Booking Confirmed!",
@@ -335,15 +338,32 @@ class WebhookController {
     try {
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
-      const session = getUserSession(from);
+      // 🧠 Step 1: Check user profile before AI flow
+    const { inProgress, user , justCompleted} = await ensureUserDetails(from, messageContent);
+    if (inProgress) {
+      console.log("⏳ Waiting for user details to be completed...");
+      // ⏸ Stop here — don't send message to Gemini yet
+      return;
+    }
 
-      // SPECIAL RUTHLESS CASE
+    if (justCompleted) {
 
-      const aiResponse = await aiService.getResponse(
-        messageContent,
-        session.conversationHistory,
-        from
-      );
+      console.log("✅ User details just completed. Clearing context...");
+      // Now safe to clear conversation history here
+      this.clearUserConversationHistoryAndContext(from);
+
+      whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
+
+      return;
+    } 
+
+    // ✅ Step 2: Continue your existing AI-based logic
+    const session = getUserSession(from);
+    const aiResponse = await aiService.getResponse(
+      messageContent,
+      session.conversationHistory,
+      from
+    );
 
       // console.log("🤖 AI Response:", aiResponse);
 

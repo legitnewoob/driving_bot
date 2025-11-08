@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
 // - gemini-1.0-pro (legacy, cheaper)
 
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash",
+  model: "gemini-2.0-flash",
   generationConfig: {
     temperature: 0.7,
     topP: 0.8,

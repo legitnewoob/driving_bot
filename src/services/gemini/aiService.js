@@ -3,6 +3,7 @@ const calendarService = require("../calendarService");
 const dateTimeService = require("./dateTimeService");
 const dateTimeUtils = require("../../utils/dateTimeUtils");
 const timezoneUtils = require("../../utils/timezoneUtils");
+const RouteOptimizer = require("../routeOptimizer");
 const fs = require("fs");
 const path = require("path");
 
@@ -257,7 +258,8 @@ class AIService {
             availabilityInfo = await this.getAvailabilityInfo(
               completeness.finalDate,
               completeness.finalTime,
-              process.env.PHONE_NUMBER_ID
+              process.env.PHONE_NUMBER_ID,
+              userPhone
             );
             console.log("Availability info:", availabilityInfo);
           } catch (error) {
@@ -384,7 +386,7 @@ class AIService {
     return conversation;
   }
 
-  async getAvailabilityInfo(dateRequested, timeRequested, instructorId) {
+  async getAvailabilityInfo(dateRequested, timeRequested, instructorId , userPhone) {
     try {
       const instructor = require("../../models/instructorModel").getInstructor(
         instructorId
@@ -408,12 +410,25 @@ class AIService {
       // }
 
       // Get available slots for the date
-      const availableSlotsForDate =
+      let availableSlotsForDate =
         await calendarService.getAvailableTimeSlotsForDate(
           dateRequested,
           instructorId
         );
+      
+      const routeOptimizer = new RouteOptimizer();
+      const filteredAvailableSlots =  await routeOptimizer.filterAvailableSlotsByLocation(
+        availableSlotsForDate,
+        dateRequested,
+        instructorId,
+        userPhone
+      );
 
+
+      console.log("Filtered available slots:", filteredAvailableSlots);
+
+      availableSlotsForDate = filteredAvailableSlots;
+      // return;
       // const requestedDate = new Date(dateRequested);
       // const isWeekend =
       //   requestedDate.getDay() === 0 || requestedDate.getDay() === 6;
@@ -430,6 +445,9 @@ class AIService {
         );
       }
 
+      console.log("THINGS TO CHECK");
+      console.log("Slot availability:", slotAvailability);  
+      console.log("Available slots for date:", availableSlotsForDate);
       return {
         isValidRequest: true,
         requestedDate: dateRequested,

@@ -215,7 +215,7 @@ class CalendarService {
           availableSlots.push(time);
         }
       }
-
+      
       return availableSlots;
     } catch (error) {
       console.error("❌ Error getting available time slots:", error);

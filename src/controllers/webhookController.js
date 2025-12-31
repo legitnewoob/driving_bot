@@ -276,7 +276,9 @@ class WebhookController {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-
+    
+    console.log("CHECK");
+    console.log(process.env.VERIFY_TOKEN);
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
       console.log("Webhook verified successfully!");
       return res.status(200).send(challenge);

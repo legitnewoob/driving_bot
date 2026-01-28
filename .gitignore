@@ -1,5 +1,26 @@
-node_modules
-.env
-logging/loki/wal/**
-logging/loki/chunks/**
-logs
+# OS
+.DS_Store
+
+# Logs
+logs/
+logging/
+*.log
+
+# VS Code counter
+.VSCodeCounter/
+
+# Env files (keep example)
+envs/.env.*
+!envs/.env.example
+
+# SSL / certs
+nginx/ssl/
+
+# Node
+node_modules/
+
+# Docker
+*.pid
+
+# Misc
+.git.env

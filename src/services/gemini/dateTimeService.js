@@ -2,153 +2,201 @@ const { model } = require("../../config/gemini");
 const timezoneUtils = require("../../utils/timezoneUtils");
 
 class DateTimeService {
+  // Constants
+  static CONFIDENCE_LEVELS = {
+    HIGH: "high",
+    MEDIUM: "medium",
+    LOW: "low",
+  };
+
+  static TIME_APPROXIMATIONS = {
+    morning: "09:00",
+    afternoon: "14:00",
+    evening: "19:00",
+    night: "21:00",
+  };
+
+  static URGENCY_KEYWORDS = /\b(asap|as soon as possible|immediately|earliest|soonest|urgently|quickest)\b/i;
+  static DAY_NUMBER_REGEX = /\b(\d{1,2})(?:st|nd|rd|th)\b/i;
+  static MONTH_REGEX = /\b(January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sep|October|Oct|November|Nov|December|Dec)\b/i;
+  static DATE_FORMAT_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  static TIME_FORMAT_REGEX = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+
+  // JSON Schema for Gemini structured output
+// JSON Schema for Gemini structured output (Gemini-compatible format)
+  static DATE_TIME_SCHEMA = {
+    type: "OBJECT",
+    properties: {
+      hasDateTime: {
+        type: "BOOLEAN",
+        description: "Whether a date or time was found in the message",
+        nullable: false
+      },
+      date: {
+        type: "STRING",
+        description: "Extracted date in YYYY-MM-DD format, or null if no date found",
+        nullable: true
+      },
+      time: {
+        type: "STRING",
+        description: "Extracted time in HH:MM format (24-hour), or null if no time found",
+        nullable: true
+      },
+      confidence: {
+        type: "STRING",
+        description: "Confidence level of the extraction (high, medium, or low)",
+        nullable: false
+      },
+      reasoning: {
+        type: "STRING",
+        description: "Brief explanation of the extraction logic",
+        nullable: false
+      },
+      explicitDate: {
+        type: "BOOLEAN",
+        description: "Whether the date was explicitly mentioned",
+        nullable: false
+      },
+      explicitTime: {
+        type: "BOOLEAN",
+        description: "Whether the time was explicitly mentioned",
+        nullable: false
+      }
+    },
+    required: ["hasDateTime", "date", "time", "confidence", "reasoning", "explicitDate", "explicitTime"]
+  };
+
+  /**
+   * Main method to extract date/time from a message
+   * @param {string} message - The message to parse
+   * @returns {Promise<Object>} Extracted date/time information
+   */
   static async extractDateTimeFromMessage(message) {
     console.log(`🔍 Extracting date/time from: "${message}"`);
 
-    // Input validation
-    if (!message || typeof message !== "string") {
+    if (!this.isValidInput(message)) {
       console.log("❌ Invalid message input");
       return this.getDefaultResult();
     }
 
-    const today = timezoneUtils.getCurrentDate();
-    const todayStr = timezoneUtils.getCurrentDateString();
-    const currentTime = timezoneUtils.getCurrentTimeString();
-
     try {
-      // Try local extraction first
+      // Try local extraction first for simple cases
       const localResult = this.fallbackExtraction(message);
-      if (
-        localResult &&
-        localResult.hasDateTime &&
-        localResult.confidence === "high"
-      ) {
+      if (this.isHighConfidenceResult(localResult)) {
         console.log("✅ Using local extraction (high confidence)");
         return localResult;
       }
 
       // Use Gemini for complex cases
-      const tomorrowStr = timezoneUtils.getTomorrowDateString();
-      const currentTimezone = process.env.APP_TIMEZONE || "Asia/Kolkata";
-      const currentDay = timezoneUtils.getCurrentDay();
-      const currentDate = timezoneUtils.getCurrentDate();
-      console.log("Current date:", currentDate);
-      //    const prompt = `Extract date and time from this message. Current context (${currentTimezone}): ${todayStr} ${currentTime}
+      return await this.extractWithGemini(message);
+    } catch (error) {
+      console.error("❌ Error with date/time extraction:", error.message);
+      console.error("Stack trace:", error.stack);
+      return this.fallbackExtraction(message);
+    }
+  }
 
-      // Message: "${message}"
+  /**
+   * Extract date/time using Gemini AI with retry logic
+   * @param {string} message - The message to parse
+   * @param {number} retryCount - Current retry attempt
+   * @returns {Promise<Object>} Extracted date/time information
+   */
+  static async extractWithGemini(message, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    
+    if (!model) {
+      console.log("❌ Gemini model not available, using fallback");
+      return this.fallbackExtraction(message);
+    }
 
-      // Rules:
-      // 1. Only extract explicitly mentioned dates/times
-      // 2. For day numbers without month (like "17th"):
-      //    - If date >= current date : (${currentDate}), assume it is in the current month (${todayStr}).
-      //    - If date < current date : (${currentDate}), roll over to next month.
-      //    - If message says "this [date number]" → ALWAYS use the current month, even if day < current day.
-      // 3. Relative terms: today=${todayStr}, tomorrow=${tomorrowStr}
-      // 4. Time approximations: morning=09:00, afternoon=14:00, evening=19:00, night=21:00
-      // 5. If no clear date/time, return hasDateTime=false
-      // 6. All times should be in 24-hour format (HH:MM)
-      // 7. Weekdays (e.g. Monday, Tuesday, etc.): resolve to the next occurrence of that weekday after today (${todayStr}).
-      // 8. If it says "next [weekday]", interpret as the weekday in the following week.
+    try {
+      const prompt = this.buildGeminiPrompt(message);
+      console.log("🤖 Sending to Gemini for datetime extraction with JSON schema");
 
-      // You must respond with ONLY valid JSON in this exact format:
-      // {
-      //   "hasDateTime": true or false,
-      //   "date": "YYYY-MM-DD" or null,
-      //   "time": "HH:MM" or null,
-      //   "confidence": "high" or "medium" or "low",
-      //   "explicitDate": true or false,
-      //   "explicitTime": true or false
-      // }
+      // Use Gemini's JSON mode with schema
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: this.DATE_TIME_SCHEMA,
+          temperature: 0.1, // Lower temperature for more consistent outputs
+        },
+      });
+      
+      if (!this.isValidGeminiResponse(result)) {
+        console.log("❌ Invalid Gemini response");
+        
+        if (retryCount < MAX_RETRIES) {
+          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(1000);
+          return this.extractWithGemini(message, retryCount + 1);
+        }
+        
+        return this.fallbackExtraction(message);
+      }
 
-      // Be conservative - only extract clear, unambiguous date/time references.`;
+      const content = result.response.text();
+      console.log("🤖 Gemini raw response:", content.trim());
 
-      const linebreak = "\n";
+      const parsed = this.parseGeminiResponse(content);
+      
+      if (!parsed) {
+        console.log("⚠️ Failed to parse Gemini response");
+        
+        if (retryCount < MAX_RETRIES) {
+          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(1000);
+          return this.extractWithGemini(message, retryCount + 1);
+        }
+        
+        return this.fallbackExtraction(message);
+      }
+      
+      if (!this.validateExtractedData(parsed)) {
+        console.log("⚠️ Gemini response failed validation");
+        
+        if (retryCount < MAX_RETRIES) {
+          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(1000);
+          return this.extractWithGemini(message, retryCount + 1);
+        }
+        
+        return this.fallbackExtraction(message);
+      }
 
-      //    const prompt = `Extract date and time from this message. Your task is to act as a highly accurate date/time parser.
+      console.log("✅ Gemini extracted and validated:", parsed);
+      return this.normalizeResult(parsed);
+      
+    } catch (error) {
+      console.error("❌ Error in Gemini extraction:", error.message);
+      
+      if (retryCount < MAX_RETRIES) {
+        console.log(`🔄 Retrying after error... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+        await this.delay(1000);
+        return this.extractWithGemini(message, retryCount + 1);
+      }
+      
+      return this.fallbackExtraction(message);
+    }
+  }
 
-      //     Current Context (${currentTimezone}):
-      //     - Today's Date: ${todayStr}
-      //     - Current Time: ${currentTime}
+  /**
+   * Build the prompt for Gemini AI
+   * @param {string} message - The message to parse
+   * @returns {string} Formatted prompt
+   */
+  static buildGeminiPrompt(message) {
+    const context = this.getDateTimeContext();
+    const dateHint = this.generateDateHint(message, context.today);
+    
+    console.log(`💡 Generated Hint: "${dateHint}"`);
 
-      //     Message: "${message}"
-
-      //     RULES:
-      //     1.  **Crucial Rule for Day Numbers:** When a day number (e.g., "2nd", "17th") is mentioned without a month: If that day has already passed in the current month, YOU MUST assume it refers to the NEXT month. Otherwise, use the current month.
-      //     2.  **Relative Terms:** Interpret "today" as ${todayStr} and "tomorrow" as ${tomorrowStr}.
-      //     3.  **Weekdays:** Resolve a weekday (e.g., Monday) to the next upcoming occurrence of that day. "Next Monday" means the Monday of the following week.
-      //     4.  **No Ambiguous Extraction:** If no clear date or time is mentioned, set "hasDateTime" to false.
-
-      //     EXAMPLES:
-      //     -   Current Date: 2025-09-06. Message: "Let's meet on the 2nd".
-      //         -   Correct Output: {"hasDateTime": true, "date": "2025-10-02", "time": null, ...} (because Sep 2nd has passed)
-      //     -   Current Date: 2025-09-06. Message: "What about the 15th?".
-      //         -   Correct Output: {"hasDateTime": true, "date": "2025-09-15", "time": null, ...} (because Sep 15th has not passed)
-      //     -   Current Date: 2025-09-06. Message: "Let's do Tuesday".
-      //         -   Correct Output: {"hasDateTime": true, "date": "2025-09-09", "time": null, ...} (the next upcoming Tuesday)
-
-      //     You must respond with ONLY valid JSON in this exact format:
-      //     {
-      //       "hasDateTime": true or false,
-      //       "date": "YYYY-MM-DD" or null,
-      //       "time": "HH:MM" or null,
-      //       "confidence": "high" or "medium" or "low",
-      //       "explicitDate": true or false,
-      //       "explicitTime": true or false
-      //     }`;
-
-      // Inside your DateTimeService.js, replace the old prompt with this one.
-      const linebreak2 = "\n\n";
-
-      // const prompt = `You are a highly accurate and intelligent date/time parsing assistant. Extract the date and time from the user's message based on the provided context and rules.
-
-      // Current Context (${currentTimezone}):
-      // - Today's Date: ${todayStr} (It is a ${currentDay})
-      // - Current Time: ${currentTime}
-
-      // Message: "${message}"
-
-      // RULES:
-      // 1.  **Compound Extraction:** If a day and a time of day are mentioned (e.g., "Monday morning"), you MUST extract both the date for that day and the corresponding time.
-      // 2.  **Day Number Rollover:** When a day number (e.g., "2nd", "17th") is mentioned without a month: if that day has already passed in the current month, YOU MUST assume it refers to the NEXT month. Otherwise, use the current month.
-      // 3.  **Weekday Resolution:**
-      //     -   A weekday ("Monday", "Tuesday") refers to the next upcoming occurrence of that day.
-      //     -   "Next [weekday]" (e.g., "next Monday") refers to the weekday in the *following* week (i.e., not the one coming up in a few days, but the one after that).
-      // 4.  **Time Approximations:** Use these values for vague times: morning=09:00, afternoon=14:00, evening=19:00, night=21:00.
-      // 5.  **Confidence Score:** Use the 'confidence' field to indicate ambiguity. If the user says "sometime next week", the date is not explicit, so confidence should be 'medium' or 'low'. If they say "next Tuesday at 4pm", it is very explicit, so confidence should be 'high'.
-      // 6.  **No Date/Time:** If the message contains no reference to a date or time, set "hasDateTime" to false.
-
-      // EXAMPLES:
-      // -   Current Date: 2025-09-06 (Saturday). Message: "Let's meet on the 2nd".
-      //     -   Correct Output: {"date": "2025-10-02", "confidence": "high", ...} (Rule #2: Sep 2nd has passed)
-      // -   Current Date: 2025-09-06 (Saturday). Message: "How about Tuesday morning?".
-      //     -   Correct Output: {"date": "2025-09-09", "time": "09:00", "confidence": "high", ...} (Rule #1, #3: next Tuesday is the 9th)
-      // -   Current Date: 2025-09-06 (Saturday). Message: "Let's plan for next Monday afternoon".
-      //     -   Correct Output: {"date": "2025-09-15", "time": "14:00", "confidence": "high", ...} (Rule #3: "next Monday" is in the following week)
-      // -   Current Date: 2025-09-06 (Saturday). Message: "Are you free this evening?".
-      //     -   Correct Output: {"date": "2025-09-06", "time": "19:00", "confidence": "high", ...} ("this" refers to today)
-      // -   Current Date: 2025-09-06 (Saturday). Message: "Let's touch base sometime next week".
-      //     -   Correct Output: {"date": "2025-09-15", "time": null, "confidence": "medium", ...} (Rule #5: "next week" is vague, resolves to Monday but with medium confidence)
-      // -   Current Date: 2025-09-06 (Saturday). Message: "Do you have a moment to chat?".
-      //     -   Correct Output: {"hasDateTime": false, "date": null, "time": null, "confidence": "low", ...} (Rule #6: No date/time info)
-
-      // You must respond with ONLY valid JSON in this exact format:
-      // {
-      //   "hasDateTime": true or false,
-      //   "date": "YYYY-MM-DD" or null,
-      //   "time": "HH:MM" or null,
-      //   "confidence": "high" or "medium" or "low",
-      //   "explicitDate": true or false,
-      //   "explicitTime": true or false
-      // }`;
-      const dateHint = this.generateDateHint(message, today);
-      console.log(`💡 Generated Hint: "${dateHint}"`);
-      // 4.  **explicitDate:** Set to true only if the date / day is clearly and specifically mentioned in the message.
-
-      const prompt = `You are a date/time parsing assistant. Your task is to extract date and time from the message below.
+    return `You are a date/time parsing assistant. Extract date and time from the message below.
 
 Current Context:
-- Today's Date: ${todayStr}
-- Today's Day: ${currentDay}
+- Today's Date: ${context.todayStr}
+- Today's Day: ${context.currentDay}
 
 *** CRITICAL HINT - YOU MUST FOLLOW THIS ***
 ${dateHint}
@@ -157,92 +205,123 @@ ${dateHint}
 Message: "${message}"
 
 RULES:
-1.  **Follow the Hint:** The Hint provides the definitive logic for handling day numbers. It overrides all other assumptions.
-2.  **No Date/Time:** If the message has no date/time info and the hint is not applicable, set "hasDateTime" to false.
-3.  **Time Approximations:** Use these values for vague times: morning=09:00, afternoon=14:00, evening=19:00, night=21:00.
-4. explicitDate: Set to true if the message resolves to a single, unambiguous calendar date (like "tomorrow" or "next Monday"). Set it to false only for vague date ranges (like "sometime next week" or "in a few days").
-5.  **explicitTime:** Set to true only if the time is clearly and specifically mentioned in the message.
-You must respond with ONLY valid JSON in this exact format:
-{
-  "hasDateTime": true or false,
-  "date": "YYYY-MM-DD" or null,
-  "time": "HH:MM" or null,
-  "confidence": "high" or "medium",
-  "reasoning": "A brief explanation of your logic, confirming you followed the hint.",
-  "explicitDate": true or false,
-  "explicitTime": true or false
-}
-`;
-      console.log("🤖 Sending to Gemini for datetime extraction");
+1. **Follow the Hint:** The Hint provides the definitive logic for handling day numbers. It overrides all other assumptions.
+2. **No Date/Time:** If the message has no date/time info and the hint is not applicable, set "hasDateTime" to false.
+3. **Time Approximations:** Use these values for vague times: morning=09:00, afternoon=14:00, evening=19:00, night=21:00.
+4. **explicitDate:** Set to true if the message resolves to a single, unambiguous calendar date (like "tomorrow" or "next Monday"). Set it to false only for vague date ranges (like "sometime next week" or "in a few days").
+5. **explicitTime:** Set to true only if the time is clearly and specifically mentioned in the message.
 
-      // Check if model is available
-      if (!model) {
-        console.log("❌ Gemini model not available, using fallback");
-        return this.fallbackExtraction(message);
-      }
+Extract the date and time information according to these rules.`;
+  }
 
-      const result_gemini = await model.generateContent(prompt);
+  /**
+   * Get current date/time context
+   * @returns {Object} Context information
+   */
+  static getDateTimeContext() {
+    return {
+      today: timezoneUtils.getCurrentDate(),
+      todayStr: timezoneUtils.getCurrentDateString(),
+      currentTime: timezoneUtils.getCurrentTimeString(),
+      tomorrowStr: timezoneUtils.getTomorrowDateString(),
+      currentDay: timezoneUtils.getCurrentDay(),
+      currentTimezone: process.env.APP_TIMEZONE || "Asia/Kolkata",
+    };
+  }
 
-      if (!result_gemini || !result_gemini.response) {
-        console.log("❌ Invalid Gemini response, using fallback");
-        return this.fallbackExtraction(message);
-      }
+  /**
+   * Generate a hint for date parsing based on the message
+   * @param {string} message - The message to analyze
+   * @param {Date} today - Current date
+   * @returns {string} Generated hint
+   */
+  static generateDateHint(message, today) {
+    // Check for urgency keywords first
+    const urgencyMatch = message.match(this.URGENCY_KEYWORDS);
+    if (urgencyMatch) {
+      console.log("Urgency match:", urgencyMatch);
+      return `Hint: The user wants the earliest possible date/time ("${urgencyMatch[1]}"). The system handles this automatically. DO NOT RETURN ANY specific date or time. Instead, set "hasDateTime" to false and "confidence" to "medium".`;
+    }
 
-      const response = result_gemini.response;
-      const content = response.text();
+    // Check for day number
+    const dayMatch = message.match(this.DAY_NUMBER_REGEX);
+    if (!dayMatch) {
+      return "Hint: No standalone day number was found. Evaluate the message normally.";
+    }
 
-      if (!content) {
-        console.log("❌ Empty Gemini response, using fallback");
-        return this.fallbackExtraction(message);
-      }
+    const dayOfMonth = parseInt(dayMatch[1], 10);
+    
+    // Check if month is explicitly mentioned
+    const monthMatch = message.match(this.MONTH_REGEX);
+    if (monthMatch) {
+      return `Hint: The user explicitly mentioned a month: "${monthMatch[1]}". You MUST use ${monthMatch[1]} for the date calculation.`;
+    }
 
-      console.log("🤖 Gemini raw response:", content.trim());
+    // Determine current or next month based on whether the day has passed
+    const currentDay = today.getDate();
+    const currentMonthName = today.toLocaleString("en-US", { month: "long" });
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const nextMonthName = nextMonth.toLocaleString("en-US", { month: "long" });
 
-      // Parse Gemini response
-      const parsed = this.parseGeminiResponse(content);
-
-      if (!parsed) {
-        console.log("⚠️ Failed to parse Gemini response, using fallback");
-        return this.fallbackExtraction(message);
-      }
-
-      if (!this.validateExtractedData(parsed)) {
-        console.log("⚠️ Gemini response failed validation, using fallback");
-        return this.fallbackExtraction(message);
-      }
-
-      console.log("✅ Gemini extracted and validated:", parsed);
-      return this.normalizeResult(parsed);
-    } catch (error) {
-      console.error("❌ Error with Gemini extraction:", error.message);
-      console.error("Stack trace:", error.stack);
-      return this.fallbackExtraction(message);
+    if (dayOfMonth < currentDay) {
+      return `Hint: The user mentioned the ${dayOfMonth}. This day has ALREADY PASSED in ${currentMonthName}. You MUST use the next month, which is ${nextMonthName}.`;
+    } else {
+      return `Hint: The user mentioned the ${dayOfMonth}. This day has NOT passed yet. You MUST use the current month, which is ${currentMonthName}.`;
     }
   }
 
+  /**
+   * Parse Gemini's JSON response (now much simpler with JSON mode)
+   * @param {string} content - Raw response content
+   * @returns {Object|null} Parsed JSON object or null
+   */
   static parseGeminiResponse(content) {
     try {
-      // Clean the response to extract JSON
-      let jsonStr = content.trim();
-
-      // Remove markdown code blocks
-      jsonStr = jsonStr.replace(/```json\s*/g, "").replace(/```\s*/g, "");
-
-      // Extract JSON object
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
+      if (!content || typeof content !== 'string') {
+        console.error("❌ Invalid content type");
+        return null;
       }
 
-      return JSON.parse(jsonStr);
+      // With JSON mode enabled, the response should already be valid JSON
+      // No need for regex extraction or cleanup
+      const parsed = JSON.parse(content.trim());
+      
+      // Verify we got the expected structure
+      if (!this.hasRequiredJsonStructure(parsed)) {
+        console.error("❌ Parsed JSON missing required fields");
+        return null;
+      }
+
+      return parsed;
     } catch (error) {
       console.error("❌ Error parsing Gemini JSON:", error.message);
+      console.error("Raw content:", content);
       return null;
     }
   }
 
+  /**
+   * Check if parsed JSON has required structure
+   * @param {Object} parsed - Parsed JSON object
+   * @returns {boolean} Whether required fields exist
+   */
+  static hasRequiredJsonStructure(parsed) {
+    if (!parsed || typeof parsed !== 'object') {
+      return false;
+    }
+    
+    // At minimum, we need hasDateTime
+    return 'hasDateTime' in parsed;
+  }
+
+  /**
+   * Validate extracted data structure and values
+   * @param {Object} data - Data to validate
+   * @returns {boolean} Whether the data is valid
+   */
   static validateExtractedData(data) {
     if (!data || typeof data !== "object") {
+      console.log("❌ Data is not an object");
       return false;
     }
 
@@ -255,184 +334,214 @@ You must respond with ONLY valid JSON in this exact format:
       "explicitDate",
       "explicitTime",
     ];
+
     for (const prop of requiredProps) {
       if (!(prop in data)) {
         console.log(`❌ Missing property: ${prop}`);
-        return false;
+        
+        // Try to provide defaults for missing properties
+        if (this.canProvideDefault(prop, data)) {
+          data[prop] = this.getDefaultForProperty(prop);
+          console.log(`✓ Provided default for ${prop}: ${data[prop]}`);
+        } else {
+          return false;
+        }
       }
     }
 
-    // Validate types
-    if (typeof data.hasDateTime !== "boolean") {
-      console.log("❌ hasDateTime must be boolean");
-      return false;
-    }
+    // Validate types and values
+    const validations = [
+      { 
+        check: typeof data.hasDateTime === "boolean", 
+        msg: "hasDateTime must be boolean",
+        fix: () => data.hasDateTime = Boolean(data.hasDateTime)
+      },
+      { 
+        check: data.date === null || (typeof data.date === "string" && this.isValidDateString(data.date)), 
+        msg: "Invalid date format" 
+      },
+      { 
+        check: data.time === null || (typeof data.time === "string" && this.isValidTimeString(data.time)), 
+        msg: "Invalid time format" 
+      },
+      { 
+        check: Object.values(this.CONFIDENCE_LEVELS).includes(data.confidence), 
+        msg: "Invalid confidence level",
+        fix: () => data.confidence = this.CONFIDENCE_LEVELS.LOW
+      },
+      { 
+        check: typeof data.explicitDate === "boolean", 
+        msg: "explicitDate must be boolean",
+        fix: () => data.explicitDate = Boolean(data.explicitDate)
+      },
+      { 
+        check: typeof data.explicitTime === "boolean", 
+        msg: "explicitTime must be boolean",
+        fix: () => data.explicitTime = Boolean(data.explicitTime)
+      },
+    ];
 
-    if (
-      data.date !== null &&
-      (typeof data.date !== "string" || !this.isValidDateString(data.date))
-    ) {
-      console.log("❌ Invalid date format");
-      return false;
-    }
-
-    if (
-      data.time !== null &&
-      (typeof data.time !== "string" || !this.isValidTimeString(data.time))
-    ) {
-      console.log("❌ Invalid time format");
-      return false;
-    }
-
-    if (!["high", "medium", "low"].includes(data.confidence)) {
-      console.log("❌ Invalid confidence level");
-      return false;
-    }
-
-    if (
-      typeof data.explicitDate !== "boolean" ||
-      typeof data.explicitTime !== "boolean"
-    ) {
-      console.log("❌ explicitDate and explicitTime must be boolean");
-      return false;
+    for (const validation of validations) {
+      if (!validation.check) {
+        console.log(`❌ ${validation.msg}`);
+        
+        // Try to fix if possible
+        if (validation.fix) {
+          try {
+            validation.fix();
+            console.log(`✓ Auto-fixed: ${validation.msg}`);
+          } catch (e) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
     }
 
     return true;
   }
 
+  /**
+   * Check if we can provide a safe default for a missing property
+   * @param {string} prop - Property name
+   * @param {Object} data - Current data object
+   * @returns {boolean} Whether a default can be provided
+   */
+  static canProvideDefault(prop, data) {
+    // Only provide defaults for non-critical fields
+    const safeDefaults = ['confidence', 'explicitDate', 'explicitTime'];
+    return safeDefaults.includes(prop);
+  }
+
+  /**
+   * Get default value for a property
+   * @param {string} prop - Property name
+   * @returns {any} Default value
+   */
+  static getDefaultForProperty(prop) {
+    const defaults = {
+      confidence: this.CONFIDENCE_LEVELS.LOW,
+      explicitDate: false,
+      explicitTime: false,
+    };
+    return defaults[prop];
+  }
+
+  /**
+   * Validate date string format
+   * @param {string} dateStr - Date string to validate
+   * @returns {boolean} Whether the date string is valid
+   */
   static isValidDateString(dateStr) {
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(dateStr)) {
+    if (!this.DATE_FORMAT_REGEX.test(dateStr)) {
       return false;
     }
+    
     const date = new Date(dateStr);
     return date instanceof Date && !isNaN(date);
   }
 
+  /**
+   * Validate time string format
+   * @param {string} timeStr - Time string to validate
+   * @returns {boolean} Whether the time string is valid
+   */
   static isValidTimeString(timeStr) {
-    const timeRegex = /^([01]?\d|2[0-3]):([0-5]\d)$/;
-    return timeRegex.test(timeStr);
+    return this.TIME_FORMAT_REGEX.test(timeStr);
   }
 
+  /**
+   * Normalize result to ensure consistent format
+   * @param {Object} result - Result to normalize
+   * @returns {Object} Normalized result
+   */
   static normalizeResult(result) {
-    // Ensure the result has all required properties with correct types
     return {
       hasDateTime: Boolean(result.hasDateTime),
       date: result.date === null ? null : String(result.date),
       time: result.time === null ? null : String(result.time),
-      confidence: result.confidence || "low",
+      confidence: result.confidence || this.CONFIDENCE_LEVELS.LOW,
       explicitDate: Boolean(result.explicitDate),
       explicitTime: Boolean(result.explicitTime),
     };
   }
 
+  /**
+   * Get default result object
+   * @returns {Object} Default result
+   */
   static getDefaultResult() {
     return {
       hasDateTime: false,
       date: null,
       time: null,
-      confidence: "low",
+      confidence: this.CONFIDENCE_LEVELS.LOW,
       explicitDate: false,
       explicitTime: false,
     };
   }
 
+  /**
+   * Fallback extraction using local logic
+   * @param {string} message - Message to parse
+   * @returns {Object} Extraction result
+   */
   static fallbackExtraction(message) {
-    // Placeholder for fallback extraction logic
-    // This should contain your local extraction logic
     console.log("🔄 Using fallback extraction");
-
-    if (!message || typeof message !== "string") {
+    
+    if (!this.isValidInput(message)) {
       return this.getDefaultResult();
     }
 
-    // Add your fallback logic here
+    // TODO: Implement sophisticated local extraction logic
+    // This could include regex patterns for common date/time formats
     // For now, returning default result
+    
     return this.getDefaultResult();
   }
 
-  // Add this new function inside your DateTimeService class
-
-  // static generateDateHint(message, today) {
-  //   // Regex to find a number followed by st, nd, rd, or th (e.g., "1st", "2nd", "20th")
-  //   const dayRegex = /\b(\d{1,2})(?:st|nd|rd|th)\b/i;
-  //   const match = message.match(dayRegex);
-
-  //   if (!match) {
-  //     // No day number found, so no hint is needed.
-  //     return "Hint: No standalone day number was found. Evaluate the message normally.";
-  //   }
-
-  //   const dayOfMonth = parseInt(match[1], 10);
-  //   const currentDay = today.getDate();
-  //   const currentMonthName = today.toLocaleString("en-US", { month: "long" });
-  //   const nextMonthName = new Date(
-  //     today.getFullYear(),
-  //     today.getMonth() + 1,
-  //     1
-  //   ).toLocaleString("en-US", { month: "long" });
-
-  //   if (dayOfMonth < currentDay) {
-  //     // The day has passed! Give a direct order to use the next month.
-  //     return `Hint: The user mentioned the ${dayOfMonth}. This day has ALREADY PASSED in ${currentMonthName}. You MUST use the next month, which is ${nextMonthName}.`;
-  //   } else {
-  //     // The day is in the future. Give a direct order to use the current month.
-  //     return `Hint: The user mentioned the ${dayOfMonth}. This day has NOT passed yet. You MUST use the current month, which is ${currentMonthName}.`;
-  //   }
-  // }
-  static generateDateHint(message, today) {
-    // First, check for urgency keywords
-    const urgencyMatch = message.match(/\b(asap|as soon as possible|immediately|earliest|soonest|urgently|quickest)\b/i);
-    console.log("Urgency match:", urgencyMatch);
-    if (urgencyMatch) {
-      return `Hint: The user wants the earliest possible date/time ("${urgencyMatch[1]}"). The system handles this automatically, DO NOT RETURN ANY specific date or time. Instead, set "hasDateTime" to false and "confidence" to "medium". `;
-    }
-    // Regex for a day number (e.g., "1st", "2nd", "25th")
-    const dayRegex = /\b(\d{1,2})(?:st|nd|rd|th)\b/i;
-    const dayMatch = message.match(dayRegex);
-
-    // If no day number is found, we can't generate a hint.
-    if (!dayMatch) {
-      return "Hint: No standalone day number was found. Evaluate the message normally.";
-    }
-
-    // --- UPDATED REGEX ---
-    // Now includes common 3-letter abbreviations for each month.
-    const monthRegex =
-      /\b(January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sep|October|Oct|November|Nov|December|Dec)\b/i;
-    const monthMatch = message.match(monthRegex);
-
-    const dayOfMonth = parseInt(dayMatch[1], 10);
-
-
-    // Case 1: A month was explicitly mentioned (full or abbreviated).
-    if (monthMatch) {
-      // monthMatch[1] will capture whichever version was found (e.g., "October" or "Oct")
-      const monthName = monthMatch[1];
-      return `Hint: The user explicitly mentioned a month: "${monthName}". You MUST use ${monthName} for the date calculation.`;
-    }
-
-    // Case 2: No month was mentioned. Fall back to the original logic.
-    else {
-      const currentDay = today.getDate();
-      const currentMonthName = today.toLocaleString("en-US", { month: "long" });
-      const nextMonthName = new Date(
-        today.getFullYear(),
-        today.getMonth() + 1,
-        1
-      ).toLocaleString("en-US", { month: "long" });
-
-      if (dayOfMonth < currentDay) {
-        // The day has passed in the current month, so they must mean next month.
-        return `Hint: The user mentioned the ${dayOfMonth}. This day has ALREADY PASSED in ${currentMonthName}. You MUST use the next month, which is ${nextMonthName}.`;
-      } else {
-        // The day is in the future, so they likely mean the current month.
-        return `Hint: The user mentioned the ${dayOfMonth}. This day has NOT passed yet. You MUST use the current month, which is ${currentMonthName}.`;
-      }
-    }
+  /**
+   * Delay helper for retry logic
+   * @param {number} ms - Milliseconds to delay
+   * @returns {Promise} Promise that resolves after delay
+   */
+  static delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
-  // Add other static methods that might be referenced elsewhere
-  // ... (keep all other methods unchanged)
+
+  // Helper methods
+
+  /**
+   * Validate input message
+   * @param {string} message - Message to validate
+   * @returns {boolean} Whether the input is valid
+   */
+  static isValidInput(message) {
+    return message && typeof message === "string" && message.trim().length > 0;
+  }
+
+  /**
+   * Check if result has high confidence
+   * @param {Object} result - Result to check
+   * @returns {boolean} Whether the result has high confidence
+   */
+  static isHighConfidenceResult(result) {
+    return (
+      result &&
+      result.hasDateTime &&
+      result.confidence === this.CONFIDENCE_LEVELS.HIGH
+    );
+  }
+
+  /**
+   * Check if Gemini response is valid
+   * @param {Object} result - Gemini API result
+   * @returns {boolean} Whether the response is valid
+   */
+  static isValidGeminiResponse(result) {
+    return result && result.response && result.response.text;
+  }
 }
 
 module.exports = DateTimeService;

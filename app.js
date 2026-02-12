@@ -38,6 +38,6 @@ setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
 // Upload logs to R2 every 5 minutes
-setInterval(uploadLogsFolder, 5 * 60 * 1000); 
+setInterval(uploadLogsFolder, 60 * 60 * 1000); 
 
 module.exports = app;

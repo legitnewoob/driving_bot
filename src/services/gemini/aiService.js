@@ -416,6 +416,7 @@ class AIService {
           instructorId
         );
       
+      /* ROUTE OPTIMIZATION - COMMENTED OUT TEMPORARILY
       const routeOptimizer = new RouteOptimizer();
       const filteredAvailableSlots =  await routeOptimizer.filterAvailableSlotsByLocation(
         availableSlotsForDate,
@@ -423,15 +424,10 @@ class AIService {
         instructorId,
         userPhone
       );
-
-
       console.log("Filtered available slots:", filteredAvailableSlots);
-
       availableSlotsForDate = filteredAvailableSlots;
-      // return;
-      // const requestedDate = new Date(dateRequested);
-      // const isWeekend =
-      //   requestedDate.getDay() === 0 || requestedDate.getDay() === 6;
+      */
+
       const isWeekend = timezoneUtils.isWeekend(dateRequested);
       const isValidBusinessDay = !isWeekend;
 

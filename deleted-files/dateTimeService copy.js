@@ -1,5 +1,5 @@
 const OpenAI = require("openai");
-const timezoneUtils = require("../utils/timezoneUtils");
+const timezoneUtils = require("../src/utils/timezoneUtils");
 
 class DateTimeService {
   static async extractDateTimeFromMessage(message) {

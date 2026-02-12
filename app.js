@@ -3,6 +3,7 @@ const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const connectDB = require("./src/config/database");
+const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 
 const app = express();
 
@@ -35,5 +36,8 @@ app.get('/', (req, res) => {
 const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');
 setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
+
+// Upload logs to R2 every 5 minutes
+setInterval(uploadLogsFolder, 5 * 60 * 1000); 
 
 module.exports = app;

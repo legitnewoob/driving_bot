@@ -10,6 +10,7 @@ logging/
 .VSCodeCounter/
 
 # Env files (keep example)
+.env
 envs/.env.*
 !envs/.env.example
 

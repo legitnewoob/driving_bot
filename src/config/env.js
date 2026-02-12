@@ -1,37 +1,29 @@
 const dotenv = require("dotenv");
 const fs = require("fs");
 const path = require("path");
+const PROJECT_ROOT = require("../utils/projectRoot.js");
 
-// 1. Load root .env first
-// console.log(process.cwd());
-const rootEnvFile = path.resolve(process.cwd(), ".env");
-if (fs.existsSync(rootEnvFile)) {
-  dotenv.config({ path: rootEnvFile });
-  console.log(`✅ Loaded root .env`);
+console.log("Project Root:", PROJECT_ROOT);
+
+// Load root .env
+const rootEnv = path.join(PROJECT_ROOT, ".env");
+if (fs.existsSync(rootEnv)) {
+  dotenv.config({ path: rootEnv });
 }
 
-
-// Pick environment (default: development)
+// Env
+console.log("NODE_ENV:", process.env.NODE_ENV);
 
 const env = process.env.NODE_ENV || "development";
 
-console.log(`Starting in ${env} mode...`);
+// Load env-specific file
+const envFile = path.join(PROJECT_ROOT, `envs/.env.${env}`);
+console.log("Loading environment from:", envFile);
 
-// Match env file
-console.log(process.cwd());
-const envFile = path.resolve(process.cwd() , `envs/.env.${env}`);
-console.log(`Loading environment from: ${envFile}`);
-// Check if file exists
 if (fs.existsSync(envFile)) {
-  dotenv.config({ path: envFile  , override: true });
-  console.log(`✅ Loaded ${env} environment`);
+  dotenv.config({ path: envFile, override: true });
 } else {
   console.warn(`⚠️ No env file found for ${env}`);
 }
 
-console.log("LET'S CHECK" , process.env.GOOGLE_REFRESH_TOKEN , process.env.DB_NAME);
-module.exports = {
-  env,
-  dbUrl: process.env.DB_NAME,
-  apiKey: process.env.API_KEY,
-};
+module.exports = { env };

@@ -3,6 +3,7 @@ const aiService = require("../services/gemini/aiService");
 const bookingService = require("../services/bookingService");
 const calendarService = require("../services/calendarService");
 const { ensureUserDetails } = require("../services/userDetailsService");
+const getChatLogger = require("../utils/chatLogger");
 
 const {
   getUserSession,
@@ -293,8 +294,7 @@ class WebhookController {
   async handleWebhook(req, res) {
     try {
       const body = req.body;
-
-      // console.log(JSON.stringify(body));
+      
       if (body.object === "whatsapp_business_account") {
         for (const entry of body.entry || []) {
           for (const change of entry.changes || []) {
@@ -316,7 +316,9 @@ class WebhookController {
                 }
 
                 if (messageContent) {
-                  console.log(`📩 Incoming: ${from} → ${messageContent}`);
+                  const chatLogger = getChatLogger(from);
+                  chatLogger.info(`(USER) → ${messageContent}`);
+                  //console.log(`📩 Incoming: ${from} → ${messageContent}`);
                   await this.handleIncomingMessage(from, messageContent);
                 }
               }
@@ -336,6 +338,7 @@ class WebhookController {
 
   async handleIncomingMessage(from, messageContent) {
     try {
+      console.log('MESSAGE CONTENT' , messageContent);
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
       // 🧠 Step 1: Check user profile before AI flow

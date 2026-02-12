@@ -1,8 +1,8 @@
-const openai = require("../../config/openai");
-const calendarService = require("../calendarService");
-const dateTimeService = require("../gemini/dateTimeService");
-const dateTimeUtils = require("../../utils/dateTimeUtils");
-const timezoneUtils = require("../../utils/timezoneUtils");
+const openai = require("../../src/config/openai");
+const calendarService = require("../../src/services/calendarService");
+const dateTimeService = require("../../src/services/gemini/dateTimeService");
+const dateTimeUtils = require("../../src/utils/dateTimeUtils");
+const timezoneUtils = require("../../src/utils/timezoneUtils");
 const fs = require("fs");
 const path = require("path");
 
@@ -338,7 +338,7 @@ class AIService {
 
   async getAvailabilityInfo(dateRequested, timeRequested, instructorId) {
     try {
-      const instructor = require("../../models/instructorModel").getInstructor(
+      const instructor = require("../../src/models/instructorModel").getInstructor(
         instructorId
       );
       if (!instructor) {

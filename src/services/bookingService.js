@@ -5,6 +5,7 @@ const {
   getInstructor,
 } = require("../models/instructorModel");
 const Booking = require("../models/bookingModel");
+const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
 
 class BookingService {

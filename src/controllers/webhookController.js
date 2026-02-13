@@ -319,7 +319,7 @@ class WebhookController {
 
                 if (messageContent) {
                   const chatLogger = getChatLogger(from);
-                  chatLogger.info(`(USER) → ${messageContent}`);
+                  chatLogger.info(`(USER) : ${messageContent}`);
                   //console.log(`📩 Incoming: ${from} → ${messageContent}`);
                   await this.handleIncomingMessage(from, messageContent);
                 }

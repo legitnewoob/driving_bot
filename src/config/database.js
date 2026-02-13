@@ -14,7 +14,7 @@ const connectDB = async () => {
     }
 
     // 3. Connect using the URI and the constructed options.
-    await mongoose.connect(process.env.REMOVED_REMOVED_MONGO_URI, connectionOptions);
+    await mongoose.connect(process.env.MONGO_URI, connectionOptions);
 
     console.log("✅ MongoDB connected");
   } catch (err) {

@@ -145,10 +145,10 @@ class CalendarService {
       console.log(`🔍 Checking availability for ${date} at ${time}...`);
       // console.log("Using instructor ID:", instructorId);
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
-      // console.log("Refresh token:", process.env.REMOVED_TOKEN);
+      // console.log("Refresh token:", process.env.GOOGLE_REFRESH_TOKEN);
       const instructor = getInstructor(instructorId);
       // console.log("Using instructor:", instructor);
       if (!instructor) {
@@ -227,7 +227,7 @@ class CalendarService {
   async getCalendarContext(instructorId) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(instructorId);
@@ -268,7 +268,7 @@ class CalendarService {
   async createEvent(bookingData) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
@@ -313,7 +313,7 @@ class CalendarService {
   async updateEvent(eventId, bookingData, fromUser) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
@@ -357,7 +357,7 @@ class CalendarService {
       }
 
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);

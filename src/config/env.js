@@ -14,16 +14,19 @@ if (fs.existsSync(rootEnv)) {
 // Env
 console.log("NODE_ENV:", process.env.NODE_ENV);
 
-const env = process.env.NODE_ENV || "development";
+const env = process.env.NODE_ENV || "uat";
+let envFile = path.join(PROJECT_ROOT, `.env`);
 
-// Load env-specific file
-const envFile = path.join(PROJECT_ROOT, `envs/.env.${env}`);
+if(env === "development") {
+  envFile = path.join(PROJECT_ROOT, `envs/.env.${process.env.LOAD_ENV || 'development'}`);
+}
+
 console.log("Loading environment from:", envFile);
 
 if (fs.existsSync(envFile)) {
   dotenv.config({ path: envFile, override: true });
 } else {
-  console.warn(`⚠️ No env file found for ${env}`);
+  console.error(`⚠️ No env file found for ${env}`);
 }
 
 module.exports = { env };

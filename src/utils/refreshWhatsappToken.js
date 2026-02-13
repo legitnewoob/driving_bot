@@ -3,11 +3,11 @@ const axios = require("axios");
 const env = require("../config/env"); // Load environment variables
 async function getLongLivedToken() {
   const APP_ID = process.env.META_APP_ID;
-  const APP_SECRET = process.env.REMOVED_SECRET;
+  const APP_SECRET = process.env.META_APP_SECRET;
   const SHORT_TOKEN = process.env.WHATSAPP_TOKEN;
 
   if (!APP_ID || !APP_SECRET || !SHORT_TOKEN) {
-    throw new Error("❌ Missing META_APP_ID, REMOVED_SECRET, or WHATSAPP_SHORT_TOKEN in .env");
+    throw new Error("❌ Missing META_APP_ID, META_APP_SECRET, or WHATSAPP_SHORT_TOKEN in .env");
   }
 
   const url = `https://graph.facebook.com/v21.0/oauth/access_token` +

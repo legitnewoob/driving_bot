@@ -7,7 +7,7 @@ const r2 = new S3Client({
     endpoint: baseEndpoint,
     credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: process.env.REMOVED_KEY
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
     }
 });
 

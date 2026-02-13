@@ -8,7 +8,7 @@ class SheetsService {
 
     async initializeCredentials() {
         oauth2Client.setCredentials({
-            refresh_token: process.env.REMOVED_TOKEN
+            refresh_token: process.env.GOOGLE_REFRESH_TOKEN
         });
     }
 

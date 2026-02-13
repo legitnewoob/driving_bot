@@ -9,6 +9,16 @@ const path = require("path");
 const rateLimit = require("express-rate-limit");
 const basicAuth = require("express-basic-auth");
 
+
+
+const app = express();
+
+
+// IMPORTANT: trust first proxy
+app.set('trust proxy', 1);
+
+
+
 // Rate Limiter
 const logLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -29,7 +39,6 @@ const logAuth = basicAuth({
 
 
 
-const app = express();
 
 
 

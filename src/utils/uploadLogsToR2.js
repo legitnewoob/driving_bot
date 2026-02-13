@@ -1,13 +1,14 @@
 const fs = require("fs");
 const path = require("path");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
-const r2 = require("./r2Client");
+const r2 = require("../config/r2Client");
 const PROJECT_ROOT = require("./projectRoot");
 
 async function uploadFileToR2(localPath, r2Key) {
     const fileStream = fs.createReadStream(localPath);
+    const bucketName = process.env.R2_BUCKET;
     const command = new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET,
+        Bucket: bucketName,
         Key: r2Key,
         Body: fileStream
     });
@@ -30,7 +31,7 @@ async function uploadLogsFolder() {
 
         for (const file of files) {
             const localFilePath = path.join(datePath, file);
-            const r2Key = `logs/${date}/${file}`;
+            const r2Key = `${process.env.R2_DIRECTORY}/logs/${date}/${file}`;
 
             try {
                 await uploadFileToR2(localFilePath, r2Key);

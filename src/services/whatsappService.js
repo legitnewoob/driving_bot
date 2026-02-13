@@ -10,7 +10,7 @@ class WhatsAppService {
         try {
             
             const chatLogger = getChatLogger(to);
-            chatLogger.info(`(Donna) → ${message.text?.body}`);
+            chatLogger.info(`(Donna) : ${message.text?.body}`);
 
             const response = await axios.post(WHATSAPP_API_URL, message, {
                 headers: {

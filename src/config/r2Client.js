@@ -1,15 +1,10 @@
 const { S3Client } = require("@aws-sdk/client-s3");
 
-const directory = process.env.R2_DIRECTORY;
-
-if (!directory) {
-    console.error("R2_DIRECTORY is not set in environment variables.");
-    process.exit(1);
-}
+const baseEndpoint = process.env.R2_ENDPOINT;
 
 const r2 = new S3Client({
     region: "auto",
-    endpoint: process.env.R2_ENDPOINT + directory,
+    endpoint: baseEndpoint,
     credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.REMOVED_KEY

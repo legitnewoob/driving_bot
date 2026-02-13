@@ -6,7 +6,7 @@ const DailyRotateFile = require("winston-daily-rotate-file");
 const loggerCache = new Map();
 
 const timeOnlyFormat = format.printf(({ timestamp, message }) => {
-    return `${timestamp} → ${message}`;
+    return `${timestamp} : ${message}`;
 });
 
 function getChatLogger(phoneNumber) {

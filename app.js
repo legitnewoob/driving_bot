@@ -72,6 +72,6 @@ setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
 // Upload logs to R2 every 5 minutes
-setInterval(uploadLogsFolder, 60 * 60 * 1000); 
+setInterval(uploadLogsFolder, process.env.WAIT_FOR_R2_IN_MINS * 60 * 1000); 
 
 module.exports = app;

@@ -251,8 +251,6 @@ class WebhookController {
         })}`,
         `🕐 Time: ${bookingData.time}`,
         "",
-        "📧 A calendar invitation has been sent to your instructor.",
-        "",
         "Good luck with your driving lesson! 🚗💨",
       ].join("\n");
 

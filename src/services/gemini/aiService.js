@@ -22,10 +22,12 @@ class AIService {
         .map((slot) => `❌ ${slot.date} at ${slot.time} - ${slot.summary}`)
         .join("\n")}`;
     }
-    const systemPrompt = fs.readFileSync(
+    const rawPrompt = fs.readFileSync(
       path.join(__dirname, "../../../", "SP8.txt"),
       "utf-8"
     );
+
+    const systemPrompt = rawPrompt.replace("{{INSTRUCTOR_NAME}}" , process.env.INSTRUCTOR_NAME )
 
     return systemPrompt;
   }

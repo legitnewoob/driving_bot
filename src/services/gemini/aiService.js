@@ -27,7 +27,7 @@ class AIService {
       "utf-8"
     );
 
-    const systemPrompt = rawPrompt.replace("{{INSTRUCTOR_NAME}}" , process.env.INSTRUCTOR_NAME )
+    const systemPrompt = rawPrompt.replaceAll("{{INSTRUCTOR_NAME}}" , process.env.INSTRUCTOR_NAME )
 
     return systemPrompt;
   }

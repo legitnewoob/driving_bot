@@ -27,4 +27,5 @@ node_modules/
 .git.env
 logging/loki/wal/**
 logging/loki/chunks/**
+logs/*
 logs

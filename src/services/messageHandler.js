@@ -5,7 +5,7 @@ const { getUserSession, updateUserSession } = require("../models/instructorModel
 
 class MessageHandler {
   async handleIncomingMessage(from, messageContent) {
-    console.log(from , messageContent);
+    console.log(from, messageContent);
     const session = getUserSession(from);
 
     const aiResponse = await aiService.getResponse(

@@ -1,6 +1,6 @@
 const axios = require('axios');
 const getChatLogger = require("../utils/chatLogger");
-
+const logger = require('../utils/chatLogger');
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const WHATSAPP_API_URL = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`;

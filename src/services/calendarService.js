@@ -193,7 +193,7 @@ class CalendarService {
     } catch (error) {
       console.error("❌ Error checking calendar availability:", error.message);
       return {
-        isAvailable: true,
+        isAvailable: false,
         error: `Could not verify calendar availability: ${error.message}`,
         warning: true,
       };
@@ -324,7 +324,7 @@ class CalendarService {
 
       const event = {
         summary: `Driving Lesson - ${bookingData.newLessonType} - ${fromUser}`,
-        description: `Driving lesson booking\nPhone: ${fromUser}}`,
+        description: `Driving lesson booking\nPhone: ${fromUser}`,
         start: {
           dateTime: startDateTime.toISOString(),
           timeZone: timezoneUtils.timezone,

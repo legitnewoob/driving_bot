@@ -100,23 +100,11 @@ async function uploadLogsFolder() {
             const r2Key = `${process.env.R2_DIRECTORY}/logs/${date}/${file}`;
 
             try {
-                const exists = await fileExistsInR2(r2Key);
+                const content = fs.readFileSync(localFilePath, "utf8");
 
-                const newContent = fs.readFileSync(localFilePath, "utf8");
+                await uploadContentToR2(content, r2Key);
 
-                if (exists) {
-                    const existingContent = await getExistingFileFromR2(r2Key);
-
-                    const combinedContent = existingContent + "\n" + newContent;
-
-                    await uploadContentToR2(combinedContent, r2Key);
-
-                } else {
-
-                    await uploadContentToR2(newContent, r2Key);
-
-                }
-
+                console.log(`Uploaded: ${r2Key}`);
             } catch (err) {
                 console.error(`R2 upload failed for ${r2Key}:`, err);
             }

@@ -1,9 +1,21 @@
 # OS
 .DS_Store
 
-# Logs
-logs/
-logging/
+#FOR LOGS
+# Ignore everything inside these folders
+message-logs/*
+logs/*
+logging/*
+
+# But keep the folders themselves
+!message-logs/.gitkeep
+!logs/.gitkeep
+!logging/.gitkeep
+
+# Ignore standalone log files
+*.log
+
+# Ignore standalone log files
 *.log
 
 # VS Code counter

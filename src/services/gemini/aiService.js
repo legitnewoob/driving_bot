@@ -23,7 +23,7 @@ class AIService {
         .join("\n")}`;
     }
     const rawPrompt = fs.readFileSync(
-      path.join(__dirname, "../../../", "SP8.txt"),
+      path.join(__dirname, "../../../", "SYSTEM_PROMPT.txt"),
       "utf-8"
     );
 

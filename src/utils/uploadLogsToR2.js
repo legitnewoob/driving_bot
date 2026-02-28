@@ -104,7 +104,7 @@ async function uploadLogsFolder() {
 
                 await uploadContentToR2(content, r2Key);
 
-                console.log(`Uploaded: ${r2Key}`);
+                // console.log(`Uploaded: ${r2Key}`);
             } catch (err) {
                 console.error(`R2 upload failed for ${r2Key}:`, err);
             }

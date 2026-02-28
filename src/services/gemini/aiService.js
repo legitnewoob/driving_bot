@@ -130,7 +130,7 @@ class AIService {
     if (this.pendingContext[userPhone]) {
       delete this.pendingContext[userPhone];
       console.log(`🧹 Cleared pending context for ${userPhone}`);
-    } else console.log(`🧼 No pending context to clear for ${userPhone}`);
+    }
   }
 
   // Helper method to generate system messages based on what's missing

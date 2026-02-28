@@ -17,9 +17,13 @@ class WebhookController {
 
   clearUserConversationHistoryAndContext(from) {
     const session = getUserSession(from);
-    session.conversationHistory = [];
+
+    if (session.conversationHistory.length > 0) {
+      session.conversationHistory = [];
+      console.log(`🧹 Clearing conversation history for ${from}`);
+    }
+    
     updateUserSession(from, session);
-    console.log(`📝 Cleared conversation history for ${from}`);
     // Also clear AI service pending context
     aiService.clearPendingContext(from);
   }
@@ -28,7 +32,6 @@ class WebhookController {
     const session = getUserSession(from);
     session.conversationHistory = [];
     updateUserSession(from, session);
-    console.log(`📝 Cleared conversation history for ${from}`);
   }
 
   /* ========== BOOKING ACTIONS ========== */
@@ -49,7 +52,7 @@ class WebhookController {
       );
       aiService.updatePendingContext(from, earliestSlot);
       this.clearOnlyUserConversationHistory(from);
-      await whatsappService.sendTextMessage(from , `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
+      await whatsappService.sendTextMessage(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
     } else {
       console.log("Sorry, no appointments are available in the near future.");
       return "Sorry, no appointments are available in the near future. Please check back later.";
@@ -110,9 +113,8 @@ class WebhookController {
       // Status indicator
       let statusIcon = isPast ? "✅" : isToday ? "🔥" : "📌";
 
-      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${
-        index + 1
-      }*\n`;
+      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1
+        }*\n`;
       message += `🆔 ${bookingId}\n`;
       message += `${dateDisplay}\n`;
       message += `⏰ ${booking.time}\n`;
@@ -125,10 +127,10 @@ class WebhookController {
           booking.status.toLowerCase() === "confirmed"
             ? "✅"
             : booking.status.toLowerCase() === "pending"
-            ? "⏳"
-            : booking.status.toLowerCase() === "cancelled"
-            ? "❌"
-            : "📋";
+              ? "⏳"
+              : booking.status.toLowerCase() === "cancelled"
+                ? "❌"
+                : "📋";
         message += `${statusEmoji} Status: ${booking.status}\n`;
       }
       if (booking.notes) message += `📝 ${booking.notes}\n`;
@@ -148,9 +150,8 @@ class WebhookController {
     ).length;
 
     if (upcomingCount > 0) {
-      message += `_You have ${upcomingCount} upcoming appointment${
-        upcomingCount > 1 ? "s" : ""
-      }_ ⏰\n`;
+      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""
+        }_ ⏰\n`;
       message += "_Need to reschedule? Just let me know!_ 💬";
     } else {
       message +=
@@ -231,9 +232,9 @@ class WebhookController {
 
   async processBooking(from, bookingData) {
     try {
-      
+
       console.log("📝 Processing booking for:", from, bookingData);
-      const booking = await bookingService.createBooking(from , bookingData);
+      const booking = await bookingService.createBooking(from, bookingData);
       console.log(booking);
       const confirmationMessage = [
         "🎉 Booking Confirmed!",
@@ -278,7 +279,7 @@ class WebhookController {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    
+
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
       console.log("Webhook verified successfully!");
       return res.status(200).send(challenge);
@@ -292,7 +293,7 @@ class WebhookController {
   async handleWebhook(req, res) {
     try {
       const body = req.body;
-      
+
       if (body.object === "whatsapp_business_account") {
         for (const entry of body.entry || []) {
           for (const change of entry.changes || []) {
@@ -336,35 +337,35 @@ class WebhookController {
 
   async handleIncomingMessage(from, messageContent) {
     try {
-      console.log('MESSAGE CONTENT' , messageContent);
+      console.log('MESSAGE CONTENT', messageContent);
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
       // 🧠 Step 1: Check user profile before AI flow
-    const { inProgress, user , justCompleted} = await ensureUserDetails(from, messageContent);
-    if (inProgress) {
-      console.log("⏳ Waiting for user details to be completed...");
-      // ⏸ Stop here — don't send message to Gemini yet
-      return;
-    }
+      const { inProgress, user, justCompleted } = await ensureUserDetails(from, messageContent);
+      if (inProgress) {
+        console.log("⏳ Waiting for user details to be completed...");
+        // ⏸ Stop here — don't send message to Gemini yet
+        return;
+      }
 
-    if (justCompleted) {
+      if (justCompleted) {
 
-      console.log("✅ User details just completed. Clearing context...");
-      // Now safe to clear conversation history here
-      this.clearUserConversationHistoryAndContext(from);
+        console.log("✅ User details just completed. Clearing context...");
+        // Now safe to clear conversation history here
+        this.clearUserConversationHistoryAndContext(from);
 
-      whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
+        whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
 
-      return;
-    } 
+        return;
+      }
 
-    // ✅ Step 2: Continue your existing AI-based logic
-    const session = getUserSession(from);
-    const aiResponse = await aiService.getResponse(
-      messageContent,
-      session.conversationHistory,
-      from
-    );
+      // ✅ Step 2: Continue your existing AI-based logic
+      const session = getUserSession(from);
+      const aiResponse = await aiService.getResponse(
+        messageContent,
+        session.conversationHistory,
+        from
+      );
 
       // console.log("🤖 AI Response:", aiResponse);
 

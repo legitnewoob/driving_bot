@@ -1,5 +1,6 @@
 const axios = require('axios');
 const getChatLogger = require("../utils/chatLogger");
+const getDbChatLogger = require("../utils/dbChatLogger");
 const logger = require('../utils/chatLogger');
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -10,8 +11,9 @@ class WhatsAppService {
         try {
             
             const chatLogger = getChatLogger(to);
+            const dbChatLogger = getDbChatLogger(PHONE_NUMBER_ID, to);
             chatLogger.info(`(Donna) : ${message.text?.body}`);
-
+            dbChatLogger.assistant(`(Donna) : ${message.text?.body}`);
             const response = await axios.post(WHATSAPP_API_URL, message, {
                 headers: {
                     Authorization: `Bearer ${WHATSAPP_TOKEN}`,

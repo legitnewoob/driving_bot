@@ -4,6 +4,7 @@ const bookingService = require("../services/bookingService");
 const calendarService = require("../services/calendarService");
 const { ensureUserDetails } = require("../services/userDetailsService");
 const getChatLogger = require("../utils/chatLogger");
+const getDbChatLogger = require("../utils/dbChatLogger");
 
 const {
   getUserSession,
@@ -22,7 +23,7 @@ class WebhookController {
       session.conversationHistory = [];
       console.log(`🧹 Clearing conversation history for ${from}`);
     }
-    
+
     updateUserSession(from, session);
     // Also clear AI service pending context
     aiService.clearPendingContext(from);
@@ -315,8 +316,11 @@ class WebhookController {
                 }
 
                 if (messageContent) {
+                  const instructor = process.env.PHONE_NUMBER_ID; 
                   const chatLogger = getChatLogger(from);
+                  const dbChatLogger = getDbChatLogger(instructor, from);
                   chatLogger.info(`(USER) : ${messageContent}`);
+                  dbChatLogger.user(`(USER) : ${messageContent}`);
                   //console.log(`📩 Incoming: ${from} → ${messageContent}`);
                   await this.handleIncomingMessage(from, messageContent);
                 }

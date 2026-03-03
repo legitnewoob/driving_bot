@@ -1,4 +1,43 @@
-node_modules
+# OS
+.DS_Store
+
+#FOR LOGS
+# Ignore everything inside these folders
+message-logs/*
+logs/*
+logging/*
+
+# But keep the folders themselves
+!message-logs/.gitkeep
+!logs/.gitkeep
+!logging/.gitkeep
+
+# Ignore standalone log files
+*.log
+
+# Ignore standalone log files
+*.log
+
+# VS Code counter
+.VSCodeCounter/
+
+# Env files (keep example)
 .env
+envs/.env.*
+!envs/.env.example
+
+# SSL / certs
+nginx/ssl/
+
+# Node
+node_modules/
+
+# Docker
+*.pid
+
+# Misc
+.git.env
 logging/loki/wal/**
 logging/loki/chunks/**
+logs/*
+logs

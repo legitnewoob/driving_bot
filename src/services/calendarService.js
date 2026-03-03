@@ -4,6 +4,133 @@ const timezoneUtils = require("../utils/timezoneUtils"); // ✅ import utils
 
 class CalendarService {
   /**
+   * Finds the earliest available time slot for an instructor,
+   * starting the search 2 days from the current date.
+   * @param {string} instructorId - The ID of the instructor.
+   * @returns {Promise<{date: string, time: string} | null>} - The earliest slot or null if none found.
+   */
+  // async findEarliestAvailableSlot(instructorId) {
+  //   console.log(
+  //     `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
+  //   );
+  //   try {
+  //     const instructor = getInstructor(instructorId);
+  //     if (!instructor) {
+  //       console.error(`❌ Instructor not found: ${instructorId}`);
+  //       throw new Error("Instructor not found");
+  //     }
+
+  //     // Rule: Start checking from 2 days from now
+  //     const startDate = timezoneUtils.getCurrentDate();
+  //     startDate.setDate(startDate.getDate() + 2);
+  //     console.log(`Starting search from date: ${startDate.toDateString()}`);
+  //     // Search for up to 90 days in the future
+  //     for (let i = 0; i < 90; i++) {
+  //       const dateToCheck = new Date(startDate);
+  //       console.log(`Checking date: ${dateToCheck.toDateString()}`);
+  //       dateToCheck.setDate(startDate.getDate() + i);
+
+  //       // Skip weekends (Saturday=6, Sunday=0)
+  //       const dayOfWeek = dateToCheck.getDay();
+  //       if (dayOfWeek === 0 || dayOfWeek === 6) {
+  //         continue; // Skip to the next day
+  //       }
+
+  //       // Format date to 'YYYY-MM-DD'
+  //       const formattedDate = dateToCheck.toISOString().split("T")[0];
+
+  //       // Check each available time slot for that day
+  //       for (const time of instructor.availableTimes) {
+  //         const availability = await this.checkAvailability(
+  //           formattedDate,
+  //           time,
+  //           instructorId
+  //         );
+
+  //         if (availability.isAvailable) {
+  //           // Found the earliest slot, return it immediately
+  //           console.log(
+  //             `✅ Earliest available slot found: ${formattedDate} at ${time}`
+  //           );
+  //           return { date: formattedDate, time: time };
+  //         }
+  //       }
+  //     }
+
+  //     // If the loop finishes, no slots were found in the 90-day window
+  //     console.log("🤷 No available slots found in the next 90 days.");
+  //     return null;
+  //   } catch (error) {
+  //     console.error(
+  //       "❌ Error finding the earliest available slot:",
+  //       error.message
+  //     );
+  //     return null; // Return null on error to prevent crashes
+  //   }
+  // }
+
+  // ... rest of your CalendarService class
+  async findEarliestAvailableSlot(instructorId) {
+    console.log(
+      `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
+    );
+    try {
+      const instructor = getInstructor(instructorId);
+      if (!instructor) {
+        console.error(`❌ Instructor not found: ${instructorId}`);
+        throw new Error("Instructor not found");
+      }
+
+      // Rule: Start checking from 2 days from now.
+      // Get today's date string and add 2 days to it.
+      const today = timezoneUtils.getCurrentDateString();
+      let dateToCheck = timezoneUtils.addDays(today, 2);
+
+      console.log(`Starting search from date: ${dateToCheck}`);
+
+      // Search for up to 90 days in the future
+      for (let i = 0; i < 90; i++) {
+        // For every loop after the first, advance the date by one day.
+        if (i > 0) {
+          dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
+        }
+        console.log(`Checking date: ${dateToCheck}`);
+
+        // Skip weekends using your new utility function
+        if (timezoneUtils.isWeekend(dateToCheck)) {
+          continue; // Skip to the next day
+        }
+
+        // The 'dateToCheck' variable is already the correctly formatted string. No more conversions needed!
+        for (const time of instructor.availableTimes) {
+          const availability = await this.checkAvailability(
+            dateToCheck, // Use the safe string directly
+            time,
+            instructorId
+          );
+
+          if (availability.isAvailable) {
+            // Found the earliest slot, return it immediately
+            console.log(
+              `✅ Earliest available slot found: ${dateToCheck} at ${time}`
+            );
+            return { date: dateToCheck, time: time };
+          }
+        }
+      }
+
+      // If the loop finishes, no slots were found
+      console.log("🤷 No available slots found in the next 90 days.");
+      return null;
+    } catch (error) {
+      console.error(
+        "❌ Error finding the earliest available slot:",
+        error.message
+      );
+      return null;
+    }
+  }
+  /**
    * Build start and end DateTime objects in configured timezone
    */
   buildDateTimes(date, time) {
@@ -16,12 +143,14 @@ class CalendarService {
   async checkAvailability(date, time, instructorId) {
     try {
       console.log(`🔍 Checking availability for ${date} at ${time}...`);
-
+      // console.log("Using instructor ID:", instructorId);
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
+      // console.log("Refresh token:", process.env.GOOGLE_REFRESH_TOKEN);
       const instructor = getInstructor(instructorId);
+      // console.log("Using instructor:", instructor);
       if (!instructor) {
         console.error(`❌ Instructor not found: ${instructorId}`);
         return { isAvailable: false, error: "Instructor not found" };
@@ -64,7 +193,7 @@ class CalendarService {
     } catch (error) {
       console.error("❌ Error checking calendar availability:", error.message);
       return {
-        isAvailable: true,
+        isAvailable: false,
         error: `Could not verify calendar availability: ${error.message}`,
         warning: true,
       };
@@ -86,7 +215,7 @@ class CalendarService {
           availableSlots.push(time);
         }
       }
-
+      
       return availableSlots;
     } catch (error) {
       console.error("❌ Error getting available time slots:", error);
@@ -98,7 +227,7 @@ class CalendarService {
   async getCalendarContext(instructorId) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(instructorId);
@@ -139,7 +268,7 @@ class CalendarService {
   async createEvent(bookingData) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
@@ -184,7 +313,7 @@ class CalendarService {
   async updateEvent(eventId, bookingData, fromUser) {
     try {
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
@@ -195,7 +324,7 @@ class CalendarService {
 
       const event = {
         summary: `Driving Lesson - ${bookingData.newLessonType} - ${fromUser}`,
-        description: `Driving lesson booking\nPhone: ${fromUser}}`,
+        description: `Driving lesson booking\nPhone: ${fromUser}`,
         start: {
           dateTime: startDateTime.toISOString(),
           timeZone: timezoneUtils.timezone,
@@ -228,7 +357,7 @@ class CalendarService {
       }
 
       oauth2Client.setCredentials({
-        refresh_token: process.env.REMOVED_TOKEN,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
       });
 
       const instructor = getInstructor(process.env.PHONE_NUMBER_ID);

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log Downloader</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #b97c14 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    h2 {
+      color: #1a202c;
+      font-size: 28px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: #718096;
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .form-group {
+      margin-bottom: 24px;
+    }
+
+    label {
+      display: block;
+      color: #2d3748;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    input[type="date"],
+    select {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+      color: #2d3748;
+      background: white;
+      transition: all 0.2s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%234a5568' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 16px center;
+      padding-right: 40px;
+    }
+
+    input[type="date"] {
+      background-image: none;
+      padding-right: 16px;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      cursor: pointer;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    select:disabled {
+      background-color: #f7fafc;
+      color: #a0aec0;
+      cursor: not-allowed;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .loading {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #718096;
+      font-size: 14px;
+      margin-top: 16px;
+    }
+
+    .loading.active {
+      display: flex;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .error {
+      background: #fed7d7;
+      color: #c53030;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-top: 16px;
+      display: none;
+    }
+
+    .error.active {
+      display: block;
+    }
+
+    .phone-count {
+      color: #718096;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h2>Download Donna Logs 🚗</h2>
+    <p class="subtitle">Select a date and phone to download logs</p>
+
+    <div class="form-group">
+      <label for="date">Select Date</label>
+      <input type="date" id="date" max="" />
+    </div>
+
+    <div class="form-group">
+      <label for="phone">Select Phone</label>
+      <select id="phone" disabled>
+        <option value="">Select date first</option>
+      </select>
+      <div class="phone-count" id="phoneCount"></div>
+    </div>
+
+    <button class="btn" id="downloadBtn" onclick="downloadLog()" disabled>
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+      Download Log
+    </button>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>Loading phones...</span>
+    </div>
+
+    <div class="error" id="error"></div>
+  </div>
+
+
+  <iframe id="downloadFrame" style="display: none;"></iframe>
+  
+  <script>
+    const dateInput = document.getElementById("date");
+    const phoneSelect = document.getElementById("phone");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const loading = document.getElementById("loading");
+    const errorDiv = document.getElementById("error");
+    const phoneCount = document.getElementById("phoneCount");
+
+    // Set max date to today
+    dateInput.max = new Date().toISOString().split('T')[0];
+
+    function showError(message) {
+      errorDiv.textContent = message;
+      errorDiv.classList.add("active");
+      setTimeout(() => errorDiv.classList.remove("active"), 5000);
+    }
+
+    function hideError() {
+      errorDiv.classList.remove("active");
+    }
+
+    dateInput.addEventListener("change", async () => {
+      const date = dateInput.value;
+      if (!date) return;
+
+      hideError();
+      loading.classList.add("active");
+      phoneSelect.disabled = true;
+      phoneSelect.innerHTML = '<option value="">Loading...</option>';
+      phoneCount.textContent = "";
+      downloadBtn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/logs/phones?date=${date}`);
+        
+        if (!res.ok) {
+          throw new Error(`Server error: ${res.status}`);
+        }
+
+        const phones = await res.json();
+
+        phoneSelect.innerHTML = "";
+
+        if (phones.length === 0) {
+          phoneSelect.innerHTML = '<option value="">No logs available</option>';
+          phoneCount.textContent = "No logs found for this date";
+        } else {
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "Choose a phone...";
+          phoneSelect.appendChild(placeholder);
+
+          phones.forEach(phone => {
+            const option = document.createElement("option");
+            option.value = phone;
+            option.textContent = phone;
+            phoneSelect.appendChild(option);
+          });
+
+          phoneCount.textContent = `${phones.length} phone${phones.length !== 1 ? 's' : ''} available`;
+        }
+
+        phoneSelect.disabled = false;
+
+      } catch (error) {
+        console.error("Error fetching phones:", error);
+        showError("Failed to load phones. Please try again.");
+        phoneSelect.innerHTML = '<option value="">Error loading phones</option>';
+      } finally {
+        loading.classList.remove("active");
+      }
+    });
+
+    phoneSelect.addEventListener("change", () => {
+      downloadBtn.disabled = !phoneSelect.value;
+    });
+
+     function downloadLog() {
+    const date = dateInput.value;
+    const phone = phoneSelect.value;
+
+    if (!date || !phone) {
+      showError("Please select both date and phone");
+      return;
+    }
+
+    hideError();
+    
+    // Use hidden iframe instead of window.open
+    const iframe = document.getElementById('downloadFrame');
+    iframe.src = `/api/logs/getLog?date=${date}&phone=${phone}`;
+  }
+  </script>
+
+</body>
+</html>

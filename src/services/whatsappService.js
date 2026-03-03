@@ -1,5 +1,7 @@
 const axios = require('axios');
-
+const getChatLogger = require("../utils/chatLogger");
+const getDbChatLogger = require("../utils/dbChatLogger");
+const logger = require('../utils/chatLogger');
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const WHATSAPP_API_URL = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`;
@@ -7,15 +9,30 @@ const WHATSAPP_API_URL = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/me
 class WhatsAppService {
     async sendMessage(to, message) {
         try {
+            
+            const chatLogger = getChatLogger(to);
+            const dbChatLogger = getDbChatLogger(PHONE_NUMBER_ID, to);
+            chatLogger.info(`${message.text?.body}`);
+            dbChatLogger.assistant(`${message.text?.body}`);
             const response = await axios.post(WHATSAPP_API_URL, message, {
                 headers: {
-                    'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-                    'Content-Type': 'application/json'
+                    Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+                    "Content-Type": "application/json"
                 }
             });
+
+            // logger.info("WhatsApp message sent successfully", {
+            //     to: to,
+            //     messageId: response.data?.messages?.[0]?.id,
+            //     response: response.data
+            // });
+
             return response.data;
+
         } catch (error) {
-            console.error('Error sending WhatsApp message:', error.response?.data || error.message);
+
+            logger.error(`ERROR: ${error.message}`);
+
             throw error;
         }
     }

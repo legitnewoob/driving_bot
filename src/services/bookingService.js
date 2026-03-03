@@ -5,12 +5,16 @@ const {
   getInstructor,
 } = require("../models/instructorModel");
 const Booking = require("../models/bookingModel");
+const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
     console.log("Fetching bookings for user:", userPhone);
-    return await Booking.find({ userPhone, status: ["confirmed", "rescheduled"] }).sort({
+    return await Booking.find({
+      userPhone,
+      status: ["confirmed", "rescheduled"],
+    }).sort({
       date: 1,
       time: 1,
     });
@@ -35,18 +39,23 @@ class BookingService {
 
       // Update Google Sheets
       try {
-        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
-        const learnerName = await sheetsService.getLearnerName(booking.userPhone, booking);
-        
+        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
+          booking.instructorId
+        );
+        const learnerName = await sheetsService.getLearnerName(
+          booking.userPhone,
+          booking
+        );
+
         await sheetsService.updateLearnerRecord(
           spreadsheetId,
           {
             phoneNumber: booking.userPhone,
             name: learnerName,
-            location: booking.location || ''
+            location: booking.location || "",
           },
           booking,
-          'cancel'
+          "cancel"
         );
       } catch (err) {
         console.error("Sheets update failed during cancellation:", err.message);
@@ -141,14 +150,18 @@ class BookingService {
   }
 
   async rescheduleBooking(from, bookingData) {
-    // Use findOne instead of findById
     const { newDate, newTime, bookingId } = bookingData;
     console.log("From user:", from, "bookingData:", bookingData);
-    const booking = await Booking.findOne({ bookingId: bookingId });
-
+    
+    // Step 1: Find booking
+    const booking = await Booking.findOne({ bookingId });
     if (!booking) throw new Error("Booking not found");
 
-    // Check new slot availability
+    // Step 2: Find user (for postal code + lat/long)
+    const user = await User.findOne({ phone: from });
+    if (!user) throw new Error("User not found");
+
+    // Step 3: Validate slot availability
     const validationErrors = await this.validateBooking({
       ...booking.toObject(),
       date: newDate,
@@ -157,84 +170,127 @@ class BookingService {
     if (validationErrors.length > 0)
       throw new Error(validationErrors.join(". "));
 
-    // Update in calendar
-    await calendarService.updateEvent(booking.calendarEventId, bookingData, from);
+    // Step 4: Update event in calendar
+    await calendarService.updateEvent(
+      booking.calendarEventId,
+      bookingData,
+      from
+    );
 
-    // Update Google Sheets
+    // Step 5: Update Google Sheets
     try {
-      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
+      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
+        booking.instructorId
+      );
       const learnerName = await sheetsService.getLearnerName(from, booking);
-      
+
       await sheetsService.updateLearnerRecord(
         spreadsheetId,
         {
           phoneNumber: from,
           name: learnerName,
-          location: booking.location || ''
+          location: booking.location || user.postalCode || "",
         },
         bookingData,
-        'reschedule'
+        "reschedule"
       );
     } catch (err) {
       console.error("Sheets update failed during rescheduling:", err.message);
-      // Continue with rescheduling even if sheets update fails
+      // Continue even if Sheets update fails
     }
 
-    // Update in Mongo
+    // Step 6: Update Mongo booking fields
     booking.date = newDate;
     booking.time = newTime;
     booking.status = "rescheduled";
+
+    // Optional: If you want to sync updated location
+    booking.postalCode = user.postalCode || booking.postalCode;
+    booking.lat = user.lat || booking.lat;
+    booking.long = user.long || booking.long;
+
     await booking.save();
 
+    console.log(`✅ Booking ${bookingId} rescheduled for ${from}`);
     return booking;
   }
 
-  async createBooking(bookingData) {
+  async createBooking(from, bookingData) {
     const validationErrors = await this.validateBooking(bookingData);
-
     if (validationErrors.length > 0) {
       throw new Error(validationErrors.join(". "));
     }
 
+    // ✅ Step 1: Fetch user details
+    const user = await require("../models/userModel").findOne({
+      phone: from,
+    });
+
+    if (!user) {
+      throw new Error("User not found. Please complete your profile first.");
+    }
+
+    if (
+      !user.postalCode ||
+      !user.location?.latitude ||
+      !user.location?.longitude
+    ) {
+      throw new Error(
+        "User location details are incomplete. Please update your postal code first."
+      );
+    }
+
+    // ✅ Step 2: Create event in Google Calendar
     const calendarEvent = await calendarService.createEvent(bookingData);
 
+    // ✅ Step 3: Generate booking ID
     const nanoid = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4); // no O/0/I/1 confusion
     const bookingId = `DL-${nanoid()}`;
-    
+
+    // ✅ Step 4: Create booking with user location + postal code
     const newBooking = await Booking.create({
-      bookingId: bookingId,
+      bookingId,
       userPhone: bookingData.userPhone,
       date: bookingData.date,
       time: bookingData.time,
-      lessonType: bookingData.lessonType,
-      specialRequests: bookingData.specialRequests,
       instructorId: process.env.PHONE_NUMBER_ID,
       calendarEventId: calendarEvent.id,
       status: "confirmed",
+      postalCode: user.postalCode,
+      location: {
+        latitude: user.location.latitude,
+        longitude: user.location.longitude,
+      },
     });
 
     const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
-    // const lessonPrice = instructor.rates[bookingData.lessonType];
 
-    // Update Google Sheets
+    // ✅ Step 5: Update Google Sheets
     try {
-      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(process.env.PHONE_NUMBER_ID);
-      const learnerName = await sheetsService.getLearnerName(bookingData.userPhone, bookingData);
-      
+      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
+        process.env.PHONE_NUMBER_ID
+      );
+      const learnerName = await sheetsService.getLearnerName(
+        bookingData.userPhone,
+        bookingData
+      );
+
       await sheetsService.updateLearnerRecord(
         spreadsheetId,
         {
           phoneNumber: bookingData.userPhone,
           name: learnerName,
-          location: bookingData.location || ''
+          location: user.postalCode,
         },
         bookingData,
-        'create'
+        "create"
       );
     } catch (err) {
-      console.error("Sheets update failed during booking creation:", err.message);
-      // Continue with booking creation even if sheets update fails
-      // You might want to add this to a retry queue
+      console.error(
+        "Sheets update failed during booking creation:",
+        err.message
+      );
+      // Continue even if Sheets update fails
     }
 
     return {
@@ -255,18 +311,23 @@ class BookingService {
 
       // Update Google Sheets
       try {
-        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(booking.instructorId);
-        const learnerName = await sheetsService.getLearnerName(booking.userPhone, booking);
-        
+        const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
+          booking.instructorId
+        );
+        const learnerName = await sheetsService.getLearnerName(
+          booking.userPhone,
+          booking
+        );
+
         await sheetsService.updateLearnerRecord(
           spreadsheetId,
           {
             phoneNumber: booking.userPhone,
             name: learnerName,
-            location: booking.location || ''
+            location: booking.location || "",
           },
           booking,
-          'complete'
+          "complete"
         );
       } catch (err) {
         console.error("Sheets update failed during completion:", err.message);

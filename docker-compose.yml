@@ -1,77 +1,20 @@
-version: "3.9"
+version: "3.8"
 
 services:
-  # --- Your Application Services ---
-  app:
+  driving-bot:
     build: .
-    container_name: driving_bot_app
+    container_name: driving-bot
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-driving-bot
     restart: always
-    ports:
-      - "3000" # Exposing this port is optional if only accessed via Nginx
-    networks:
-      - app_net # All services will share this network
-
-
-  nginx:
-    image: nginx:latest
-    container_name: driving_bot_nginx
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    # We specify the --config flag specifically for the 'run' subcommand
+    command: tunnel --config /etc/cloudflared/driving-bot.yml run
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - /Users/rajagrawal/.cloudflared:/etc/cloudflared:ro
     depends_on:
-      - app
-    networks:
-      - app_net
-
-  # --- Your Logging Services ---
-  loki:
-    image: grafana/loki:2.8.0
-    container_name: loki
-    ports:
-      - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - ./logging/loki-config.yaml:/etc/loki/local-config.yaml
-      - ./logging/loki/wal:/wal
-      - ./logging/loki/chunks:/loki/chunks
-    networks:
-      - app_net
-
-  promtail:
-    image: grafana/promtail:2.8.0
-    container_name: promtail
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./logging/promtail-config.yaml:/etc/promtail/config.yaml
-    command: -config.file=/etc/promtail/config.yaml
-    networks:
-      - app_net
-
-  grafana:
-    image: grafana/grafana:10.2.2
-    container_name: grafana
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_ROOT_URL=https://34.10.244.84/grafana
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
-    ports:
-      - "3001:3000"
-    volumes:
-      - grafana-data:/var/lib/grafana
-    depends_on:
-      - loki
-    networks:
-      - app_net
-
-# Define the single network that all services will use
-networks:
-  app_net:
-    driver: bridge
-
-# Define the persistent volume for Grafana data
-volumes:
-  grafana-data:
+      - driving-bot

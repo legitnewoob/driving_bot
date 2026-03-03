@@ -2,11 +2,14 @@ const timezoneUtils = require("../utils/timezoneUtils");
 // Store user sessions with conversation history
 const userSessions = {};
 
+
+const instructorName = process.env.INSTRUCTOR_NAME || "";
+const instructorEmail = process.env.INSTRUCTOR_EMAIL || "";
 // Instructor data
 const instructors = {
     [process.env.PHONE_NUMBER_ID]: {
-        name: 'Dummy Instructor',
-        googleCalendarId: 'dummyinstructor57@gmail.com',
+        name: `${instructorName} Instructor`,
+        googleCalendarId: `${instructorEmail}`,
         availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
         specialties: ['Basic driving', 'Highway driving', 'Parking', 'City driving'],
         rates: {

@@ -1,6 +1,11 @@
 const whatsappService = require("../services/whatsappService");
-const aiService = require("../services/aiService");
+const aiService = require("../services/gemini/aiService");
 const bookingService = require("../services/bookingService");
+const calendarService = require("../services/calendarService");
+const { ensureUserDetails } = require("../services/userDetailsService");
+const getChatLogger = require("../utils/chatLogger");
+const getDbChatLogger = require("../utils/dbChatLogger");
+
 const {
   getUserSession,
   updateUserSession,
@@ -13,14 +18,47 @@ class WebhookController {
 
   clearUserConversationHistoryAndContext(from) {
     const session = getUserSession(from);
-    session.conversationHistory = [];
+
+    if (session.conversationHistory.length > 0) {
+      session.conversationHistory = [];
+      console.log(`🧹 Clearing conversation history for ${from}`);
+    }
+
     updateUserSession(from, session);
-    console.log(`📝 Cleared conversation history for ${from}`);
     // Also clear AI service pending context
     aiService.clearPendingContext(from);
   }
 
+  clearOnlyUserConversationHistory(from) {
+    const session = getUserSession(from);
+    session.conversationHistory = [];
+    updateUserSession(from, session);
+  }
+
   /* ========== BOOKING ACTIONS ========== */
+
+  async next_available_slot(from) {
+    console.log("Let's find the next available appointment...");
+
+    const earliestSlot = await calendarService.findEarliestAvailableSlot(
+      process.env.PHONE_NUMBER_ID
+    );
+
+    if (earliestSlot) {
+      // Here you can store the result or format a message for the user
+      // For example, store it in a user session:
+      // userSession.nextAvailableSlot = earliestSlot;
+      console.log(
+        `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`
+      );
+      aiService.updatePendingContext(from, earliestSlot);
+      this.clearOnlyUserConversationHistory(from);
+      await whatsappService.sendTextMessage(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
+    } else {
+      console.log("Sorry, no appointments are available in the near future.");
+      return "Sorry, no appointments are available in the near future. Please check back later.";
+    }
+  }
 
   async showBookings(from) {
     const bookings = await bookingService.getBookingsByUser(from);
@@ -76,25 +114,24 @@ class WebhookController {
       // Status indicator
       let statusIcon = isPast ? "✅" : isToday ? "🔥" : "📌";
 
-      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${
-        index + 1
-      }*\n`;
+      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1
+        }*\n`;
       message += `🆔 ${bookingId}\n`;
       message += `${dateDisplay}\n`;
       message += `⏰ ${booking.time}\n`;
 
       // Add optional details with better formatting
       if (booking.service) message += `🎯 Service: *${booking.service}*\n`;
-      if (booking.location) message += `📍 ${booking.location}\n`;
+      if (booking.postalCode) message += `📍 ${booking.postalCode}\n`;
       if (booking.status) {
         const statusEmoji =
           booking.status.toLowerCase() === "confirmed"
             ? "✅"
             : booking.status.toLowerCase() === "pending"
-            ? "⏳"
-            : booking.status.toLowerCase() === "cancelled"
-            ? "❌"
-            : "📋";
+              ? "⏳"
+              : booking.status.toLowerCase() === "cancelled"
+                ? "❌"
+                : "📋";
         message += `${statusEmoji} Status: ${booking.status}\n`;
       }
       if (booking.notes) message += `📝 ${booking.notes}\n`;
@@ -114,9 +151,8 @@ class WebhookController {
     ).length;
 
     if (upcomingCount > 0) {
-      message += `_You have ${upcomingCount} upcoming appointment${
-        upcomingCount > 1 ? "s" : ""
-      }_ ⏰\n`;
+      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""
+        }_ ⏰\n`;
       message += "_Need to reschedule? Just let me know!_ 💬";
     } else {
       message +=
@@ -197,8 +233,9 @@ class WebhookController {
 
   async processBooking(from, bookingData) {
     try {
+
       console.log("📝 Processing booking for:", from, bookingData);
-      const booking = await bookingService.createBooking(bookingData);
+      const booking = await bookingService.createBooking(from, bookingData);
       console.log(booking);
       const confirmationMessage = [
         "🎉 Booking Confirmed!",
@@ -215,8 +252,6 @@ class WebhookController {
           day: "numeric",
         })}`,
         `🕐 Time: ${bookingData.time}`,
-        "",
-        "📧 A calendar invitation has been sent to your instructor.",
         "",
         "Good luck with your driving lesson! 🚗💨",
       ].join("\n");
@@ -260,7 +295,6 @@ class WebhookController {
     try {
       const body = req.body;
 
-      // console.log(JSON.stringify(body));
       if (body.object === "whatsapp_business_account") {
         for (const entry of body.entry || []) {
           for (const change of entry.changes || []) {
@@ -282,7 +316,12 @@ class WebhookController {
                 }
 
                 if (messageContent) {
-                  console.log(`📩 Incoming: ${from} → ${messageContent}`);
+                  const instructor = process.env.PHONE_NUMBER_ID; 
+                  const chatLogger = getChatLogger(from);
+                  const dbChatLogger = getDbChatLogger(instructor, from);
+                  chatLogger.info(`${messageContent}`); // file system logger
+                  dbChatLogger.user(`${messageContent}`); // MongoDB logger with metadata
+                  //console.log(`📩 Incoming: ${from} → ${messageContent}`);
                   await this.handleIncomingMessage(from, messageContent);
                 }
               }
@@ -302,20 +341,37 @@ class WebhookController {
 
   async handleIncomingMessage(from, messageContent) {
     try {
-      
+      console.log('MESSAGE CONTENT', messageContent);
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
+      // 🧠 Step 1: Check user profile before AI flow
+      const { inProgress, user, justCompleted } = await ensureUserDetails(from, messageContent);
+      if (inProgress) {
+        console.log("⏳ Waiting for user details to be completed...");
+        // ⏸ Stop here — don't send message to Gemini yet
+        return;
+      }
+
+      if (justCompleted) {
+
+        console.log("✅ User details just completed. Clearing context...");
+        // Now safe to clear conversation history here
+        this.clearUserConversationHistoryAndContext(from);
+
+        whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
+
+        return;
+      }
+
+      // ✅ Step 2: Continue your existing AI-based logic
       const session = getUserSession(from);
-      
-      // SPECIAL RUTHLESS CASE
-      
       const aiResponse = await aiService.getResponse(
         messageContent,
         session.conversationHistory,
         from
       );
 
-      console.log("🤖 AI Response:", aiResponse);
+      // console.log("🤖 AI Response:", aiResponse);
 
       const { hasAction, actionType, bookingData, responseText } =
         aiService.extractActions(aiResponse);
@@ -350,7 +406,9 @@ class WebhookController {
           case "cancel_booking":
             await this.cancelBooking(from, bookingData);
             break;
-
+          case "next_available_slot":
+            await this.next_available_slot(from);
+            break;
           case "null":
             // await whatsappService.sendTextMessage(from, "⚠️ ACTION IS NULL");
             break;

@@ -12,8 +12,8 @@ class WhatsAppService {
             
             const chatLogger = getChatLogger(to);
             const dbChatLogger = getDbChatLogger(PHONE_NUMBER_ID, to);
-            chatLogger.info(`(Donna) : ${message.text?.body}`);
-            dbChatLogger.assistant(`(Donna) : ${message.text?.body}`);
+            chatLogger.info(`${message.text?.body}`);
+            dbChatLogger.assistant(`${message.text?.body}`);
             const response = await axios.post(WHATSAPP_API_URL, message, {
                 headers: {
                     Authorization: `Bearer ${WHATSAPP_TOKEN}`,

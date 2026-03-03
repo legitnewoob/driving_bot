@@ -319,8 +319,8 @@ class WebhookController {
                   const instructor = process.env.PHONE_NUMBER_ID; 
                   const chatLogger = getChatLogger(from);
                   const dbChatLogger = getDbChatLogger(instructor, from);
-                  chatLogger.info(`(USER) : ${messageContent}`);
-                  dbChatLogger.user(`(USER) : ${messageContent}`);
+                  chatLogger.info(`${messageContent}`); // file system logger
+                  dbChatLogger.user(`${messageContent}`); // MongoDB logger with metadata
                   //console.log(`📩 Incoming: ${from} → ${messageContent}`);
                   await this.handleIncomingMessage(from, messageContent);
                 }

@@ -6,6 +6,10 @@ on:
       - Development
       - UAT
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   promote:
     runs-on: ubuntu-latest
@@ -22,8 +26,7 @@ jobs:
           destination_branch: UAT
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pr_title: "Auto Promotion: Development → UAT"
-          pr_body: |
-            Automatically created PR after merging into Development.
+          pr_body: "Automated promotion from Development to UAT"
 
       - name: Create PR UAT → Master
         if: github.ref == 'refs/heads/UAT'
@@ -33,5 +36,4 @@ jobs:
           destination_branch: Master
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pr_title: "Auto Promotion: UAT → Master"
-          pr_body: |
-            Automatically created PR after merging into UAT.
+          pr_body: "Automated promotion from UAT to Master"

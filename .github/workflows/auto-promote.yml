@@ -11,26 +11,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Create PR Development → UAT
         if: github.ref == 'refs/heads/Development'
         uses: repo-sync/pull-request@v2
         with:
-          source_branch: "Development"
-          destination_branch: "UAT"
+          source_branch: Development
+          destination_branch: UAT
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pr_title: "Auto Promotion: Development → UAT"
           pr_body: |
-            This PR was automatically created after merging into Development.
-            Promoting code to UAT.
+            Automatically created PR after merging into Development.
 
       - name: Create PR UAT → Master
         if: github.ref == 'refs/heads/UAT'
         uses: repo-sync/pull-request@v2
         with:
-          source_branch: "UAT"
-          destination_branch: "Master"
+          source_branch: UAT
+          destination_branch: Master
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pr_title: "Auto Promotion: UAT → Master"
           pr_body: |
-            This PR was automatically created after merging into UAT.
-            Promoting code to Master.
+            Automatically created PR after merging into UAT.

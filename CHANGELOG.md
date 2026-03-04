@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/legitnewoob/driving_bot/compare/v1.0.0...v1.1.0) (2026-03-04)
+
+
+### Features
+
+* enhance health metrics and dashboard rendering for improved system monitoring ([c746fd9](https://github.com/legitnewoob/driving_bot/commit/c746fd9ecef12ccf4a9fc520432f555c29c5cc27))
+
 # 1.0.0 (2026-03-04)
 
 

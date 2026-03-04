@@ -3,7 +3,7 @@ const MongoTransport = require("./mongoTransport");
 
 const loggerCache = new Map();
 
-function getChatLogger(instructor , phoneNumber) {
+function getDbChatLogger(instructor , phoneNumber) {
   const today = new Date().toLocaleDateString("en-CA", {
     timeZone: process.env.APP_TIMEZONE
   });
@@ -54,4 +54,4 @@ function getChatLogger(instructor , phoneNumber) {
   return wrappedLogger;
 }
 
-module.exports = getChatLogger;
+module.exports = getDbChatLogger;

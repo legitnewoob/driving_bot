@@ -1,147 +1,204 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const os = require('os');
-const { basicAuth } = require('../middleware/auth');
-const timezoneUtils = require('../utils/timezoneUtils'); // 👈 add this
-
-// Basic system information
-const startTime = timezoneUtils.getCurrentDate();
+const os = require("os");
+const { basicAuth } = require("../middleware/auth");
+const timezoneUtils = require("../utils/timezoneUtils");
 
 /**
- * Health endpoint to monitor application status and performance
+ * Build health metrics
  */
-router.get('/health', basicAuth, (req, res) => {
-  const uptime = Math.floor((timezoneUtils.getCurrentDate() - startTime) / 1000); // in seconds
+function getHealthData() {
+  const now = timezoneUtils.getCurrentDate();
 
-  const healthData = {
-    status: 'UP',
-    timestamp: timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), 'YYYY-MM-DD HH:mm:ss z'),
-    uptime: `${uptime} seconds`,
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+
+  const memoryUsagePercent = Math.round((usedMem / totalMem) * 100);
+
+  return {
+    status: "UP",
+    timestamp: timezoneUtils.formatDate(now, "YYYY-MM-DD HH:mm:ss z"),
+    uptime: `${Math.floor(process.uptime())} seconds`,
+
     system: {
       platform: process.platform,
       nodeVersion: process.version,
+
       memory: {
-        total: `${Math.round(os.totalmem() / (1024 * 1024))} MB`,
-        free: `${Math.round(os.freemem() / (1024 * 1024))} MB`,
-        usage: `${Math.round((os.totalmem() - os.freemem()) / os.totalmem() * 100)}%`
+        total: `${Math.round(totalMem / 1024 / 1024)} MB`,
+        free: `${Math.round(freeMem / 1024 / 1024)} MB`,
+        usage: `${memoryUsagePercent}%`,
       },
+
       cpu: {
         cores: os.cpus().length,
-        load: os.loadavg()
-      }
+        load: os.loadavg(),
+      },
     },
+
     process: {
       pid: process.pid,
       memoryUsage: {
-        rss: `${Math.round(process.memoryUsage().rss / (1024 * 1024))} MB`,
-        heapTotal: `${Math.round(process.memoryUsage().heapTotal / (1024 * 1024))} MB`,
-        heapUsed: `${Math.round(process.memoryUsage().heapUsed / (1024 * 1024))} MB`,
-      }
-    }
+        rss: `${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`,
+        heapTotal: `${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)} MB`,
+        heapUsed: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`,
+      },
+    },
   };
+}
 
-  // JSON response
-  const acceptHeader = req.get('Accept');
-  if (acceptHeader && acceptHeader.includes('application/json')) {
-    return res.json(healthData);
-  }
-
-  const statusColor = healthData.status === 'UP' ? 'green' : 'red';
+/**
+ * HTML Dashboard Renderer
+ */
+function renderDashboard(healthData) {
   const memoryUsagePercent = parseInt(healthData.system.memory.usage);
-  const memoryBarColor = memoryUsagePercent < 70 ? 'green' : memoryUsagePercent < 90 ? 'orange' : 'red';
-  const refreshInterval = 1000; // 1 second
+  const memoryBarColor =
+    memoryUsagePercent < 70
+      ? "green"
+      : memoryUsagePercent < 90
+      ? "orange"
+      : "red";
 
-  const html = `
+  return `
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Driving Bot - System Health</title>
-  <script>
-    function setupAutoRefresh() {
-      const refreshInterval = ${refreshInterval};
-      
-      async function refreshData() {
-        try {
-          const response = await fetch(window.location.href, {
-            headers: { 'Accept': 'application/json' }
-          });
-          const data = await response.json();
-          
-          document.querySelector('.status-badge').textContent = data.status;
-          document.querySelector('.status-badge').style.backgroundColor = data.status === 'UP' ? 'green' : 'red';
-          
-          document.getElementById('uptime').textContent = data.uptime;
-          document.getElementById('timestamp').textContent = data.timestamp;
-          document.getElementById('platform').textContent = data.system.platform;
-          document.getElementById('nodeVersion').textContent = data.system.nodeVersion;
-          document.getElementById('cpuCores').textContent = data.system.cpu.cores;
-          document.getElementById('cpuLoad').textContent = data.system.cpu.load.join(', ');
-          
-          const memoryUsagePercent = parseInt(data.system.memory.usage);
-          const memoryBarColor = memoryUsagePercent < 70 ? 'green' : memoryUsagePercent < 90 ? 'orange' : 'red';
-          document.querySelector('.progress-fill').style.backgroundColor = memoryBarColor;
-          document.querySelector('.progress-fill').style.width = data.system.memory.usage;
-          document.getElementById('memoryUsage').textContent = data.system.memory.usage;
-          document.getElementById('totalMemory').textContent = data.system.memory.total;
-          document.getElementById('freeMemory').textContent = data.system.memory.free;
-          
-          document.getElementById('pid').textContent = data.process.pid;
-          document.getElementById('rss').textContent = data.process.memoryUsage.rss;
-          document.getElementById('heapTotal').textContent = data.process.memoryUsage.heapTotal;
-          document.getElementById('heapUsed').textContent = data.process.memoryUsage.heapUsed;
-          
-          document.getElementById('lastRefresh').textContent = new Date().toLocaleTimeString();
-        } catch (error) {
-          console.error('Error refreshing data:', error);
-        }
-        
-        setTimeout(refreshData, refreshInterval);
-      }
-      
-      setTimeout(refreshData, refreshInterval);
-      setInterval(() => {
-        document.getElementById('lastRefresh').textContent = new Date().toLocaleTimeString();
-      }, 1000);
-    }
-    window.onload = setupAutoRefresh;
-  </script>
-  <style>
-    /* (keep your existing styles) */
-  </style>
+<title>Driving Bot Health</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body{
+  font-family:Arial;
+  background:#f4f6f9;
+  padding:20px;
+}
+
+.container{
+  max-width:800px;
+  margin:auto;
+}
+
+.card{
+  background:white;
+  padding:20px;
+  border-radius:10px;
+  margin-bottom:20px;
+  box-shadow:0 2px 5px rgba(0,0,0,0.1);
+}
+
+.status{
+  padding:6px 12px;
+  border-radius:6px;
+  color:white;
+  background:${healthData.status === "UP" ? "green" : "red"};
+}
+
+.progress{
+  width:100%;
+  height:15px;
+  background:#ddd;
+  border-radius:8px;
+  overflow:hidden;
+}
+
+.progress-fill{
+  height:100%;
+  width:${healthData.system.memory.usage};
+  background:${memoryBarColor};
+}
+</style>
+
+<script>
+async function refresh(){
+  const res = await fetch(window.location.href,{
+    headers:{'Accept':'application/json'}
+  })
+
+  const data = await res.json()
+
+  document.getElementById("uptime").innerText = data.uptime
+  document.getElementById("timestamp").innerText = data.timestamp
+  document.getElementById("memoryUsage").innerText = data.system.memory.usage
+
+  document.querySelector(".progress-fill").style.width = data.system.memory.usage
+
+  setTimeout(refresh,1000)
+}
+
+window.onload = refresh
+</script>
+
 </head>
+
 <body>
-  <div class="container">
-    <h1>System Health Dashboard</h1>
-    
-    <div class="card">
-      <h2>System Status</h2>
-      <p><span class="status-badge">${healthData.status}</span></p>
-      <p><strong>Uptime:</strong> <span id="uptime">${healthData.uptime}</span></p>
-      <p><strong>Current Time:</strong> <span id="timestamp">${healthData.timestamp}</span></p>
-    </div>
-    
-    <!-- (rest of your HTML unchanged) -->
-    
-    <div class="auto-refresh">
-      <div>
-        <span class="refresh-indicator"></span>
-        Auto-refreshing every ${refreshInterval / 1000} second${refreshInterval / 1000 > 1 ? 's' : ''}
-      </div>
-      <div>Last updated: <span id="lastRefresh">${timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), 'HH:mm:ss')}</span></div>
-    </div>
-    
-    <div class="footer">
-      <p>Driving Bot Health Monitor • ${timezoneUtils.getCurrentDate().getFullYear()}</p>
-    </div>
-  </div>
+
+<div class="container">
+
+<h1>Driving Bot Health</h1>
+
+<div class="card">
+<h3>Status</h3>
+<span class="status">${healthData.status}</span>
+<p>Uptime: <span id="uptime">${healthData.uptime}</span></p>
+<p>Time: <span id="timestamp">${healthData.timestamp}</span></p>
+</div>
+
+<div class="card">
+<h3>System</h3>
+<p>Platform: ${healthData.system.platform}</p>
+<p>Node: ${healthData.system.nodeVersion}</p>
+<p>CPU Cores: ${healthData.system.cpu.cores}</p>
+<p>Load: ${healthData.system.cpu.load.join(", ")}</p>
+</div>
+
+<div class="card">
+<h3>Memory</h3>
+
+<div class="progress">
+<div class="progress-fill"></div>
+</div>
+
+<p>
+Usage: <span id="memoryUsage">${healthData.system.memory.usage}</span>
+</p>
+
+<p>Total: ${healthData.system.memory.total}</p>
+<p>Free: ${healthData.system.memory.free}</p>
+
+</div>
+
+<div class="card">
+<h3>Process</h3>
+
+<p>PID: ${healthData.process.pid}</p>
+<p>RSS: ${healthData.process.memoryUsage.rss}</p>
+<p>Heap Total: ${healthData.process.memoryUsage.heapTotal}</p>
+<p>Heap Used: ${healthData.process.memoryUsage.heapUsed}</p>
+
+</div>
+
+</div>
+
 </body>
 </html>
-  `;
+`;
+}
 
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
+/**
+ * Health Endpoint
+ */
+router.get("/health", basicAuth, (req, res) => {
+  const healthData = getHealthData();
+
+  const acceptHeader = req.get("Accept");
+
+  if (acceptHeader && acceptHeader.includes("application/json")) {
+    return res.status(200).json(healthData);
+  }
+
+  res.setHeader("Content-Type", "text/html");
+  res.send(renderDashboard(healthData));
 });
 
 module.exports = router;

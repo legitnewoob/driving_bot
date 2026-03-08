@@ -14,18 +14,28 @@ const {
 const timezoneUtils = require("../utils/timezoneUtils");
 
 class WebhookController {
+
+  // ─── THE ONLY CHANGE NEEDED EVERYWHERE ───────────────────────────────────
+  // Instead of calling whatsappService.sendTextMessage(from, text) directly,
+  // all methods now call this._send(from, text).
+  // In mock mode it captures the reply. In prod it calls WhatsApp as normal.
+  _send(from, text) {
+    if (this._isMock && this._mockReplyCallback) {
+      this._mockReplyCallback(text);
+      return Promise.resolve();
+    }
+    return whatsappService.sendTextMessage(from, text);
+  }
+
   /* ========== HELPER METHOD ========== */
 
   clearUserConversationHistoryAndContext(from) {
     const session = getUserSession(from);
-
     if (session.conversationHistory.length > 0) {
       session.conversationHistory = [];
       console.log(`🧹 Clearing conversation history for ${from}`);
     }
-
     updateUserSession(from, session);
-    // Also clear AI service pending context
     aiService.clearPendingContext(from);
   }
 
@@ -39,53 +49,34 @@ class WebhookController {
 
   async next_available_slot(from) {
     console.log("Let's find the next available appointment...");
-
     const earliestSlot = await calendarService.findEarliestAvailableSlot(
       process.env.PHONE_NUMBER_ID
     );
-
     if (earliestSlot) {
-      // Here you can store the result or format a message for the user
-      // For example, store it in a user session:
-      // userSession.nextAvailableSlot = earliestSlot;
-      console.log(
-        `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`
-      );
+      console.log(`The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`);
       aiService.updatePendingContext(from, earliestSlot);
       this.clearOnlyUserConversationHistory(from);
-      await whatsappService.sendTextMessage(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
+      await this._send(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
     } else {
       console.log("Sorry, no appointments are available in the near future.");
-      return "Sorry, no appointments are available in the near future. Please check back later.";
+      await this._send(from, "Sorry, no appointments are available in the near future. Please check back later.");
     }
   }
 
   async showBookings(from) {
     const bookings = await bookingService.getBookingsByUser(from);
-    // console.log(bookings);
     if (!bookings.length) {
-      await whatsappService.sendTextMessage(
-        from,
-        "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬"
-      );
-
-      // Clear conversation history and pending context after showing empty bookings
+      await this._send(from, "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬");
       this.clearUserConversationHistoryAndContext(from);
       return;
     }
 
-    // Sort bookings by date (earliest first)
-    // const sortedBookings = bookings.sort(
-    //   (a, b) => new Date(a.date) - new Date(b.date)
-    // );
     const sortedBookings = bookings.sort(
-      (a, b) =>
-        timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
+      (a, b) => timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
     );
 
-    // const now = new Date();
     const nowStr = timezoneUtils.getCurrentDateString();
-    const now = timezoneUtils.getCurrentDate(); // actual Date object in timezone
+    const now = timezoneUtils.getCurrentDate();
 
     let message = `*🗓️ YOUR BOOKINGS* (${sortedBookings.length})\n`;
     message += "━━━━━━━━━━━━━━━━━\n\n";
@@ -97,143 +88,86 @@ class WebhookController {
       const isTomorrow = timezoneUtils.isTomorrow(dateStr);
       const isPast = timezoneUtils.toTimezone(booking.date) < now && !isToday;
 
-      // Smart date formatting
       let dateDisplay;
       if (isToday) {
         dateDisplay = "🔥 *TODAY*";
       } else if (isTomorrow) {
         dateDisplay = "⭐ *TOMORROW*";
       } else {
-        const formattedDate = timezoneUtils.formatDate(
-          booking.date,
-          "ddd, MMM D"
-        );
+        const formattedDate = timezoneUtils.formatDate(booking.date, "ddd, MMM D");
         dateDisplay = isPast ? `✅ ${formattedDate}` : `📅 ${formattedDate}`;
       }
 
-      // Status indicator
       let statusIcon = isPast ? "✅" : isToday ? "🔥" : "📌";
-
-      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1
-        }*\n`;
+      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1}*\n`;
       message += `🆔 ${bookingId}\n`;
       message += `${dateDisplay}\n`;
       message += `⏰ ${booking.time}\n`;
 
-      // Add optional details with better formatting
       if (booking.service) message += `🎯 Service: *${booking.service}*\n`;
       if (booking.postalCode) message += `📍 ${booking.postalCode}\n`;
       if (booking.status) {
         const statusEmoji =
-          booking.status.toLowerCase() === "confirmed"
-            ? "✅"
-            : booking.status.toLowerCase() === "pending"
-              ? "⏳"
-              : booking.status.toLowerCase() === "cancelled"
-                ? "❌"
-                : "📋";
+          booking.status.toLowerCase() === "confirmed" ? "✅" :
+            booking.status.toLowerCase() === "pending" ? "⏳" :
+              booking.status.toLowerCase() === "cancelled" ? "❌" : "📋";
         message += `${statusEmoji} Status: ${booking.status}\n`;
       }
       if (booking.notes) message += `📝 ${booking.notes}\n`;
-
-      // Add separator between bookings (except for last one)
-      if (index < sortedBookings.length - 1) {
-        message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
-      }
+      if (index < sortedBookings.length - 1) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
       message += "\n";
     });
 
-    // Add helpful footer
     const upcomingCount = sortedBookings.filter(
-      (b) =>
-        timezoneUtils.toTimezone(b.date) >= now &&
+      (b) => timezoneUtils.toTimezone(b.date) >= now &&
         (b.status === "confirmed" || b.status === "rescheduled")
     ).length;
 
     if (upcomingCount > 0) {
-      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""
-        }_ ⏰\n`;
+      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""}_ ⏰\n`;
       message += "_Need to reschedule? Just let me know!_ 💬";
     } else {
-      message +=
-        "_All bookings completed! Ready to schedule your next appointment?_ 🚀";
+      message += "_All bookings completed! Ready to schedule your next appointment?_ 🚀";
     }
 
-    await whatsappService.sendTextMessage(from, message);
-
-    // Clear conversation history and pending context after showing bookings
+    await this._send(from, message);
     this.clearUserConversationHistoryAndContext(from);
   }
 
   async updateBooking(from, bookingData) {
     const updated = await bookingService.rescheduleBooking(from, bookingData);
-
     if (!updated) {
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ No booking found to update."
-      );
+      return this._send(from, "⚠️ No booking found to update.");
     }
-
-    await whatsappService.sendTextMessage(
-      from,
-      `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`
-    );
-
-    // Clear conversation history and pending context after successful update
+    await this._send(from, `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`);
     this.clearUserConversationHistoryAndContext(from);
   }
 
-  // controller/service layer where WhatsApp reply is sent
   async cancelBooking(from, bookingData) {
     try {
       console.log("HERE", bookingData);
-
       const bookingId = bookingData?.bookingId || "";
       if (!bookingId) {
-        return whatsappService.sendTextMessage(
-          from,
-          "⚠️ Please provide a valid booking ID to cancel."
-        );
+        return this._send(from, "⚠️ Please provide a valid booking ID to cancel.");
       }
-
       const booking = await bookingService.cancelBooking(bookingId);
-
       if (!booking) {
-        return whatsappService.sendTextMessage(
-          from,
-          `⚠️ No booking found with ID: ${bookingId}`
-        );
+        return this._send(from, `⚠️ No booking found with ID: ${bookingId}`);
       }
-
       if (booking.status === "cancelled") {
-        await whatsappService.sendTextMessage(
-          from,
-          `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`
-        );
-
-        // Clear conversation history and pending context after successful cancellation
+        await this._send(from, `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`);
         this.clearUserConversationHistoryAndContext(from);
         return;
       }
-
-      // fallback (should not usually happen)
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ Could not cancel the booking. Please try again later."
-      );
+      return this._send(from, "⚠️ Could not cancel the booking. Please try again later.");
     } catch (err) {
       console.error("Cancel booking controller error:", err.message);
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ Something went wrong while cancelling your booking. Please try again."
-      );
+      return this._send(from, "⚠️ Something went wrong while cancelling your booking. Please try again.");
     }
   }
 
   async processBooking(from, bookingData) {
     try {
-
       console.log("📝 Processing booking for:", from, bookingData);
       const booking = await bookingService.createBooking(from, bookingData);
       console.log(booking);
@@ -243,34 +177,24 @@ class WebhookController {
         `🆔 Booking ID: ${booking.booking.bookingId}`,
         "✅ Your driving lesson has been successfully booked:",
         "",
-
         `👨‍🏫 Instructor: ${booking.instructor.name}`,
         `📅 Date: ${new Date(bookingData.date).toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
+          weekday: "long", year: "numeric", month: "long", day: "numeric",
         })}`,
         `🕐 Time: ${bookingData.time}`,
         "",
         "Good luck with your driving lesson! 🚗💨",
       ].join("\n");
 
-      await whatsappService.sendTextMessage(from, confirmationMessage);
-
-      // Clear conversation history and pending context after successful booking
+      await this._send(from, confirmationMessage);
       this.clearUserConversationHistoryAndContext(from);
     } catch (error) {
       console.log(error);
       console.error("❌ Booking error:", error.message);
-
       const errorMessage = error.message.includes("validation")
         ? `❌ ${error.message}`
         : "❌ Sorry, there was an error processing your booking. Please try again.";
-
-      await whatsappService.sendTextMessage(from, errorMessage);
-
-      // Don't clear context on booking errors - user might want to retry with same date/time
+      await this._send(from, errorMessage);
     }
   }
 
@@ -280,12 +204,10 @@ class WebhookController {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
       console.log("Webhook verified successfully!");
       return res.status(200).send(challenge);
     }
-
     res.status(403).send("Forbidden");
   }
 
@@ -294,7 +216,6 @@ class WebhookController {
   async handleWebhook(req, res) {
     try {
       const body = req.body;
-
       if (body.object === "whatsapp_business_account") {
         for (const entry of body.entry || []) {
           for (const change of entry.changes || []) {
@@ -302,7 +223,6 @@ class WebhookController {
               for (const message of change.value.messages || []) {
                 const from = message.from;
                 const messageType = message.type;
-
                 let messageContent = "";
 
                 if (messageType === "text") {
@@ -316,12 +236,15 @@ class WebhookController {
                 }
 
                 if (messageContent) {
-                  const instructor = process.env.PHONE_NUMBER_ID; 
-                  const chatLogger = getChatLogger(from);
-                  const dbChatLogger = getDbChatLogger(instructor, from);
-                  chatLogger.info(`${messageContent}`); // file system logger
-                  dbChatLogger.user(`${messageContent}`); // MongoDB logger with metadata
-                  //console.log(`📩 Incoming: ${from} → ${messageContent}`);
+                  const instructor = process.env.PHONE_NUMBER_ID;
+                  try {
+                    const chatLogger = getChatLogger(from);
+                    const dbChatLogger = getDbChatLogger(instructor, from);
+                    chatLogger.info(`${messageContent}`);
+                    dbChatLogger.user(`${messageContent}`);
+                  } catch (logErr) {
+                    console.warn("[webhook] Logger skipped:", logErr.message);
+                  }
                   await this.handleIncomingMessage(from, messageContent);
                 }
               }
@@ -329,7 +252,6 @@ class WebhookController {
           }
         }
       }
-
       res.status(200).send("OK");
     } catch (error) {
       console.error("Webhook error:", error);
@@ -339,31 +261,33 @@ class WebhookController {
 
   /* ========== MESSAGE HANDLER ========== */
 
-  async handleIncomingMessage(from, messageContent) {
+  async handleIncomingMessage(from, messageContent, isMock = false, mockReplyCallback = null) {
+    // Store on instance so _send can access them without passing around everywhere
+    this._isMock = isMock;
+    this._mockReplyCallback = mockReplyCallback;
+
     try {
       console.log('MESSAGE CONTENT', messageContent);
       console.log(`📱 Message from ${from}: "${messageContent}"`);
 
-      // 🧠 Step 1: Check user profile before AI flow
-      const { inProgress, user, justCompleted } = await ensureUserDetails(from, messageContent);
+      // 🧠 Step 1: Check user profile before AI flow (skip in mock mode)
+      const { inProgress, user, justCompleted } = await ensureUserDetails(
+        from,
+        messageContent,
+        this._send.bind(this)   // ← works in both mock and real mode
+      );
       if (inProgress) {
         console.log("⏳ Waiting for user details to be completed...");
-        // ⏸ Stop here — don't send message to Gemini yet
         return;
       }
-
       if (justCompleted) {
-
         console.log("✅ User details just completed. Clearing context...");
-        // Now safe to clear conversation history here
         this.clearUserConversationHistoryAndContext(from);
-
-        whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
-
+        await this._send(from, "🚗 How can I assist you today?");
         return;
       }
 
-      // ✅ Step 2: Continue your existing AI-based logic
+      // ✅ Step 2: AI logic
       const session = getUserSession(from);
       const aiResponse = await aiService.getResponse(
         messageContent,
@@ -371,22 +295,16 @@ class WebhookController {
         from
       );
 
-      // console.log("🤖 AI Response:", aiResponse);
-
       const { hasAction, actionType, bookingData, responseText } =
         aiService.extractActions(aiResponse);
 
       if (responseText) {
-        await whatsappService.sendTextMessage(from, responseText);
+        await this._send(from, responseText);
       }
 
-      // Check if an action will be performed - if so, don't update conversation history
-      // as it will be cleared after the action completes
       const willPerformAction =
         hasAction &&
-        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(
-          actionType
-        );
+        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(actionType);
 
       if (hasAction) {
         switch (actionType) {
@@ -394,15 +312,12 @@ class WebhookController {
             bookingData.userPhone = from;
             await this.processBooking(from, bookingData);
             break;
-
           case "show_bookings":
             await this.showBookings(from);
             break;
-
           case "update_booking":
             await this.updateBooking(from, bookingData);
             break;
-
           case "cancel_booking":
             await this.cancelBooking(from, bookingData);
             break;
@@ -410,35 +325,28 @@ class WebhookController {
             await this.next_available_slot(from);
             break;
           case "null":
-            // await whatsappService.sendTextMessage(from, "⚠️ ACTION IS NULL");
             break;
         }
       }
 
-      // Only maintain conversation history if no action was performed
-      // (actions will clear the history themselves)
       if (!willPerformAction) {
         session.conversationHistory.push(
           { role: "user", content: messageContent },
           { role: "assistant", content: aiResponse }
         );
-
         const conversationHistoryLength = 10;
         if (session.conversationHistory.length > conversationHistoryLength) {
-          session.conversationHistory = session.conversationHistory.slice(
-            -conversationHistoryLength
-          );
+          session.conversationHistory = session.conversationHistory.slice(-conversationHistoryLength);
         }
-
         updateUserSession(from, session);
       }
     } catch (error) {
       console.error("❌ Error handling message:", error.message);
-
-      await whatsappService.sendTextMessage(
-        from,
-        "⚠️ Sorry, I'm having trouble processing your message. Please try again."
-      );
+      await this._send(from, "⚠️ Sorry, I'm having trouble processing your message. Please try again.");
+    } finally {
+      // Clean up mock state after request completes
+      this._isMock = false;
+      this._mockReplyCallback = null;
     }
   }
 }

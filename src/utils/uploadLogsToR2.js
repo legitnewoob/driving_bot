@@ -74,7 +74,7 @@ async function uploadContentToR2(content, key) {
  * Upload logs folder
  */
 async function uploadLogsFolder() {
-    console.log("Starting logs upload to R2...");
+    // console.log("Starting logs upload to R2...");
 
     const baseFolder = path.join(PROJECT_ROOT, "message-logs");
 
@@ -111,7 +111,7 @@ async function uploadLogsFolder() {
         }
     }
 
-    console.log("Logs upload process completed.");
+    // console.log("Logs upload process completed.");
 }
 
 module.exports = uploadLogsFolder;

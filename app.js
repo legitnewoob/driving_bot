@@ -38,10 +38,6 @@ const logAuth = basicAuth({
 });
 
 
-
-
-
-
 // Middleware
 app.use(express.json());
 connectDB();
@@ -51,6 +47,13 @@ app.use('/webhook', webhookRoutes);
 app.use('/auth' , authRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
+
+// Mock Route (development only)
+if (process.env.NODE_ENV === 'development') {
+  const mockWebhookRoutes = require('./src/routes/mockWebhook.js');
+  app.use('/mock-webhook', mockWebhookRoutes);
+  console.log('🧪 Mock webhook route enabled at POST /mock-webhook');
+}
 
 // Logs Viewer Page
 app.get("/logs-viewer", logAuth , logLimiter , (req, res) => {

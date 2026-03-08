@@ -3,73 +3,7 @@ const { getInstructor } = require("../models/instructorModel");
 const timezoneUtils = require("../utils/timezoneUtils"); // ✅ import utils
 
 class CalendarService {
-  /**
-   * Finds the earliest available time slot for an instructor,
-   * starting the search 2 days from the current date.
-   * @param {string} instructorId - The ID of the instructor.
-   * @returns {Promise<{date: string, time: string} | null>} - The earliest slot or null if none found.
-   */
-  // async findEarliestAvailableSlot(instructorId) {
-  //   console.log(
-  //     `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
-  //   );
-  //   try {
-  //     const instructor = getInstructor(instructorId);
-  //     if (!instructor) {
-  //       console.error(`❌ Instructor not found: ${instructorId}`);
-  //       throw new Error("Instructor not found");
-  //     }
 
-  //     // Rule: Start checking from 2 days from now
-  //     const startDate = timezoneUtils.getCurrentDate();
-  //     startDate.setDate(startDate.getDate() + 2);
-  //     console.log(`Starting search from date: ${startDate.toDateString()}`);
-  //     // Search for up to 90 days in the future
-  //     for (let i = 0; i < 90; i++) {
-  //       const dateToCheck = new Date(startDate);
-  //       console.log(`Checking date: ${dateToCheck.toDateString()}`);
-  //       dateToCheck.setDate(startDate.getDate() + i);
-
-  //       // Skip weekends (Saturday=6, Sunday=0)
-  //       const dayOfWeek = dateToCheck.getDay();
-  //       if (dayOfWeek === 0 || dayOfWeek === 6) {
-  //         continue; // Skip to the next day
-  //       }
-
-  //       // Format date to 'YYYY-MM-DD'
-  //       const formattedDate = dateToCheck.toISOString().split("T")[0];
-
-  //       // Check each available time slot for that day
-  //       for (const time of instructor.availableTimes) {
-  //         const availability = await this.checkAvailability(
-  //           formattedDate,
-  //           time,
-  //           instructorId
-  //         );
-
-  //         if (availability.isAvailable) {
-  //           // Found the earliest slot, return it immediately
-  //           console.log(
-  //             `✅ Earliest available slot found: ${formattedDate} at ${time}`
-  //           );
-  //           return { date: formattedDate, time: time };
-  //         }
-  //       }
-  //     }
-
-  //     // If the loop finishes, no slots were found in the 90-day window
-  //     console.log("🤷 No available slots found in the next 90 days.");
-  //     return null;
-  //   } catch (error) {
-  //     console.error(
-  //       "❌ Error finding the earliest available slot:",
-  //       error.message
-  //     );
-  //     return null; // Return null on error to prevent crashes
-  //   }
-  // }
-
-  // ... rest of your CalendarService class
   async findEarliestAvailableSlot(instructorId) {
     console.log(
       `🔎 Searching for the earliest available slot for instructor ${instructorId}...`

@@ -4,11 +4,14 @@ const mapsService = require("../services/mapsService");
 
 const steps = ["name", "age", "dob", "postalCode"];
 
-async function ensureUserDetails(from, messageContent) {
+// sendFn defaults to real WhatsApp — in mock mode, pass this._send.bind(this)
+async function ensureUserDetails(from, messageContent, sendFn = null) {
+  const send = sendFn || ((to, text) => whatsappService.sendTextMessage(to, text));
+
   // Handle data deletion request
   if (messageContent && messageContent.trim().toLowerCase() === "delete my data") {
     await User.deleteOne({ phone: from });
-    await whatsappService.sendTextMessage(from, "🗑️ Your data has been deleted.");
+    await send(from, "🗑️ Your data has been deleted.");
     return { inProgress: true, deleted: true };
   }
 
@@ -18,7 +21,7 @@ async function ensureUserDetails(from, messageContent) {
   if (!user) {
     user = new User({ phone: from, currentStep: steps[0] });
     await user.save();
-    await whatsappService.sendTextMessage(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
+    await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
     return { inProgress: true };
   }
 
@@ -41,14 +44,14 @@ async function ensureUserDetails(from, messageContent) {
       try {
         const { lat, lng, message } = await mapsService.getCoordinatesFromPostalCode(user.postalCode);
         user.location = { latitude: lat, longitude: lng };
-        await whatsappService.sendTextMessage(from, message);
+        await send(from, message);
       } catch (err) {
         console.error("❌ Error getting coordinates:", err.message);
-        await whatsappService.sendTextMessage(from, "⚠️ Couldn't fetch your location from the postal code.");
+        await send(from, "⚠️ Couldn't fetch your location from the postal code.");
       }
 
       await user.save();
-      await whatsappService.sendTextMessage(from, "✅ Thanks! Your details are saved. You can now manage bookings freely.");
+      await send(from, "✅ Thanks! Your details are saved. You can now manage bookings freely.");
       return { inProgress: false, user, justCompleted: true };
     }
 
@@ -57,7 +60,7 @@ async function ensureUserDetails(from, messageContent) {
 
   // Ask next question
   if (user.currentStep) {
-    await whatsappService.sendTextMessage(from, `Please provide your *${user.currentStep}*`);
+    await send(from, `Please provide your *${user.currentStep}*`);
   }
 
   return { inProgress: true };

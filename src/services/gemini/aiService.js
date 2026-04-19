@@ -260,12 +260,17 @@ class AIService {
         instructorId
       );
 
-      /* ROUTE OPTIMIZATION – re-enable when ready
+      console.log("Available slots for date: (pre-optimization): ", availableSlotsForDate);
+
+
+      //ROUTE OPTIMIZATION – re-enable when ready
       const routeOptimizer = new RouteOptimizer();
-      availableSlotsForDate = await routeOptimizer.filterAvailableSlotsByLocation(
-        availableSlotsForDate, dateRequested, instructorId, userPhone
+      const availableSlotsForDateCopy = await routeOptimizer.filterAvailableSlotsByLocation(
+        availableSlotsForDate, dateRequested, timeRequested, instructorId, userPhone
       );
-      */
+
+      console.log("Available slots for date (post-optimization): ", availableSlotsForDateCopy);
+      
 
       const isValidBusinessDay = !timezoneUtils.isWeekend(dateRequested);
 

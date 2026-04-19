@@ -5,6 +5,7 @@ const dateTimeUtils = require("../../utils/dateTimeUtils");
 const timezoneUtils = require("../../utils/timezoneUtils");
 const routeOptimizer = require("../routeOptimizer");
 const { getInstructor } = require("../../models/instructorModel");
+const logger = require("../../utils/logger-advanced");
 const fs = require("fs");
 const path = require("path");
 
@@ -78,8 +79,6 @@ class AIService {
   // ── Pending Context Helpers ────────────────
 
   updatePendingContext(userPhone, extractedDateTime) {
-    console.log("Extracted datetime for update:", extractedDateTime);
-
     if (!this.pendingContext[userPhone]) {
       this.pendingContext[userPhone] = {};
     }
@@ -94,7 +93,7 @@ class AIService {
     // Prune stale entries to prevent unbounded memory growth
     this._pruneStaleContexts();
 
-    console.log(`Pending context for ${userPhone}:`, this.pendingContext[userPhone]);
+    logger.info(`Pending context updated for ${userPhone}: date=${this.pendingContext[userPhone].date}, time=${this.pendingContext[userPhone].time}`);
   }
 
   _pruneStaleContexts() {
@@ -109,7 +108,7 @@ class AIService {
   clearPendingContext(userPhone) {
     if (this.pendingContext[userPhone]) {
       delete this.pendingContext[userPhone];
-      console.log(`🧹 Cleared pending context for ${userPhone}`);
+      logger.info(`Cleared pending context for ${userPhone}`);
     }
   }
 
@@ -159,7 +158,6 @@ class AIService {
    *  7. Neither                            → ask for both
    */
   generateSystemMessage(completeness, availabilityInfo = null) {
-    console.log("Generating system message:", completeness, availabilityInfo);
     const { finalDate, finalTime } = completeness;
 
     // ── CHECK 1: Is the requested time a valid slot? ──
@@ -271,7 +269,7 @@ class AIService {
         instructorId
       );
 
-      console.log("Available slots for date: (pre-optimization): ", availableSlotsForDate);
+      logger.info(`Slots for ${dateRequested} (pre-optimization): [${availableSlotsForDate}]`);
 
       // ROUTE OPTIMIZATION
       const optimizedSlots = await routeOptimizer.filterAvailableSlotsByLocation(
@@ -281,7 +279,7 @@ class AIService {
         userPhone
       );
 
-      console.log("Available slots for date (post-optimization): ", optimizedSlots);
+      logger.info(`Slots for ${dateRequested} (post-optimization): [${optimizedSlots}]`);
 
       const isValidBusinessDay = !timezoneUtils.isWeekend(dateRequested);
 
@@ -291,9 +289,6 @@ class AIService {
       const requestedSlotAvailable = timeRequested
         ? availableSlotsForDate.includes(timeRequested)
         : null;
-
-      console.log("Requested slot available:", requestedSlotAvailable);
-      console.log("Available slots for date:", optimizedSlots);
 
       return {
         isValidRequest: true,
@@ -305,7 +300,7 @@ class AIService {
         allAvailableTimes: instructor.availableTimes,
       };
     } catch (error) {
-      console.error("❌ Error getting availability info:", error);
+      logger.error(`Error getting availability info: ${error.message}`);
       return { error: error.message, isValidRequest: false };
     }
   }
@@ -314,15 +309,10 @@ class AIService {
 
   async getResponse(userMessage, conversationHistory, userPhone) {
     try {
-      console.log("Conversation history:", conversationHistory);
-
       // 1. Extract and sanitize date/time from the user's message
       const rawDateTime = await dateTimeService.extractDateTimeFromMessage(userMessage);
-      console.log("Pending context:", this.pendingContext);
-      console.log("Extracted datetime (raw):", rawDateTime);
-
       const dateTimeInfo = dateTimeUtils.sanitize(rawDateTime, this.pendingContext[userPhone]);
-      console.log("Sanitized datetime:", dateTimeInfo);
+      logger.info(`DateTime extraction for ${userPhone}: date=${dateTimeInfo.date}, time=${dateTimeInfo.time}, hasDateTime=${dateTimeInfo.hasDateTime}`);
 
       // 2. Build enhanced message with system availability context
       let enhancedMessage = userMessage;
@@ -330,7 +320,6 @@ class AIService {
       if (dateTimeInfo.hasDateTime) {
         this.updatePendingContext(userPhone, dateTimeInfo);
         const completeness = this.checkDateTimeCompleteness(dateTimeInfo, userPhone);
-        console.log("DateTime completeness:", completeness);
 
         let availabilityInfo = null;
         if (completeness.finalDate) {
@@ -341,24 +330,18 @@ class AIService {
               process.env.PHONE_NUMBER_ID,
               userPhone
             );
-            console.log("Availability info:", availabilityInfo);
           } catch (err) {
-            console.error("Error getting availability:", err);
+            logger.error(`Error getting availability for ${userPhone}: ${err.message}`);
           }
         }
 
         enhancedMessage += this.generateSystemMessage(completeness, availabilityInfo);
       }
 
-      console.log("Enhanced message:", enhancedMessage);
-
       // 3. Build prompt and call Gemini
       const systemPrompt = this.getSystemPrompt(process.env.PHONE_NUMBER_ID);
       const today = `(${process.env.APP_TIMEZONE || "Asia/Kolkata"}): ${timezoneUtils.getCurrentDateString()}`;
       const nextAvailableDate = computeNextAvailableDate();
-
-      console.log("Today:", today);
-      console.log("Next available booking date:", nextAvailableDate);
 
       const conversationText = this.buildConversationForGemini(
         systemPrompt,
@@ -368,15 +351,13 @@ class AIService {
         enhancedMessage
       );
 
-      console.log("Sending to Gemini:", conversationText.substring(0, 500) + "...");
-
       const result = await model.generateContent(conversationText);
       const text = result.response.text();
-      console.log("🤖 Gemini response:", text);
+      logger.info(`Gemini response for ${userPhone} (${text.length} chars)`);
 
       return text;
     } catch (error) {
-      console.error("Error getting Gemini response:", error);
+      logger.error(`Error getting Gemini response: ${error.message}`);
       throw error;
     }
   }
@@ -417,7 +398,6 @@ class AIService {
     const match = aiResponse.match(ACTION_REGEX);
 
     if (!match) {
-      console.log("NO ACTION FOUND in AI response");
       return result;
     }
 
@@ -432,7 +412,7 @@ class AIService {
       // Strip the action block from the user-facing text
       result.responseText = aiResponse.replace(ACTION_REGEX, "").trim();
     } catch (error) {
-      console.error("Error parsing action JSON:", error, "Raw match:", match[2]);
+      logger.error(`Error parsing action JSON: ${error.message}, raw: ${match[2]}`);
     }
 
     return result;

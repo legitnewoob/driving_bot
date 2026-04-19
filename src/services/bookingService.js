@@ -7,10 +7,10 @@ const {
 const Booking = require("../models/bookingModel");
 const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
+const logger = require("../utils/logger-advanced");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
-    console.log("Fetching bookings for user:", userPhone);
     return await Booking.find({
       userPhone,
       status: { $in: ["confirmed", "rescheduled"] },
@@ -33,7 +33,7 @@ class BookingService {
       try {
         await calendarService.deleteEvent(booking.calendarEventId);
       } catch (err) {
-        console.error("Calendar deletion failed:", err.message);
+        logger.error(`Calendar deletion failed: ${err.message}`);
         // continue cancellation even if calendar event deletion fails
       }
 
@@ -58,7 +58,7 @@ class BookingService {
           "cancel"
         );
       } catch (err) {
-        console.error("Sheets update failed during cancellation:", err.message);
+        logger.error(`Sheets update failed during cancellation: ${err.message}`);
         // Continue with cancellation even if sheets update fails
       }
 
@@ -67,17 +67,12 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Cancel booking error:", err);
+      logger.error(`Cancel booking error: ${err.message}`);
       throw new Error("Internal server error while cancelling booking.");
     }
   }
 
   async validateBooking(bookingData) {
-    console.log(
-      "🔍 Validating booking data:",
-      JSON.stringify(bookingData, null, 2)
-    );
-
     const availableDates = getAvailableDates();
     const instructorId = process.env.PHONE_NUMBER_ID;
     const instructor = getInstructor(instructorId);
@@ -92,7 +87,6 @@ class BookingService {
     if (errors.length > 0) return errors;
 
     // Validate date
-    console.log(availableDates);
     if (!availableDates.includes(bookingData.date)) {
       errors.push(
         "Date is not available. Please choose from available weekdays."
@@ -160,7 +154,6 @@ class BookingService {
 
   async rescheduleBooking(from, bookingData) {
     const { newDate, newTime, bookingId } = bookingData;
-    console.log("From user:", from, "bookingData:", bookingData);
     
     // Step 1: Find booking
     const booking = await Booking.findOne({ bookingId });
@@ -204,7 +197,7 @@ class BookingService {
         "reschedule"
       );
     } catch (err) {
-      console.error("Sheets update failed during rescheduling:", err.message);
+      logger.error(`Sheets update failed during rescheduling: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
@@ -224,7 +217,7 @@ class BookingService {
 
     await booking.save();
 
-    console.log(`✅ Booking ${bookingId} rescheduled for ${from}`);
+    logger.info(`Booking ${bookingId} rescheduled for ${from}`);
     return booking;
   }
 
@@ -297,10 +290,7 @@ class BookingService {
         "create"
       );
     } catch (err) {
-      console.error(
-        "Sheets update failed during booking creation:",
-        err.message
-      );
+      logger.error(`Sheets update failed during booking creation: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
@@ -341,7 +331,7 @@ class BookingService {
           "complete"
         );
       } catch (err) {
-        console.error("Sheets update failed during completion:", err.message);
+        logger.error(`Sheets update failed during completion: ${err.message}`);
       }
 
       booking.status = "completed";
@@ -349,7 +339,7 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Complete booking error:", err);
+      logger.error(`Complete booking error: ${err.message}`);
       throw new Error("Internal server error while completing booking.");
     }
   }

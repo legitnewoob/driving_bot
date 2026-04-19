@@ -1,6 +1,7 @@
 const { google } = require('googleapis');
 const { oauth2Client } = require('../config/google'); // Assuming you have this from calendar service
 const timezoneUtils = require('../utils/timezoneUtils');
+const logger = require('../utils/logger-advanced');
 
 class SheetsService {
     constructor() {
@@ -42,7 +43,7 @@ class SheetsService {
 
             return { exists: false, nextEmptyRow: rows.length + 1 };
         } catch (error) {
-            console.error('❌ Error finding learner row:', error.message);
+            logger.error(`Error finding learner row: ${error.message}`);
             throw error;
         }
     }
@@ -56,7 +57,7 @@ class SheetsService {
      */
     async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create') {
         try {
-            console.log(`📊 Updating learner record - SpreadsheetID: ${spreadsheetId}, Phone: ${learnerData.phoneNumber}, Action: ${action}`);
+            logger.info(`Sheets: ${action} record for ${learnerData.phoneNumber}`);
             
             if (!spreadsheetId) {
                 throw new Error('Spreadsheet ID is required but not provided');
@@ -71,17 +72,13 @@ class SheetsService {
 
             if (learnerRow.exists) {
                 // Update existing learner
-                console.log(`👤 Updating existing learner at row ${learnerRow.rowIndex}`);
                 rowData = await this.buildUpdatedRowData(learnerRow.data, bookingData, action);
                 range = `A${learnerRow.rowIndex}:I${learnerRow.rowIndex}`;
             } else {
                 // Create new learner record
-                console.log(`👤 Creating new learner record at row ${learnerRow.nextEmptyRow}`);
                 rowData = await this.buildNewRowData(learnerData, bookingData);
                 range = `A${learnerRow.nextEmptyRow}:I${learnerRow.nextEmptyRow}`;
             }
-
-            console.log(`📝 Writing to range: ${range}, Data:`, rowData);
 
             const response = await this.sheets.spreadsheets.values.update({
                 spreadsheetId,
@@ -92,10 +89,10 @@ class SheetsService {
                 }
             });
 
-            console.log(`✅ Sheets updated for ${learnerData.phoneNumber} - Action: ${action}`);
+            logger.info(`Sheets updated for ${learnerData.phoneNumber} - Action: ${action}`);
             return response.data;
         } catch (error) {
-            console.error('❌ Error updating sheets:', error.message);
+            logger.error(`Error updating sheets: ${error.message}`);
             throw error;
         }
     }
@@ -176,11 +173,9 @@ class SheetsService {
         const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
         
         if (!spreadsheetId) {
-            console.error('❌ GOOGLE_SPREADSHEET_ID not found in environment variables');
             throw new Error('Google Spreadsheet ID not configured');
         }
         
-        console.log(`📊 Using spreadsheet ID: ${spreadsheetId} for instructor: ${instructorId}`);
         return spreadsheetId;
     }
 
@@ -211,7 +206,7 @@ class SheetsService {
 
             return response.data;
         } catch (error) {
-            console.error('❌ Error in batch update:', error.message);
+            logger.error(`Error in batch update: ${error.message}`);
             throw error;
         }
     }

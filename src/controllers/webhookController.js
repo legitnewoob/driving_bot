@@ -5,6 +5,7 @@ const calendarService = require("../services/calendarService");
 const { ensureUserDetails } = require("../services/userDetailsService");
 const getChatLogger = require("../utils/chatLogger");
 const getDbChatLogger = require("../utils/dbChatLogger");
+const logger = require("../utils/logger-advanced");
 
 const {
   getUserSession,
@@ -33,7 +34,6 @@ class WebhookController {
     const session = getUserSession(from);
     if (session.conversationHistory.length > 0) {
       session.conversationHistory = [];
-      console.log(`🧹 Clearing conversation history for ${from}`);
     }
     updateUserSession(from, session);
     aiService.clearPendingContext(from);
@@ -48,17 +48,16 @@ class WebhookController {
   /* ========== BOOKING ACTIONS ========== */
 
   async next_available_slot(from) {
-    console.log("Let's find the next available appointment...");
+    logger.info("Finding next available appointment...");
     const earliestSlot = await calendarService.findEarliestAvailableSlot(
       process.env.PHONE_NUMBER_ID
     );
     if (earliestSlot) {
-      console.log(`The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`);
+      logger.info(`Next available slot for ${from}: ${earliestSlot.date} at ${earliestSlot.time}`);
       aiService.updatePendingContext(from, earliestSlot);
       this.clearOnlyUserConversationHistory(from);
       await this._send(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
     } else {
-      console.log("Sorry, no appointments are available in the near future.");
       await this._send(from, "Sorry, no appointments are available in the near future. Please check back later.");
     }
   }
@@ -78,7 +77,7 @@ class WebhookController {
     const nowStr = timezoneUtils.getCurrentDateString();
     const now = timezoneUtils.getCurrentDate();
 
-    let message = `*🗓️ YOUR BOOKINGS* (${sortedBookings.length})\n`;
+    let message = `*📆 YOUR BOOKINGS* (${sortedBookings.length})\n`;
     message += "━━━━━━━━━━━━━━━━━\n\n";
 
     sortedBookings.forEach((booking, index) => {
@@ -145,7 +144,6 @@ class WebhookController {
 
   async cancelBooking(from, bookingData) {
     try {
-      console.log("HERE", bookingData);
       const bookingId = bookingData?.bookingId || "";
       if (!bookingId) {
         return this._send(from, "⚠️ Please provide a valid booking ID to cancel.");
@@ -161,16 +159,15 @@ class WebhookController {
       }
       return this._send(from, "⚠️ Could not cancel the booking. Please try again later.");
     } catch (err) {
-      console.error("Cancel booking controller error:", err.message);
+      logger.error(`Cancel booking error: ${err.message}`);
       return this._send(from, "⚠️ Something went wrong while cancelling your booking. Please try again.");
     }
   }
 
   async processBooking(from, bookingData) {
     try {
-      console.log("📝 Processing booking for:", from, bookingData);
+      logger.info(`Processing booking for ${from}: ${bookingData.date} at ${bookingData.time}`);
       const booking = await bookingService.createBooking(from, bookingData);
-      console.log(booking);
       const confirmationMessage = [
         "🎉 Booking Confirmed!",
         "",
@@ -190,8 +187,7 @@ class WebhookController {
       await this._send(from, confirmationMessage);
       this.clearUserConversationHistoryAndContext(from);
     } catch (error) {
-      console.log(error);
-      console.error("❌ Booking error:", error.message);
+      logger.error(`Booking error for ${from}: ${error.message}`);
       const errorMessage = error.message.includes("validation")
         ? `❌ ${error.message}`
         : "❌ Sorry, there was an error processing your booking. Please try again.";
@@ -206,7 +202,7 @@ class WebhookController {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
-      console.log("Webhook verified successfully!");
+      logger.info("Webhook verified");
       return res.status(200).send(challenge);
     }
     res.status(403).send("Forbidden");
@@ -244,7 +240,7 @@ class WebhookController {
                     chatLogger.info(`${messageContent}`);
                     dbChatLogger.user(`${messageContent}`);
                   } catch (logErr) {
-                    console.warn("[webhook] Logger skipped:", logErr.message);
+                    logger.warn(`Chat logger skipped: ${logErr.message}`);
                   }
                   await this.handleIncomingMessage(from, messageContent);
                 }
@@ -255,7 +251,7 @@ class WebhookController {
       }
       res.status(200).send("OK");
     } catch (error) {
-      console.error("Webhook error:", error);
+      logger.error(`Webhook error: ${error.message}`);
       res.status(500).send("Internal Server Error");
     }
   }
@@ -268,27 +264,24 @@ class WebhookController {
     this._mockReplyCallback = mockReplyCallback;
 
     try {
-      console.log('MESSAGE CONTENT', messageContent);
-      console.log(`📱 Message from ${from}: "${messageContent}"`);
+      logger.info(`Message from ${from}: "${messageContent}"`);
 
-      // 🧠 Step 1: Check user profile before AI flow (skip in mock mode)
+      // Step 1: Check user profile before AI flow (skip in mock mode)
       const { inProgress, user, justCompleted } = await ensureUserDetails(
         from,
         messageContent,
         this._send.bind(this)   // ← works in both mock and real mode
       );
       if (inProgress) {
-        console.log("⏳ Waiting for user details to be completed...");
         return;
       }
       if (justCompleted) {
-        console.log("✅ User details just completed. Clearing context...");
         this.clearUserConversationHistoryAndContext(from);
         await this._send(from, "🚗 How can I assist you today?");
         return;
       }
 
-      // ✅ Step 2: AI logic
+      // Step 2: AI logic
       const session = getUserSession(from);
       const aiResponse = await aiService.getResponse(
         messageContent,
@@ -342,7 +335,7 @@ class WebhookController {
         updateUserSession(from, session);
       }
     } catch (error) {
-      console.error("❌ Error handling message:", error.message);
+      logger.error("Error handling message from " + from + ": " + error.message);
       await this._send(from, "⚠️ Sorry, I'm having trouble processing your message. Please try again.");
     } finally {
       // Clean up mock state after request completes

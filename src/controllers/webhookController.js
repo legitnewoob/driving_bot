@@ -178,9 +178,10 @@ class WebhookController {
         "✅ Your driving lesson has been successfully booked:",
         "",
         `👨‍🏫 Instructor: ${booking.instructor.name}`,
-        `📅 Date: ${new Date(bookingData.date).toLocaleDateString("en-US", {
-          weekday: "long", year: "numeric", month: "long", day: "numeric",
-        })}`,
+        `📅 Date: ${timezoneUtils.formatDate(
+          timezoneUtils.createDateInTimezone(bookingData.date, "12:00"),
+          "dddd, MMMM D, YYYY"
+        )}`,
         `🕐 Time: ${bookingData.time}`,
         "",
         "Good luck with your driving lesson! 🚗💨",

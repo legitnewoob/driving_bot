@@ -79,7 +79,7 @@ async function uploadLogsFolder() {
     const baseFolder = path.join(PROJECT_ROOT, "message-logs");
 
     if (!fs.existsSync(baseFolder)) {
-        console.log("No logs folder found.");
+        // console.log("No logs folder found.");
         return;
     }
 

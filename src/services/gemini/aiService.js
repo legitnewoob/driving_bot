@@ -3,7 +3,8 @@ const calendarService = require("../calendarService");
 const dateTimeService = require("./dateTimeService");
 const dateTimeUtils = require("../../utils/dateTimeUtils");
 const timezoneUtils = require("../../utils/timezoneUtils");
-const RouteOptimizer = require("../routeOptimizer");
+const routeOptimizer = require("../routeOptimizer");
+const { getInstructor } = require("../../models/instructorModel");
 const fs = require("fs");
 const path = require("path");
 
@@ -12,14 +13,8 @@ const path = require("path");
 // ─────────────────────────────────────────────
 const VALID_BOOKING_TIMES = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"];
 
-const ACTION_TYPES = {
-  BOOK: "book",
-  UPDATE_BOOKING: "update_booking",
-  CANCEL_BOOKING: "cancel_booking",
-  SHOW_BOOKINGS: "show_bookings",
-  NEXT_AVAILABLE_SLOT: "next_available_slot",
-  NULL: "null",
-};
+// Max age (ms) before a user's pending context is considered stale
+const PENDING_CONTEXT_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -30,12 +25,12 @@ const ACTION_TYPES = {
  * "Next available" = 2 calendar days ahead to stay safely outside 24h window.
  */
 function computeNextAvailableDate() {
-  const now = new Date(timezoneUtils.getCurrentDate());
-  const next = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
-  const day = next.getDay(); // 0 = Sun, 6 = Sat
+  let dateStr = timezoneUtils.addDays(timezoneUtils.getCurrentDateString(), 2);
 
-  if (day === 0) next.setDate(next.getDate() + 1); // Sun → Mon
-  if (day === 6) next.setDate(next.getDate() + 2); // Sat → Mon
+  // Skip weekends
+  while (timezoneUtils.isWeekend(dateStr)) {
+    dateStr = timezoneUtils.addDays(dateStr, 1);
+  }
 
   const getOrdinal = (n) => {
     const s = ["th", "st", "nd", "rd"];
@@ -43,9 +38,10 @@ function computeNextAvailableDate() {
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   };
 
-  const dayName = next.toLocaleDateString("en-US", { weekday: "long" });
-  const month = next.toLocaleDateString("en-US", { month: "long" });
-  return `${dayName}, ${month} ${getOrdinal(next.getDate())}, ${next.getFullYear()}`;
+  const d = timezoneUtils.createDateInTimezone(dateStr, "12:00");
+  const dayName = d.toLocaleDateString("en-US", { weekday: "long" });
+  const month = d.toLocaleDateString("en-US", { month: "long" });
+  return `${dayName}, ${month} ${getOrdinal(d.getDate())}, ${d.getFullYear()}`;
 }
 
 /**
@@ -65,16 +61,18 @@ class AIService {
     // Temporary store keyed by user phone number.
     // Holds partially collected date/time across turns.
     this.pendingContext = {};
+
+    // Cache the system prompt (read once from disk)
+    this._systemPromptRaw = fs.readFileSync(
+      path.join(__dirname, "../../../", "SYSTEM_PROMPT.txt"),
+      "utf-8"
+    );
   }
 
   // ── System Prompt ──────────────────────────
 
-  async getSystemPrompt(instructorId) {
-    const rawPrompt = fs.readFileSync(
-      path.join(__dirname, "../../../", "SYSTEM_PROMPT.txt"),
-      "utf-8"
-    );
-    return rawPrompt.replaceAll("{{INSTRUCTOR_NAME}}", process.env.INSTRUCTOR_NAME);
+  getSystemPrompt(instructorId) {
+    return this._systemPromptRaw.replaceAll("{{INSTRUCTOR_NAME}}", process.env.INSTRUCTOR_NAME);
   }
 
   // ── Pending Context Helpers ────────────────
@@ -91,8 +89,21 @@ class AIService {
     if (extractedDateTime.time) {
       this.pendingContext[userPhone].time = extractedDateTime.time;
     }
+    this.pendingContext[userPhone]._updatedAt = Date.now();
+
+    // Prune stale entries to prevent unbounded memory growth
+    this._pruneStaleContexts();
 
     console.log(`Pending context for ${userPhone}:`, this.pendingContext[userPhone]);
+  }
+
+  _pruneStaleContexts() {
+    const now = Date.now();
+    for (const phone of Object.keys(this.pendingContext)) {
+      if (now - (this.pendingContext[phone]._updatedAt || 0) > PENDING_CONTEXT_TTL_MS) {
+        delete this.pendingContext[phone];
+      }
+    }
   }
 
   clearPendingContext(userPhone) {
@@ -239,7 +250,7 @@ class AIService {
 
   async getAvailabilityInfo(dateRequested, timeRequested, instructorId, userPhone) {
     try {
-      const instructor = require("../../models/instructorModel").getInstructor(instructorId);
+      const instructor = getInstructor(instructorId);
       if (!instructor) {
         return { error: "Instructor not found", isValidRequest: false };
       }
@@ -262,40 +273,36 @@ class AIService {
 
       console.log("Available slots for date: (pre-optimization): ", availableSlotsForDate);
 
-
-      //ROUTE OPTIMIZATION – re-enable when ready
-      const routeOptimizer = new RouteOptimizer();
-      const availableSlotsForDateCopy = await routeOptimizer.filterAvailableSlotsByLocation(
-        availableSlotsForDate, dateRequested, timeRequested, instructorId, userPhone
+      // ROUTE OPTIMIZATION
+      const optimizedSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+        availableSlotsForDate,
+        dateRequested,
+        instructorId,
+        userPhone
       );
 
-      console.log("Available slots for date (post-optimization): ", availableSlotsForDateCopy);
-      
+      console.log("Available slots for date (post-optimization): ", optimizedSlots);
 
       const isValidBusinessDay = !timezoneUtils.isWeekend(dateRequested);
 
-      let slotAvailability = { isAvailable: null };
-      if (timeRequested) {
-        slotAvailability = await calendarService.checkAvailability(
-          dateRequested,
-          timeRequested,
-          instructorId
-        );
-      }
+      // Check against calendar truth (not route-optimized list), so a genuinely
+      // available slot isn't incorrectly reported as unavailable just because the
+      // route optimizer deprioritised it.
+      const requestedSlotAvailable = timeRequested
+        ? availableSlotsForDate.includes(timeRequested)
+        : null;
 
-      console.log("Slot availability:", slotAvailability);
-      console.log("Available slots for date:", availableSlotsForDate);
+      console.log("Requested slot available:", requestedSlotAvailable);
+      console.log("Available slots for date:", optimizedSlots);
 
       return {
         isValidRequest: true,
         requestedDate: dateRequested,
         requestedTime: timeRequested,
-        requestedSlotAvailable: timeRequested ? slotAvailability.isAvailable : null,
+        requestedSlotAvailable,
         isValidBusinessDay,
-        availableSlotsForDate,
+        availableSlotsForDate: optimizedSlots,
         allAvailableTimes: instructor.availableTimes,
-        calendarError: slotAvailability.error,
-        hasWarning: slotAvailability.warning,
       };
     } catch (error) {
       console.error("❌ Error getting availability info:", error);
@@ -346,7 +353,7 @@ class AIService {
       console.log("Enhanced message:", enhancedMessage);
 
       // 3. Build prompt and call Gemini
-      const systemPrompt = await this.getSystemPrompt(process.env.PHONE_NUMBER_ID);
+      const systemPrompt = this.getSystemPrompt(process.env.PHONE_NUMBER_ID);
       const today = `(${process.env.APP_TIMEZONE || "Asia/Kolkata"}): ${timezoneUtils.getCurrentDateString()}`;
       const nextAvailableDate = computeNextAvailableDate();
 

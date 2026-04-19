@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
 const { oauth2Client } = require('../config/google'); // Assuming you have this from calendar service
+const timezoneUtils = require('../utils/timezoneUtils');
 
 class SheetsService {
     constructor() {
@@ -103,8 +104,10 @@ class SheetsService {
      * Build row data for new learner
      */
     async buildNewRowData(learnerData, bookingData) {
-        const bookingDate = new Date(bookingData.date);
-        const formattedDate = bookingDate.toLocaleDateString('en-GB'); // DD/MM/YYYY format
+        const formattedDate = timezoneUtils.formatDate(
+            timezoneUtils.createDateInTimezone(bookingData.date, '12:00'),
+            'DD/MM/YYYY'
+        );
         const dateTime = `${formattedDate} ${bookingData.time}`;
 
         return [
@@ -134,8 +137,10 @@ class SheetsService {
         switch (action) {
             case 'create':
             case 'reschedule':
-                const bookingDate = new Date(bookingData.date || bookingData.newDate);
-                const formattedDate = bookingDate.toLocaleDateString('en-GB');
+                const formattedDate = timezoneUtils.formatDate(
+                    timezoneUtils.createDateInTimezone(bookingData.date || bookingData.newDate, '12:00'),
+                    'DD/MM/YYYY'
+                );
                 const time = bookingData.time || bookingData.newTime;
                 const dateTime = `${formattedDate} ${time}`;
 

@@ -13,7 +13,7 @@ class BookingService {
     console.log("Fetching bookings for user:", userPhone);
     return await Booking.find({
       userPhone,
-      status: ["confirmed", "rescheduled"],
+      status: { $in: ["confirmed", "rescheduled"] },
     }).sort({
       date: 1,
       time: 1,
@@ -114,24 +114,33 @@ class BookingService {
     //   );
     // }
 
-    // Check calendar availability
+    // Check calendar availability (single API call for the whole day)
     if (errors.length === 0) {
-      const availability = await calendarService.checkAvailability(
+      const events = await calendarService.getEventsForDate(
         bookingData.date,
-        bookingData.time,
         instructorId
       );
 
-      if (!availability.isAvailable && !availability.warning) {
+      const availability = calendarService.checkSlotAgainstEvents(
+        bookingData.date,
+        bookingData.time,
+        events
+      );
+
+      if (!availability.isAvailable) {
         errors.push(
           `The time slot ${bookingData.time} on ${bookingData.date} is already booked.`
         );
 
-        const availableSlots =
-          await calendarService.getAvailableTimeSlotsForDate(
+        const availableSlots = instructor.availableTimes.filter((time) => {
+          const { isAvailable } = calendarService.checkSlotAgainstEvents(
             bookingData.date,
-            instructorId
+            time,
+            events
           );
+          return isAvailable;
+        });
+
         if (availableSlots.length > 0) {
           errors.push(
             `Available times for ${bookingData.date}: ${availableSlots.join(
@@ -204,10 +213,14 @@ class BookingService {
     booking.time = newTime;
     booking.status = "rescheduled";
 
-    // Optional: If you want to sync updated location
+    // Sync updated location from user profile
     booking.postalCode = user.postalCode || booking.postalCode;
-    booking.lat = user.lat || booking.lat;
-    booking.long = user.long || booking.long;
+    if (user.location?.latitude && user.location?.longitude) {
+      booking.location = {
+        latitude: user.location.latitude,
+        longitude: user.location.longitude,
+      };
+    }
 
     await booking.save();
 
@@ -222,9 +235,7 @@ class BookingService {
     }
 
     // ✅ Step 1: Fetch user details
-    const user = await require("../models/userModel").findOne({
-      phone: from,
-    });
+    const user = await User.findOne({ phone: from });
 
     if (!user) {
       throw new Error("User not found. Please complete your profile first.");

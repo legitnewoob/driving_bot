@@ -675,3 +675,373 @@ describe("RouteOptimizer – Edge Cases", () => {
     });
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REAL-LIFE MULTI-USER SIMULATION TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These simulate a realistic day where multiple users book one after another.
+// Each test shows the schedule growing and checks how the optimizer adapts
+// its slot suggestions for each new user based on existing bookings.
+//
+// Geography used (around Stoke-on-Trent / Newcastle-under-Lyme area):
+//   Instructor base:    53.0168, -2.2191  (default env)
+//   CLOSE user  (~2km): 53.0300, -2.2200  "Alice"  – nearby neighbourhood
+//   MID user    (~6km): 53.0600, -2.2500  "Bob"    – next town over
+//   FAR user   (~20km): 53.2000, -2.4500  "Charlie"– different city
+//   CLOSE user2 (~1km): 53.0200, -2.2150  "Diana"  – right next to base
+//   MID user2   (~7km): 53.0700, -2.1600  "Eve"    – east side of town
+
+const USERS = {
+  alice:   { phone: "447111000001", lat: 53.0300, long: -2.2200 },
+  bob:     { phone: "447111000002", lat: 53.0600, long: -2.2500 },
+  charlie: { phone: "447111000003", lat: 53.2000, long: -2.4500 },
+  diana:   { phone: "447111000004", lat: 53.0200, long: -2.2150 },
+  eve:     { phone: "447111000005", lat: 53.0700, long: -2.1600 },
+};
+
+const DATE = "2025-06-20";
+const INST = "inst-main";
+const ALL_SLOTS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+
+/** Helper: mock User.findOne to return the right user by phone */
+function mockUserLookup(userKey) {
+  const u = USERS[userKey];
+  User.findOne.mockResolvedValue({
+    phone: u.phone,
+    location: { latitude: u.lat, longitude: u.long },
+  });
+}
+
+describe("RouteOptimizer – Multi-User Day Simulation", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // ── Scenario 1: First booking of the day (empty schedule) ──────────
+
+  it("Scenario 1: Alice books first – close user gets all slots (empty day)", async () => {
+    mockUserLookup("alice");
+    Booking.find.mockResolvedValue([]); // no bookings yet
+
+    const freeSlots = [...ALL_SLOTS];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.alice.phone
+    );
+
+    // Alice is ~2km from base → within 8km threshold → all slots offered
+    expect(result.length).toBe(ALL_SLOTS.length);
+    expect(result).toEqual(ALL_SLOTS); // chronological
+  });
+
+  // ── Scenario 2: Second user, schedule has 1 booking ────────────────
+
+  it("Scenario 2: Bob books second – mid-distance user with Alice@10:00 already booked", async () => {
+    mockUserLookup("bob");
+    // Alice already confirmed at 10:00
+    Booking.find.mockResolvedValue([
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+    ]);
+
+    // 10:00 is taken, so calendar gives these
+    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.bob.phone
+    );
+
+    // Bob is ~6km from base → within 8km → should get slots
+    expect(result.length).toBeGreaterThan(0);
+    // Result must be chronological
+    for (let i = 1; i < result.length; i++) {
+      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
+        routeOptimizer.timeToMinutes(result[i - 1])
+      );
+    }
+  });
+
+  // ── Scenario 3: Far-away user when schedule is sparse ──────────────
+
+  it("Scenario 3: Charlie (far user) – only gets top-3 fallback when schedule is sparse", async () => {
+    mockUserLookup("charlie");
+    // Only Alice@10:00 booked
+    Booking.find.mockResolvedValue([
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+    ]);
+
+    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.charlie.phone
+    );
+
+    // Charlie is ~20km from base and ~20km from Alice → no slots within 8km
+    // Should fallback to top-3 best-scored
+    expect(result.length).toBe(3);
+    // Still chronological
+    for (let i = 1; i < result.length; i++) {
+      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
+        routeOptimizer.timeToMinutes(result[i - 1])
+      );
+    }
+  });
+
+  // ── Scenario 4: Half-full schedule, close user ─────────────────────
+
+  it("Scenario 4: Diana (very close) sees all remaining slots when day is half-booked", async () => {
+    mockUserLookup("diana");
+    // Morning is booked: Alice@10:00, Bob@11:00, Charlie@09:00
+    Booking.find.mockResolvedValue([
+      makeBooking("09:00", USERS.charlie.lat, USERS.charlie.long),
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("11:00", USERS.bob.lat, USERS.bob.long),
+    ]);
+
+    // Only afternoon free
+    const freeSlots = ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.diana.phone
+    );
+
+    // Diana is ~1km from base → everything is within threshold
+    expect(result.length).toBe(6);
+    expect(result).toEqual(freeSlots);
+  });
+
+  // ── Scenario 5: Busy schedule, mid-distance user ───────────────────
+
+  it("Scenario 5: Eve (mid-distance) gets optimized slots on a busy day", async () => {
+    mockUserLookup("eve");
+    // 6 out of 9 slots booked, spread across the day
+    Booking.find.mockResolvedValue([
+      makeBooking("09:00", USERS.charlie.lat, USERS.charlie.long),
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("11:00", USERS.bob.lat, USERS.bob.long),
+      makeBooking("13:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("14:00", USERS.alice.lat, USERS.alice.long), // Alice double-booked for test
+      makeBooking("16:00", USERS.bob.lat, USERS.bob.long),
+    ]);
+
+    const freeSlots = ["12:00", "15:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.eve.phone
+    );
+
+    // Eve is ~7km from base → borderline threshold
+    // She's closer to some bookings → should still get suggestions
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.length).toBeLessThanOrEqual(3);
+  });
+
+  // ── Scenario 6: Far user when schedule is packed with nearby bookings ─
+
+  it("Scenario 6: Charlie (far) on a packed day – still gets top-3 fallback", async () => {
+    mockUserLookup("charlie");
+    // All close-range bookings
+    Booking.find.mockResolvedValue([
+      makeBooking("09:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("11:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("13:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("14:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("15:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("16:00", USERS.diana.lat, USERS.diana.long),
+    ]);
+
+    const freeSlots = ["12:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.charlie.phone
+    );
+
+    // Charlie is far from everyone → top-3 fallback (but only 2 slots available)
+    expect(result.length).toBe(2);
+    expect(result).toEqual(["12:00", "17:00"]);
+  });
+
+  // ── Scenario 7: Two users request simultaneously for same remaining slots ─
+
+  it("Scenario 7: Alice and Charlie compete for last 2 slots – close user gets both, far user gets fallback", async () => {
+    const existingBookings = [
+      makeBooking("09:00", USERS.bob.lat, USERS.bob.long),
+      makeBooking("10:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("11:00", USERS.eve.lat, USERS.eve.long),
+      makeBooking("12:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("13:00", USERS.bob.lat, USERS.bob.long),
+      makeBooking("14:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("16:00", USERS.eve.lat, USERS.eve.long),
+    ];
+
+    const lastSlots = ["15:00", "17:00"];
+
+    // Alice's perspective (close)
+    mockUserLookup("alice");
+    Booking.find.mockResolvedValue(existingBookings);
+    const aliceResult = await routeOptimizer.filterAvailableSlotsByLocation(
+      [...lastSlots], DATE, INST, USERS.alice.phone
+    );
+
+    // Charlie's perspective (far)
+    mockUserLookup("charlie");
+    Booking.find.mockResolvedValue(existingBookings);
+    const charlieResult = await routeOptimizer.filterAvailableSlotsByLocation(
+      [...lastSlots], DATE, INST, USERS.charlie.phone
+    );
+
+    // Alice is close → should see both slots (within threshold)
+    expect(aliceResult.length).toBe(2);
+
+    // Charlie is far → still gets both (only 2 available, top-3 fallback returns all)
+    expect(charlieResult.length).toBe(2);
+
+    // Both should be chronological
+    expect(aliceResult).toEqual(["15:00", "17:00"]);
+    expect(charlieResult).toEqual(["15:00", "17:00"]);
+  });
+
+  // ── Scenario 8: Growing schedule simulation (sequential bookings) ──
+
+  it("Scenario 8: progressive day – each booking narrows options for next user", async () => {
+    const bookingSoFar = [];
+
+    // Step 1: Alice books 10:00 (empty day)
+    mockUserLookup("alice");
+    Booking.find.mockResolvedValue([]);
+    const aliceSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+      [...ALL_SLOTS], DATE, INST, USERS.alice.phone
+    );
+    expect(aliceSlots.length).toBe(ALL_SLOTS.length); // all available, she's close
+    // Simulate: she picks 10:00
+    bookingSoFar.push(makeBooking("10:00", USERS.alice.lat, USERS.alice.long));
+
+    // Step 2: Bob books (10:00 taken)
+    mockUserLookup("bob");
+    Booking.find.mockResolvedValue([...bookingSoFar]);
+    const bobFree = ALL_SLOTS.filter(s => s !== "10:00");
+    const bobSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+      bobFree, DATE, INST, USERS.bob.phone
+    );
+    expect(bobSlots.length).toBeGreaterThan(0);
+    // Simulate: he picks 11:00
+    bookingSoFar.push(makeBooking("11:00", USERS.bob.lat, USERS.bob.long));
+
+    // Step 3: Charlie books (10:00, 11:00 taken) – far away
+    mockUserLookup("charlie");
+    Booking.find.mockResolvedValue([...bookingSoFar]);
+    const charlieFree = ALL_SLOTS.filter(s => !["10:00", "11:00"].includes(s));
+    const charlieSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+      charlieFree, DATE, INST, USERS.charlie.phone
+    );
+    // Charlie is far → top-3 fallback
+    expect(charlieSlots.length).toBe(3);
+    // Simulate: he picks whatever is first offered
+    bookingSoFar.push(makeBooking(charlieSlots[0], USERS.charlie.lat, USERS.charlie.long));
+
+    // Step 4: Diana books (3 slots taken now)
+    mockUserLookup("diana");
+    Booking.find.mockResolvedValue([...bookingSoFar]);
+    const takenSlots = ["10:00", "11:00", charlieSlots[0]];
+    const dianaFree = ALL_SLOTS.filter(s => !takenSlots.includes(s));
+    const dianaSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+      dianaFree, DATE, INST, USERS.diana.phone
+    );
+    // Diana is very close → gets all remaining within threshold
+    expect(dianaSlots.length).toBe(dianaFree.length);
+
+    // Step 5: Eve books (4 slots taken)
+    const dianaPick = dianaSlots[Math.floor(dianaSlots.length / 2)]; // picks a middle slot
+    bookingSoFar.push(makeBooking(dianaPick, USERS.diana.lat, USERS.diana.long));
+    mockUserLookup("eve");
+    Booking.find.mockResolvedValue([...bookingSoFar]);
+    const eveFree = ALL_SLOTS.filter(s => ![...takenSlots, dianaPick].includes(s));
+    const eveSlots = await routeOptimizer.filterAvailableSlotsByLocation(
+      eveFree, DATE, INST, USERS.eve.phone
+    );
+    expect(eveSlots.length).toBeGreaterThan(0);
+    expect(eveSlots.length).toBeLessThanOrEqual(eveFree.length);
+  });
+
+  // ── Scenario 9: Cluster effect – bookings in same area boost nearby slots ─
+
+  it("Scenario 9: cluster of nearby bookings makes optimizer prefer adjacent time slots", async () => {
+    mockUserLookup("alice");
+    // Three bookings all close together in the morning, all near Alice
+    Booking.find.mockResolvedValue([
+      makeBooking("09:00", 53.028, -2.218),
+      makeBooking("10:00", 53.031, -2.221),
+      makeBooking("11:00", 53.029, -2.219),
+    ]);
+
+    const freeSlots = ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      freeSlots, DATE, INST, USERS.alice.phone
+    );
+
+    // Alice is close to the cluster → all slots within threshold
+    expect(result.length).toBe(freeSlots.length);
+
+    // Now verify scoreSlots prefers 12:00 (right after the cluster) over 17:00
+    const scored = routeOptimizer.scoreSlots(
+      freeSlots,
+      [
+        makeBooking("09:00", 53.028, -2.218),
+        makeBooking("10:00", 53.031, -2.221),
+        makeBooking("11:00", 53.029, -2.219),
+      ],
+      { lat: USERS.alice.lat, long: USERS.alice.long },
+      INSTRUCTOR_BASE
+    );
+    // 12:00 should score higher than 17:00 (closer in time to cluster)
+    const score12 = scored.find(s => s.slot === "12:00").score;
+    const score17 = scored.find(s => s.slot === "17:00").score;
+    expect(score12).toBeGreaterThan(score17);
+  });
+
+  // ── Scenario 10: Only 1 slot left on the day ──────────────────────
+
+  it("Scenario 10: last slot of the day – any user gets it regardless of distance", async () => {
+    const packed = [
+      makeBooking("09:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("10:00", USERS.bob.lat, USERS.bob.long),
+      makeBooking("11:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("12:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("13:00", USERS.eve.lat, USERS.eve.long),
+      makeBooking("14:00", USERS.bob.lat, USERS.bob.long),
+      makeBooking("15:00", USERS.diana.lat, USERS.diana.long),
+      makeBooking("16:00", USERS.alice.lat, USERS.alice.long),
+    ];
+
+    // Only 17:00 left – Charlie (far) requests it
+    mockUserLookup("charlie");
+    Booking.find.mockResolvedValue(packed);
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      ["17:00"], DATE, INST, USERS.charlie.phone
+    );
+
+    // Even though Charlie is far, only 1 slot → top-3 fallback returns it
+    expect(result).toEqual(["17:00"]);
+  });
+
+  // ── Scenario 11: Mixed distances, verify ordering stays chronological ─
+
+  it("Scenario 11: 5 users at different distances all get chronologically sorted results", async () => {
+    const bookings = [
+      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
+      makeBooking("14:00", USERS.bob.lat, USERS.bob.long),
+    ];
+    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "15:00", "16:00", "17:00"];
+
+    for (const [name, userData] of Object.entries(USERS)) {
+      mockUserLookup(name);
+      Booking.find.mockResolvedValue(bookings);
+
+      const result = await routeOptimizer.filterAvailableSlotsByLocation(
+        [...freeSlots], DATE, INST, userData.phone
+      );
+
+      // Every user's result must be chronologically sorted
+      for (let i = 1; i < result.length; i++) {
+        expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
+          routeOptimizer.timeToMinutes(result[i - 1])
+        );
+      }
+    }
+  });
+});

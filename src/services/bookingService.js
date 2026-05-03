@@ -7,13 +7,13 @@ const {
 const Booking = require("../models/bookingModel");
 const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
+const logger = require("../utils/logger-advanced");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
-    console.log("Fetching bookings for user:", userPhone);
     return await Booking.find({
       userPhone,
-      status: ["confirmed", "rescheduled"],
+      status: { $in: ["confirmed", "rescheduled"] },
     }).sort({
       date: 1,
       time: 1,
@@ -33,7 +33,7 @@ class BookingService {
       try {
         await calendarService.deleteEvent(booking.calendarEventId);
       } catch (err) {
-        console.error("Calendar deletion failed:", err.message);
+        logger.error(`Calendar deletion failed: ${err.message}`);
         // continue cancellation even if calendar event deletion fails
       }
 
@@ -58,7 +58,7 @@ class BookingService {
           "cancel"
         );
       } catch (err) {
-        console.error("Sheets update failed during cancellation:", err.message);
+        logger.error(`Sheets update failed during cancellation: ${err.message}`);
         // Continue with cancellation even if sheets update fails
       }
 
@@ -67,17 +67,12 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Cancel booking error:", err);
+      logger.error(`Cancel booking error: ${err.message}`);
       throw new Error("Internal server error while cancelling booking.");
     }
   }
 
   async validateBooking(bookingData) {
-    console.log(
-      "🔍 Validating booking data:",
-      JSON.stringify(bookingData, null, 2)
-    );
-
     const availableDates = getAvailableDates();
     const instructorId = process.env.PHONE_NUMBER_ID;
     const instructor = getInstructor(instructorId);
@@ -92,7 +87,6 @@ class BookingService {
     if (errors.length > 0) return errors;
 
     // Validate date
-    console.log(availableDates);
     if (!availableDates.includes(bookingData.date)) {
       errors.push(
         "Date is not available. Please choose from available weekdays."
@@ -114,24 +108,33 @@ class BookingService {
     //   );
     // }
 
-    // Check calendar availability
+    // Check calendar availability (single API call for the whole day)
     if (errors.length === 0) {
-      const availability = await calendarService.checkAvailability(
+      const events = await calendarService.getEventsForDate(
         bookingData.date,
-        bookingData.time,
         instructorId
       );
 
-      if (!availability.isAvailable && !availability.warning) {
+      const availability = calendarService.checkSlotAgainstEvents(
+        bookingData.date,
+        bookingData.time,
+        events
+      );
+
+      if (!availability.isAvailable) {
         errors.push(
           `The time slot ${bookingData.time} on ${bookingData.date} is already booked.`
         );
 
-        const availableSlots =
-          await calendarService.getAvailableTimeSlotsForDate(
+        const availableSlots = instructor.availableTimes.filter((time) => {
+          const { isAvailable } = calendarService.checkSlotAgainstEvents(
             bookingData.date,
-            instructorId
+            time,
+            events
           );
+          return isAvailable;
+        });
+
         if (availableSlots.length > 0) {
           errors.push(
             `Available times for ${bookingData.date}: ${availableSlots.join(
@@ -151,7 +154,6 @@ class BookingService {
 
   async rescheduleBooking(from, bookingData) {
     const { newDate, newTime, bookingId } = bookingData;
-    console.log("From user:", from, "bookingData:", bookingData);
     
     // Step 1: Find booking
     const booking = await Booking.findOne({ bookingId });
@@ -195,7 +197,7 @@ class BookingService {
         "reschedule"
       );
     } catch (err) {
-      console.error("Sheets update failed during rescheduling:", err.message);
+      logger.error(`Sheets update failed during rescheduling: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
@@ -204,14 +206,18 @@ class BookingService {
     booking.time = newTime;
     booking.status = "rescheduled";
 
-    // Optional: If you want to sync updated location
+    // Sync updated location from user profile
     booking.postalCode = user.postalCode || booking.postalCode;
-    booking.lat = user.lat || booking.lat;
-    booking.long = user.long || booking.long;
+    if (user.location?.latitude && user.location?.longitude) {
+      booking.location = {
+        latitude: user.location.latitude,
+        longitude: user.location.longitude,
+      };
+    }
 
     await booking.save();
 
-    console.log(`✅ Booking ${bookingId} rescheduled for ${from}`);
+    logger.info(`Booking ${bookingId} rescheduled for ${from}`);
     return booking;
   }
 
@@ -222,9 +228,7 @@ class BookingService {
     }
 
     // ✅ Step 1: Fetch user details
-    const user = await require("../models/userModel").findOne({
-      phone: from,
-    });
+    const user = await User.findOne({ phone: from });
 
     if (!user) {
       throw new Error("User not found. Please complete your profile first.");
@@ -286,10 +290,7 @@ class BookingService {
         "create"
       );
     } catch (err) {
-      console.error(
-        "Sheets update failed during booking creation:",
-        err.message
-      );
+      logger.error(`Sheets update failed during booking creation: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
@@ -330,7 +331,7 @@ class BookingService {
           "complete"
         );
       } catch (err) {
-        console.error("Sheets update failed during completion:", err.message);
+        logger.error(`Sheets update failed during completion: ${err.message}`);
       }
 
       booking.status = "completed";
@@ -338,7 +339,7 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Complete booking error:", err);
+      logger.error(`Complete booking error: ${err.message}`);
       throw new Error("Internal server error while completing booking.");
     }
   }

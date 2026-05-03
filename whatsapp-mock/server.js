@@ -28,7 +28,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ─── Mock WhatsApp payload factory ───────────────────────────────────────────
-function buildWhatsAppPayload(text, fromNumber = "2348012345678") {
+function buildWhatsAppPayload(text, fromNumber = "917726877146") {
   const msgId = "wamid." + Math.random().toString(36).slice(2, 18).toUpperCase();
   const ts    = Math.floor(Date.now() / 1000).toString();
 

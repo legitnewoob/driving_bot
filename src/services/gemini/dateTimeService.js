@@ -1,5 +1,6 @@
 const { model } = require("../../config/gemini");
 const timezoneUtils = require("../../utils/timezoneUtils");
+const logger = require("../../utils/logger-advanced");
 
 class DateTimeService {
   // Constants
@@ -72,10 +73,7 @@ class DateTimeService {
    * @returns {Promise<Object>} Extracted date/time information
    */
   static async extractDateTimeFromMessage(message) {
-    console.log(`🔍 Extracting date/time from: "${message}"`);
-
     if (!this.isValidInput(message)) {
-      console.log("❌ Invalid message input");
       return this.getDefaultResult();
     }
 
@@ -83,15 +81,14 @@ class DateTimeService {
       // Try local extraction first for simple cases
       const localResult = this.fallbackExtraction(message);
       if (this.isHighConfidenceResult(localResult)) {
-        console.log("✅ Using local extraction (high confidence)");
+        logger.info("DateTime: using local extraction (high confidence)");
         return localResult;
       }
 
       // Use Gemini for complex cases
       return await this.extractWithGemini(message);
     } catch (error) {
-      console.error("❌ Error with date/time extraction:", error.message);
-      console.error("Stack trace:", error.stack);
+      logger.error(`DateTime extraction error: ${error.message}`);
       return this.fallbackExtraction(message);
     }
   }
@@ -106,13 +103,12 @@ class DateTimeService {
     const MAX_RETRIES = 2;
     
     if (!model) {
-      console.log("❌ Gemini model not available, using fallback");
+      logger.warn("Gemini model not available, using fallback");
       return this.fallbackExtraction(message);
     }
 
     try {
       const prompt = this.buildGeminiPrompt(message);
-      console.log("🤖 Sending to Gemini for datetime extraction with JSON schema");
 
       // Use Gemini's JSON mode with schema
       const result = await model.generateContent({
@@ -125,10 +121,8 @@ class DateTimeService {
       });
       
       if (!this.isValidGeminiResponse(result)) {
-        console.log("❌ Invalid Gemini response");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          logger.warn(`DateTime Gemini: invalid response, retrying (${retryCount + 1}/${MAX_RETRIES})`);
           await this.delay(1000);
           return this.extractWithGemini(message, retryCount + 1);
         }
@@ -137,15 +131,12 @@ class DateTimeService {
       }
 
       const content = result.response.text();
-      console.log("🤖 Gemini raw response:", content.trim());
 
       const parsed = this.parseGeminiResponse(content);
       
       if (!parsed) {
-        console.log("⚠️ Failed to parse Gemini response");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          logger.warn(`DateTime Gemini: parse failed, retrying (${retryCount + 1}/${MAX_RETRIES})`);
           await this.delay(1000);
           return this.extractWithGemini(message, retryCount + 1);
         }
@@ -154,10 +145,8 @@ class DateTimeService {
       }
       
       if (!this.validateExtractedData(parsed)) {
-        console.log("⚠️ Gemini response failed validation");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          logger.warn(`DateTime Gemini: validation failed, retrying (${retryCount + 1}/${MAX_RETRIES})`);
           await this.delay(1000);
           return this.extractWithGemini(message, retryCount + 1);
         }
@@ -165,14 +154,13 @@ class DateTimeService {
         return this.fallbackExtraction(message);
       }
 
-      console.log("✅ Gemini extracted and validated:", parsed);
+      logger.info(`DateTime extracted: date=${parsed.date}, time=${parsed.time}, confidence=${parsed.confidence}`);
       return this.normalizeResult(parsed);
       
     } catch (error) {
-      console.error("❌ Error in Gemini extraction:", error.message);
+      logger.error(`DateTime Gemini extraction error: ${error.message}`);
       
       if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 Retrying after error... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
         await this.delay(1000);
         return this.extractWithGemini(message, retryCount + 1);
       }
@@ -190,8 +178,6 @@ class DateTimeService {
     const context = this.getDateTimeContext();
     const dateHint = this.generateDateHint(message, context.today);
     
-    console.log(`💡 Generated Hint: "${dateHint}"`);
-
     return `You are a date/time parsing assistant. Extract date and time from the message below.
 
 Current Context:
@@ -239,7 +225,6 @@ Extract the date and time information according to these rules.`;
     // Check for urgency keywords first
     const urgencyMatch = message.match(this.URGENCY_KEYWORDS);
     if (urgencyMatch) {
-      console.log("Urgency match:", urgencyMatch);
       return `Hint: The user wants the earliest possible date/time ("${urgencyMatch[1]}"). The system handles this automatically. DO NOT RETURN ANY specific date or time. Instead, set "hasDateTime" to false and "confidence" to "medium".`;
     }
 
@@ -278,7 +263,6 @@ Extract the date and time information according to these rules.`;
   static parseGeminiResponse(content) {
     try {
       if (!content || typeof content !== 'string') {
-        console.error("❌ Invalid content type");
         return null;
       }
 
@@ -288,14 +272,13 @@ Extract the date and time information according to these rules.`;
       
       // Verify we got the expected structure
       if (!this.hasRequiredJsonStructure(parsed)) {
-        console.error("❌ Parsed JSON missing required fields");
+        logger.warn("DateTime: parsed JSON missing required fields");
         return null;
       }
 
       return parsed;
     } catch (error) {
-      console.error("❌ Error parsing Gemini JSON:", error.message);
-      console.error("Raw content:", content);
+      logger.error(`DateTime JSON parse error: ${error.message}`);
       return null;
     }
   }
@@ -321,7 +304,6 @@ Extract the date and time information according to these rules.`;
    */
   static validateExtractedData(data) {
     if (!data || typeof data !== "object") {
-      console.log("❌ Data is not an object");
       return false;
     }
 
@@ -337,12 +319,9 @@ Extract the date and time information according to these rules.`;
 
     for (const prop of requiredProps) {
       if (!(prop in data)) {
-        console.log(`❌ Missing property: ${prop}`);
-        
         // Try to provide defaults for missing properties
         if (this.canProvideDefault(prop, data)) {
           data[prop] = this.getDefaultForProperty(prop);
-          console.log(`✓ Provided default for ${prop}: ${data[prop]}`);
         } else {
           return false;
         }
@@ -383,13 +362,9 @@ Extract the date and time information according to these rules.`;
 
     for (const validation of validations) {
       if (!validation.check) {
-        console.log(`❌ ${validation.msg}`);
-        
-        // Try to fix if possible
         if (validation.fix) {
           try {
             validation.fix();
-            console.log(`✓ Auto-fixed: ${validation.msg}`);
           } catch (e) {
             return false;
           }
@@ -488,7 +463,6 @@ Extract the date and time information according to these rules.`;
    * @returns {Object} Extraction result
    */
   static fallbackExtraction(message) {
-    console.log("🔄 Using fallback extraction");
     
     if (!this.isValidInput(message)) {
       return this.getDefaultResult();

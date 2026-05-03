@@ -1,18 +1,15 @@
 const { oauth2Client, calendar } = require("../config/google");
 const { getInstructor } = require("../models/instructorModel");
-const timezoneUtils = require("../utils/timezoneUtils"); // ✅ import utils
+const timezoneUtils = require("../utils/timezoneUtils");
+const logger = require("../utils/logger-advanced");
 
 class CalendarService {
 
   async findEarliestAvailableSlot(instructorId) {
-    console.log(
-      `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
-    );
     try {
       const instructor = getInstructor(instructorId);
       if (!instructor) {
-        console.error(`❌ Instructor not found: ${instructorId}`);
-        throw new Error("Instructor not found");
+        throw new Error(`Instructor not found: ${instructorId}`);
       }
 
       // Rule: Start checking from 2 days from now.
@@ -20,47 +17,34 @@ class CalendarService {
       const today = timezoneUtils.getCurrentDateString();
       let dateToCheck = timezoneUtils.addDays(today, 2);
 
-      console.log(`Starting search from date: ${dateToCheck}`);
-
       // Search for up to 90 days in the future
       for (let i = 0; i < 90; i++) {
         // For every loop after the first, advance the date by one day.
         if (i > 0) {
           dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
         }
-        console.log(`Checking date: ${dateToCheck}`);
-
-        // Skip weekends using your new utility function
+        // Skip weekends
         if (timezoneUtils.isWeekend(dateToCheck)) {
           continue; // Skip to the next day
         }
 
-        // The 'dateToCheck' variable is already the correctly formatted string. No more conversions needed!
-        for (const time of instructor.availableTimes) {
-          const availability = await this.checkAvailability(
-            dateToCheck, // Use the safe string directly
-            time,
-            instructorId
-          );
+        // Single API call for the whole day, then check slots in-memory
+        const events = await this.getEventsForDate(dateToCheck, instructorId);
 
-          if (availability.isAvailable) {
-            // Found the earliest slot, return it immediately
-            console.log(
-              `✅ Earliest available slot found: ${dateToCheck} at ${time}`
-            );
+        for (const time of instructor.availableTimes) {
+          const { isAvailable } = this.checkSlotAgainstEvents(dateToCheck, time, events);
+
+          if (isAvailable) {
+            logger.info(`Earliest available slot: ${dateToCheck} at ${time}`);
             return { date: dateToCheck, time: time };
           }
         }
       }
 
-      // If the loop finishes, no slots were found
-      console.log("🤷 No available slots found in the next 90 days.");
+      logger.warn("No available slots found in the next 90 days");
       return null;
     } catch (error) {
-      console.error(
-        "❌ Error finding the earliest available slot:",
-        error.message
-      );
+      logger.error(`Error finding earliest slot: ${error.message}`);
       return null;
     }
   }
@@ -74,58 +58,74 @@ class CalendarService {
 
     return { startDateTime, endDateTime };
   }
+  /**
+   * Fetches all calendar events for a given date in a single API call.
+   * @param {string} date - "YYYY-MM-DD"
+   * @param {string} instructorId
+   * @returns {object[]} array of calendar event objects
+   */
+  async getEventsForDate(date, instructorId) {
+    oauth2Client.setCredentials({
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+    });
+
+    const instructor = getInstructor(instructorId);
+    if (!instructor) throw new Error(`Instructor not found: ${instructorId}`);
+
+    // Build day boundaries: start of day → start of next day
+    const dayStart = timezoneUtils.createDateInTimezone(date, "00:00");
+    const dayEnd = timezoneUtils.createDateInTimezone(date, "00:00");
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const response = await calendar.events.list({
+      calendarId: instructor.googleCalendarId,
+      timeMin: dayStart.toISOString(),
+      timeMax: dayEnd.toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+
+    return response.data.items || [];
+  }
+
+  /**
+   * Checks whether a specific slot conflicts with a list of events.
+   * @param {string} date
+   * @param {string} time
+   * @param {object[]} events - pre-fetched calendar events for the day
+   * @returns {{isAvailable: boolean, conflictingEvents: object[]}}
+   */
+  checkSlotAgainstEvents(date, time, events) {
+    const { startDateTime, endDateTime } = this.buildDateTimes(date, time);
+
+    if (isNaN(startDateTime.getTime())) {
+      return { isAvailable: false, error: "Invalid date/time format" };
+    }
+
+    const conflictingEvents = events.filter((event) => {
+      if (!event.start || !event.end) return false;
+      const eventStart = new Date(event.start.dateTime || event.start.date);
+      const eventEnd = new Date(event.end.dateTime || event.end.date);
+      return startDateTime < eventEnd && endDateTime > eventStart;
+    });
+
+    return { isAvailable: conflictingEvents.length === 0, conflictingEvents };
+  }
+
   async checkAvailability(date, time, instructorId) {
     try {
-      console.log(`🔍 Checking availability for ${date} at ${time}...`);
-      // console.log("Using instructor ID:", instructorId);
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
 
-      // console.log("Refresh token:", process.env.GOOGLE_REFRESH_TOKEN);
       const instructor = getInstructor(instructorId);
-      // console.log("Using instructor:", instructor);
       if (!instructor) {
-        console.error(`❌ Instructor not found: ${instructorId}`);
         return { isAvailable: false, error: "Instructor not found" };
       }
 
-      const { startDateTime, endDateTime } = this.buildDateTimes(date, time);
+      const events = await this.getEventsForDate(date, instructorId);
+      const result = this.checkSlotAgainstEvents(date, time, events);
 
-      if (isNaN(startDateTime.getTime())) {
-        console.error(`❌ Invalid date/time format: ${date} ${time}`);
-        return { isAvailable: false, error: "Invalid date/time format" };
-      }
-
-      const response = await calendar.events.list({
-        calendarId: instructor.googleCalendarId,
-        timeMin: startDateTime.toISOString(),
-        timeMax: endDateTime.toISOString(),
-        singleEvents: true,
-        orderBy: "startTime",
-      });
-
-      const events = response.data.items || [];
-
-      const conflictingEvents = events.filter((event) => {
-        if (!event.start || !event.end) return false;
-
-        const eventStart = new Date(event.start.dateTime || event.start.date);
-        const eventEnd = new Date(event.end.dateTime || event.end.date);
-
-        return startDateTime < eventEnd && endDateTime > eventStart;
-      });
-
-      const isAvailable = conflictingEvents.length === 0;
-      console.log(
-        `✅ Time slot ${date} at ${time} is ${
-          isAvailable ? "AVAILABLE" : "NOT AVAILABLE"
-        }`
-      );
-
-      return { isAvailable, conflictingEvents };
+      return result;
     } catch (error) {
-      console.error("❌ Error checking calendar availability:", error.message);
+      logger.error(`Calendar availability check error: ${error.message}`);
       return {
         isAvailable: false,
         error: `Could not verify calendar availability: ${error.message}`,
@@ -137,22 +137,19 @@ class CalendarService {
   async getAvailableTimeSlotsForDate(date, instructorId) {
     try {
       const instructor = getInstructor(instructorId);
-      const availableSlots = [];
 
-      for (const time of instructor.availableTimes) {
-        const availability = await this.checkAvailability(
-          date,
-          time,
-          instructorId
-        );
-        if (availability.isAvailable) {
-          availableSlots.push(time);
-        }
-      }
-      
+      // Single API call for the entire day
+      const events = await this.getEventsForDate(date, instructorId);
+
+      // Check each slot against the fetched events in-memory
+      const availableSlots = instructor.availableTimes.filter((time) => {
+        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events);
+        return isAvailable;
+      });
+
       return availableSlots;
     } catch (error) {
-      console.error("❌ Error getting available time slots:", error);
+      logger.error(`Error getting available time slots: ${error.message}`);
       const instructor = getInstructor(instructorId);
       return instructor.availableTimes;
     }
@@ -194,7 +191,7 @@ class CalendarService {
         })
         .filter(Boolean);
     } catch (error) {
-      console.error("❌ Error getting calendar context:", error.message);
+      logger.error(`Error getting calendar context: ${error.message}`);
       return [];
     }
   }
@@ -239,7 +236,7 @@ class CalendarService {
 
       return response.data;
     } catch (error) {
-      console.error("❌ Error creating calendar event:", error.message);
+      logger.error(`Error creating calendar event: ${error.message}`);
       throw error;
     }
   }
@@ -276,10 +273,10 @@ class CalendarService {
         resource: event,
       });
 
-      console.log(`✅ Calendar event updated: ${eventId}`);
+      logger.info(`Calendar event updated: ${eventId}`);
       return response.data;
     } catch (error) {
-      console.error("❌ Error updating calendar event:", error.message);
+      logger.error(`Error updating calendar event: ${error.message}`);
       throw error;
     }
   }
@@ -301,10 +298,10 @@ class CalendarService {
         eventId,
       });
 
-      console.log(`✅ Calendar event deleted: ${eventId}`);
+      logger.info(`Calendar event deleted: ${eventId}`);
       return { success: true, eventId };
     } catch (error) {
-      console.error("❌ Error deleting calendar event:", error.message);
+      logger.error(`Error deleting calendar event: ${error.message}`);
       throw error;
     }
   }

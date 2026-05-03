@@ -160,8 +160,16 @@ async function seedTestInstructor() {
   const Instructor = require("../../src/models/instructorSchema");
   const { invalidateInstructorCache } = require("../../src/models/instructorModel");
 
-  await Instructor.deleteMany({ phoneNumberId: TEST_INSTRUCTOR_PHONE_ID });
-  await Instructor.create(TEST_INSTRUCTOR);
+  await Instructor.findOneAndUpdate(
+    { phoneNumberId: TEST_INSTRUCTOR_PHONE_ID }, // filter
+    TEST_INSTRUCTOR,                              // update
+    {
+      upsert: true,          // create if not exists
+      new: true,             // return updated doc (optional)
+      setDefaultsOnInsert: true,
+    }
+  );
+
   invalidateInstructorCache(TEST_INSTRUCTOR_PHONE_ID);
 }
 
@@ -172,8 +180,15 @@ async function seedTestInstructor() {
 async function seedTestUser(overrides = {}) {
   const User = require("../../src/models/userModel");
 
-  await User.deleteMany({ phone: TEST_PHONE });
-  return User.create({ ...TEST_USER, ...overrides });
+  return await User.findOneAndUpdate(
+    { phone: TEST_PHONE },                 // filter
+    { ...TEST_USER, ...overrides },        // update
+    {
+      upsert: true,                       // create if not exists
+      new: true,                          // return updated doc
+      setDefaultsOnInsert: true,
+    }
+  );
 }
 
 // ── 7. Session helpers ───────────────────────────────────────────────────

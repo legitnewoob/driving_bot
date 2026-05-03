@@ -40,10 +40,12 @@ class BookingService {
 
       // Update Google Sheets
       try {
+        const instructor = await getInstructor(booking.instructorId);
         const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
           booking.instructorId
         );
-        const learnerName = await sheetsService.getLearnerName(
+        const user = await User.findOne({ phone: booking.userPhone });
+        const learnerName = user?.name || await sheetsService.getLearnerName(
           booking.userPhone,
           booking
         );
@@ -56,7 +58,8 @@ class BookingService {
             location: booking.location || "",
           },
           booking,
-          "cancel"
+          "cancel",
+          instructor
         );
       } catch (err) {
         logger.error(`Sheets update failed during cancellation: ${err.message}`);
@@ -187,7 +190,7 @@ class BookingService {
       const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
         booking.instructorId
       );
-      const learnerName = await sheetsService.getLearnerName(from, booking);
+      const learnerName = user.name || await sheetsService.getLearnerName(from, booking);
 
       await sheetsService.updateLearnerRecord(
         spreadsheetId,
@@ -197,7 +200,8 @@ class BookingService {
           location: booking.location || user.postalCode || "",
         },
         bookingData,
-        "reschedule"
+        "reschedule",
+        instructor
       );
     } catch (err) {
       logger.error(`Sheets update failed during rescheduling: ${err.message}`);
@@ -330,7 +334,7 @@ class BookingService {
       const spreadsheetId = instructor.spreadsheetId || sheetsService.getInstructorSpreadsheetId(
         instructor.phoneNumberId
       );
-      const learnerName = await sheetsService.getLearnerName(
+      const learnerName = user.name || await sheetsService.getLearnerName(
         bookingData.userPhone,
         bookingData
       );
@@ -343,7 +347,8 @@ class BookingService {
           location: user.postalCode,
         },
         bookingData,
-        "create"
+        "create",
+        instructor
       );
     } catch (err) {
       logger.error(`Sheets update failed during booking creation: ${err.message}`);
@@ -367,10 +372,12 @@ class BookingService {
 
       // Update Google Sheets
       try {
+        const instructor = await getInstructor(booking.instructorId);
         const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
           booking.instructorId
         );
-        const learnerName = await sheetsService.getLearnerName(
+        const user = await User.findOne({ phone: booking.userPhone });
+        const learnerName = user?.name || await sheetsService.getLearnerName(
           booking.userPhone,
           booking
         );
@@ -383,7 +390,8 @@ class BookingService {
             location: booking.location || "",
           },
           booking,
-          "complete"
+          "complete",
+          instructor
         );
       } catch (err) {
         logger.error(`Sheets update failed during completion: ${err.message}`);

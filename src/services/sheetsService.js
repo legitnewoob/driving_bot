@@ -19,21 +19,24 @@ class SheetsService {
         this._lastInstructor = null;
     }
 
-    async initializeCredentials(refreshToken) {
-        oauth2Client.setCredentials({
-            refresh_token: refreshToken
-        });
+    initializeCredentials(refreshToken) {
+        if (refreshToken) {
+            oauth2Client.setCredentials({
+                refresh_token: refreshToken,
+            });
+        }
     }
 
     /**
      * Find a learner's row in the sheet
      * @param {string} spreadsheetId - Google Sheets ID
      * @param {string} phoneNumber - Learner's phone number
+     * @param {Object|null} instructor - Instructor record to provide refresh token
      * @returns {Promise<Object>} Row data and index
      */
-    async findLearnerRow(spreadsheetId, phoneNumber) {
+    async findLearnerRow(spreadsheetId, phoneNumber, instructor = null) {
         try {
-            await this.initializeCredentials();
+            this.initializeCredentials(instructor?.googleRefreshToken);
 
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId,
@@ -81,9 +84,13 @@ class SheetsService {
             // Store instructor reference for invalid_grant notifications in sub-calls
             if (instructor) this._lastInstructor = instructor;
 
-            await this.initializeCredentials();
+            this.initializeCredentials(instructor?.googleRefreshToken);
 
-            const learnerRow = await this.findLearnerRow(spreadsheetId, learnerData.phoneNumber);
+            const learnerRow = await this.findLearnerRow(
+                spreadsheetId,
+                learnerData.phoneNumber,
+                instructor
+            );
             
             let rowData;
             let range;
@@ -91,11 +98,11 @@ class SheetsService {
             if (learnerRow.exists) {
                 // Update existing learner
                 rowData = await this.buildUpdatedRowData(learnerRow.data, bookingData, action);
-                range = `A${learnerRow.rowIndex}:I${learnerRow.rowIndex}`;
+                range = `A${learnerRow.rowIndex}:J${learnerRow.rowIndex}`;
             } else {
                 // Create new learner record
                 rowData = await this.buildNewRowData(learnerData, bookingData);
-                range = `A${learnerRow.nextEmptyRow}:I${learnerRow.nextEmptyRow}`;
+                range = `A${learnerRow.nextEmptyRow}:J${learnerRow.nextEmptyRow}`;
             }
 
             const response = await this.sheets.spreadsheets.values.update({
@@ -131,14 +138,15 @@ class SheetsService {
 
         return [
             learnerData.name || 'Unknown', // A: learner name
-            learnerData.phoneNumber,       // B: phone number  
+            learnerData.phoneNumber,       // B: phone number
             learnerData.location || '',    // C: location
             '1',                          // D: lessons had (starting with 1)
             '',                           // E: test booked date days until test (empty initially)
-            '',                           // F: xxx (unclear what this field is)
-            'Yes',                        // G: lesson booked
-            dateTime,                     // H: date/time
-            'Confirmed'                   // I: status
+            bookingData.pickupAddress || '',  // F: pickup address
+            bookingData.dropoffAddress || '', // G: dropoff address
+            'Yes',                        // H: lesson booked
+            dateTime,                     // I: date/time
+            'Confirmed'                   // J: status
         ];
     }
 
@@ -148,9 +156,25 @@ class SheetsService {
     async buildUpdatedRowData(existingData, bookingData, action) {
         const updatedData = [...existingData];
         
-        // Ensure we have at least 9 columns
-        while (updatedData.length < 9) {
+        // Ensure we have at least 10 columns (updated structure)
+        while (updatedData.length < 10) {
             updatedData.push('');
+        }
+
+        // Handle migration from old format (notes in column F) to new format (separate pickup/dropoff columns)
+        if (updatedData.length >= 7 && updatedData[5] && !updatedData[6]) {
+            // Old format: notes in F, try to parse pickup/dropoff
+            const notes = updatedData[5];
+            if (notes.includes('Pickup:') || notes.includes('Drop-off:')) {
+                const pickupMatch = notes.match(/Pickup:\s*([^;]+)/);
+                const dropoffMatch = notes.match(/Drop-off:\s*([^;]+)/);
+                updatedData[5] = pickupMatch ? pickupMatch[1].trim() : '';
+                updatedData[6] = dropoffMatch ? dropoffMatch[1].trim() : '';
+            } else {
+                // Move old notes to pickup column for backward compatibility
+                updatedData[5] = notes;
+                updatedData[6] = '';
+            }
         }
 
         switch (action) {
@@ -169,18 +193,22 @@ class SheetsService {
                     updatedData[3] = (currentLessons + 1).toString();
                 }
 
-                updatedData[6] = 'Yes';      // G: lesson booked
-                updatedData[7] = dateTime;   // H: date/time
-                updatedData[8] = action === 'reschedule' ? 'Rescheduled' : 'Confirmed'; // I: status
+                // Update pickup and dropoff columns
+                updatedData[5] = bookingData.pickupAddress || updatedData[5] || '';  // F: pickup address
+                updatedData[6] = bookingData.dropoffAddress || updatedData[6] || ''; // G: dropoff address
+
+                updatedData[7] = 'Yes';      // H: lesson booked
+                updatedData[8] = dateTime;   // I: date/time
+                updatedData[9] = action === 'reschedule' ? 'Rescheduled' : 'Confirmed'; // J: status
                 break;
 
             case 'cancel':
-                updatedData[6] = 'No';       // G: lesson booked
-                updatedData[8] = 'Cancelled'; // I: status
+                updatedData[7] = 'No';       // H: lesson booked
+                updatedData[9] = 'Cancelled'; // J: status
                 break;
 
             case 'complete':
-                updatedData[8] = 'Completed'; // I: status
+                updatedData[9] = 'Completed'; // J: status
                 break;
         }
 

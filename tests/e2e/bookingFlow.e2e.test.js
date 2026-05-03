@@ -89,7 +89,7 @@ describeE2E(E2E_KEYS.AI, "E2E – Booking Flow (Real Pipeline)", () => {
     async () => {
       const { raw } = await sendMessage("Book me a lesson next Monday at 10am");
       const lower = raw.toLowerCase();
-
+      
       // Should ask for pickup/dropoff
       expect(
         lower.includes("pickup") ||

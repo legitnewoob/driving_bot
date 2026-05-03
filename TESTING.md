@@ -184,12 +184,17 @@ npm run test:e2e
 | `geocoding.e2e` | Real postcode → lat/lng, UK bounds (isolated service test) |
 | `userDetails.e2e` | Postcode geocoding, link generation (isolated service test) |
 | `routeOptimizer.e2e` | Real Distance Matrix durations, multi-user slot ranking (isolated service test) |
+| `calendar.e2e` | Real Google Calendar API: create/update/delete events, check availability, find earliest slot |
+| `sheets.e2e` | Real Google Sheets API: create/update/cancel learner records, find rows, build row data |
 
 ### Notes
 
 - These tests hit real APIs — they cost tokens and may be rate-limited
 - Gemini tests auto-skip if `GOOGLE_AI_API_KEY` is not set
 - Route optimizer tests auto-skip if `GOOGLE_MAPS_API_KEY` is not set
+- Calendar tests auto-skip if `GOOGLE_REFRESH_TOKEN` / `GOOGLE_CALENDAR_ID` / `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are not set
+- Sheets tests auto-skip if `GOOGLE_REFRESH_TOKEN` / `GOOGLE_SPREADSHEET_ID` / `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are not set
+- **Calendar/Sheets tests require a dedicated test calendar and test spreadsheet** — they create real events/rows
 - Do NOT add them to CI — they require secrets and are non-deterministic
 - Run them locally before major releases to verify AI + routing behavior
 

@@ -57,10 +57,10 @@ const TEST_INSTRUCTOR = {
   phone: "+440000000000",
   name: process.env.INSTRUCTOR_NAME || "Test Instructor",
   email: process.env.INSTRUCTOR_EMAIL || "test@test.com",
-  googleCalendarId: "test-calendar@group.calendar.google.com",
-  googleRefreshToken: "test-refresh-token",
+  googleCalendarId: process.env.GOOGLE_CALENDAR_ID || "test-calendar@group.calendar.google.com",
+  googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN || "test-refresh-token",
   whatsappToken: "test-whatsapp-token",
-  spreadsheetId: "test-spreadsheet-id",
+  spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || "test-spreadsheet-id",
   availableTimes: ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"],
   baseLocation: {
     latitude: parseFloat(process.env.LATUTIDE_DEFAULT) || 53.0168,

@@ -335,6 +335,16 @@ class WebhookController {
       const { hasAction, actionType, bookingData, responseText } =
         aiService.extractActions(aiResponse);
 
+      // If the AI has captured pickup/drop-off addresses (in any action JSON),
+      // persist them to pendingContext so subsequent slot scoring can use the
+      // real pickup location instead of the user's profile postal code.
+      if (bookingData?.pickupAddress || bookingData?.dropoffAddress) {
+        aiService.updatePendingPickupDropoff(from, {
+          pickupAddress: bookingData.pickupAddress,
+          dropoffAddress: bookingData.dropoffAddress,
+        });
+      }
+
       if (responseText) {
         await this._send(from, responseText);
       }

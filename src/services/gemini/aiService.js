@@ -4,6 +4,7 @@ const dateTimeService = require("./dateTimeService");
 const dateTimeUtils = require("../../utils/dateTimeUtils");
 const timezoneUtils = require("../../utils/timezoneUtils");
 const routeOptimizer = require("../routeOptimizer");
+const { getCoordinatesFromPostalCode } = require("../mapsService");
 const logger = require("../../utils/logger-advanced");
 const fs = require("fs");
 const path = require("path");
@@ -93,6 +94,59 @@ class AIService {
     this._pruneStaleContexts();
 
     logger.info(`Pending context updated for ${userPhone}: date=${this.pendingContext[userPhone].date}, time=${this.pendingContext[userPhone].time}`);
+  }
+
+  /**
+   * Stores pickup/drop-off addresses (and lazily geocoded coordinates) in
+   * pending context so subsequent slot scoring can use the real pickup
+   * location instead of the user's profile postal code.
+   *
+   * Coordinates are computed lazily on first read in getAvailabilityInfo to
+   * avoid extra Maps API calls when the user is just chatting.
+   */
+  updatePendingPickupDropoff(userPhone, { pickupAddress, dropoffAddress } = {}) {
+    if (!pickupAddress && !dropoffAddress) return;
+
+    if (!this.pendingContext[userPhone]) {
+      this.pendingContext[userPhone] = {};
+    }
+    const ctx = this.pendingContext[userPhone];
+
+    if (pickupAddress && pickupAddress !== ctx.pickupAddress) {
+      ctx.pickupAddress = pickupAddress;
+      ctx.pickupCoords = null; // invalidate any stale geocoding
+    }
+    if (dropoffAddress && dropoffAddress !== ctx.dropoffAddress) {
+      ctx.dropoffAddress = dropoffAddress;
+      ctx.dropoffCoords = null;
+    }
+    ctx._updatedAt = Date.now();
+
+    logger.info(
+      `Pending pickup/dropoff updated for ${userPhone}: ` +
+      `pickup="${ctx.pickupAddress || ""}", dropoff="${ctx.dropoffAddress || ""}"`
+    );
+  }
+
+  /**
+   * Returns geocoded pickup coords for a user from pendingContext, or null.
+   * Geocodes lazily on first call and caches the result on the context.
+   */
+  async _getPendingPickupCoords(userPhone) {
+    const ctx = this.pendingContext[userPhone];
+    if (!ctx?.pickupAddress) return null;
+    if (ctx.pickupCoords) return ctx.pickupCoords;
+
+    try {
+      const geo = await getCoordinatesFromPostalCode(ctx.pickupAddress);
+      ctx.pickupCoords = { lat: geo.lat, long: geo.lng };
+      return ctx.pickupCoords;
+    } catch (err) {
+      logger.warn(
+        `Geocoding pending pickup "${ctx.pickupAddress}" failed for ${userPhone}: ${err.message}`
+      );
+      return null;
+    }
   }
 
   _pruneStaleContexts() {
@@ -271,11 +325,16 @@ class AIService {
       logger.info(`Slots for ${dateRequested} (pre-optimization): [${availableSlotsForDate}]`);
 
       // ROUTE OPTIMIZATION
+      // If the user has already given a pickup address in this conversation,
+      // use those coords (geocoded lazily) instead of their profile location.
+      const pickupCoords = await this._getPendingPickupCoords(userPhone);
+
       const optimizedSlots = await routeOptimizer.filterAvailableSlotsByLocation(
         availableSlotsForDate,
         dateRequested,
         instructor,
-        userPhone
+        userPhone,
+        pickupCoords
       );
 
       logger.info(`Slots for ${dateRequested} (post-optimization): [${optimizedSlots}]`);

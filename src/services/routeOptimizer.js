@@ -24,17 +24,39 @@ class RouteOptimizer {
   }
 
   /**
-   * Returns true if a booking has valid lat/long data
-   * @param {object} booking - Mongoose booking document
-   * @returns {boolean}
+   * Returns true if a location object has finite numeric lat/long.
+   */
+  _isValidLoc(loc) {
+    return (
+      loc &&
+      typeof loc.latitude === "number" &&
+      !isNaN(loc.latitude) &&
+      typeof loc.longitude === "number" &&
+      !isNaN(loc.longitude)
+    );
+  }
+
+  /**
+   * Returns the first valid location from a list, or null if none are valid.
+   * Used to pick the best available coordinate from
+   * pickupLocation / dropoffLocation / legacy `location` fields.
+   */
+  _pickLoc(...candidates) {
+    for (const c of candidates) {
+      if (this._isValidLoc(c)) return c;
+    }
+    return null;
+  }
+
+  /**
+   * Returns true if a booking has any usable lat/long data
+   * (pickup, drop-off, or legacy `location`).
    */
   hasValidLocation(booking) {
     return (
-      booking.location &&
-      typeof booking.location.latitude === "number" &&
-      !isNaN(booking.location.latitude) &&
-      typeof booking.location.longitude === "number" &&
-      !isNaN(booking.location.longitude)
+      this._isValidLoc(booking.pickupLocation) ||
+      this._isValidLoc(booking.dropoffLocation) ||
+      this._isValidLoc(booking.location)
     );
   }
 
@@ -42,39 +64,56 @@ class RouteOptimizer {
    * Scores each available slot based on driving time to existing bookings.
    *
    * Strategy:
-   *  - Uses Google Distance Matrix API for real driving durations.
-   *  - Falls back to haversine (straight-line) if API is unavailable.
-   *  - For every available slot we look at the bookings immediately before
-   *    and after it (by time).
-   *  - We compute the driving time the instructor would need to reach the
-   *    new user's location from those neighbouring bookings.
+   *  - For each existing booking we know two coordinates:
+   *      • `start` — where the instructor begins it (pickup if available,
+   *                  otherwise drop-off, otherwise legacy `location`)
+   *      • `end`   — where the instructor ends it   (drop-off if available,
+   *                  otherwise pickup,  otherwise legacy `location`)
+   *  - When a candidate slot has a PREVIOUS booking, the instructor must
+   *    travel from that booking's `end` → the candidate user.
+   *  - When a candidate slot has a NEXT booking, the instructor must travel
+   *    from the candidate user → that booking's `start`.
+   *  - Uses Google Distance Matrix for real durations, haversine fallback.
    *  - Slots where the instructor is already nearby score highest.
    *  - If there are no bookings yet, slots are scored by driving time from
    *    the instructor's home base.
    *
    * @param {string[]} availableSlots - e.g. ["09:00","10:00","15:00"]
-   * @param {object[]} bookings - existing confirmed bookings with location
-   * @param {{lat:number, long:number}} userLocation
+   * @param {object[]} bookings - existing confirmed bookings
+   * @param {{lat:number, long:number}} userLocation - candidate user pickup
+   *                  (or profile location if real pickup not yet known)
    * @param {{lat:number, long:number}} instructorBase
    * @returns {Promise<{slot:string, score:number}[]>} slots sorted best-first
    */
   async scoreSlots(availableSlots, bookings, userLocation, instructorBase) {
-    // Build a timeline: bookings sorted by time
+    // Build a timeline: bookings sorted by time, with explicit start/end points
     const timeline = bookings
       .filter((b) => this.hasValidLocation(b))
-      .map((b) => ({
-        time: b.time,
-        minutes: this.timeToMinutes(b.time),
-        lat: b.location.latitude,
-        long: b.location.longitude,
-      }))
+      .map((b) => {
+        // Instructor STARTS at pickup, ENDS at drop-off — fall back as needed
+        const start = this._pickLoc(b.pickupLocation, b.dropoffLocation, b.location);
+        const end = this._pickLoc(b.dropoffLocation, b.pickupLocation, b.location);
+        return {
+          time: b.time,
+          minutes: this.timeToMinutes(b.time),
+          startLat: start.latitude,
+          startLng: start.longitude,
+          endLat: end.latitude,
+          endLng: end.longitude,
+        };
+      })
       .sort((a, b) => a.minutes - b.minutes);
 
-    // Batch all destinations for a single Distance Matrix call:
-    // [instructorBase, ...each booking location]
+    const n = timeline.length;
+
+    // Batch destinations for ONE Distance Matrix call:
+    //   [0]                = instructorBase
+    //   [1 .. n]           = each booking's END  (for "prev → user" trips)
+    //   [n+1 .. 2n]        = each booking's START (for "user → next" trips)
     const allDestinations = [
       { lat: instructorBase.lat, lng: instructorBase.long },
-      ...timeline.map((t) => ({ lat: t.lat, lng: t.long })),
+      ...timeline.map((t) => ({ lat: t.endLat, lng: t.endLng })),
+      ...timeline.map((t) => ({ lat: t.startLat, lng: t.startLng })),
     ];
 
     const durations = await getDrivingDurations(
@@ -83,8 +122,6 @@ class RouteOptimizer {
       allDestinations
     );
 
-    // durations[0] = user → instructor base
-    // durations[1..n] = user → each timeline booking (in timeline order)
     const durationFromBase = durations[0];
     const haversineFromBase = haversine(
       userLocation.lat,
@@ -92,23 +129,28 @@ class RouteOptimizer {
       instructorBase.lat,
       instructorBase.long
     );
-    // Use API duration if available, else estimate from haversine
     const travelFromBase = durationFromBase ?? (haversineFromBase * KM_TO_MIN_FACTOR);
 
-    // Map each timeline entry to its driving duration
-    const timelineDurations = timeline.map((t, idx) => {
-      const apiDur = durations[idx + 1]; // offset by 1 (base is at index 0)
+    // Travel time when the booking is the PREV one (instructor leaves its end → user)
+    const travelFromPrev = timeline.map((t, idx) => {
+      const apiDur = durations[1 + idx];
       if (apiDur !== null && apiDur !== undefined) return apiDur;
-      // Fallback: haversine estimate
-      return haversine(userLocation.lat, userLocation.long, t.lat, t.long) * KM_TO_MIN_FACTOR;
+      return haversine(userLocation.lat, userLocation.long, t.endLat, t.endLng) * KM_TO_MIN_FACTOR;
+    });
+
+    // Travel time when the booking is the NEXT one (user → its start)
+    const travelToNext = timeline.map((t, idx) => {
+      const apiDur = durations[1 + n + idx];
+      if (apiDur !== null && apiDur !== undefined) return apiDur;
+      return haversine(userLocation.lat, userLocation.long, t.startLat, t.startLng) * KM_TO_MIN_FACTOR;
     });
 
     return availableSlots
       .map((slot) => {
         const slotMin = this.timeToMinutes(slot);
 
-        // If no bookings with locations exist, score purely on base travel time
-        if (timeline.length === 0) {
+        // No bookings with locations: score purely on base travel time
+        if (n === 0) {
           const score = 1 / (1 + travelFromBase);
           return { slot, score, travelMin: travelFromBase, reason: `${travelFromBase.toFixed(0)}min from base` };
         }
@@ -116,22 +158,34 @@ class RouteOptimizer {
         // Find the closest booking BEFORE and AFTER this slot
         let prevIdx = -1;
         let nextIdx = -1;
-        for (let i = 0; i < timeline.length; i++) {
+        for (let i = 0; i < n; i++) {
           if (timeline[i].minutes <= slotMin) prevIdx = i;
           if (timeline[i].minutes > slotMin && nextIdx === -1) nextIdx = i;
         }
 
-        // Reference point = the booking the instructor would travel FROM
-        const refIdx = prevIdx >= 0 ? prevIdx : nextIdx;
+        // Pick the right neighbour and the right travel direction.
+        // Prefer prev (instructor's actual sequence: prev → user).
+        let refIdx;
+        let travelFromRef;
+        let refSide;
+        if (prevIdx >= 0) {
+          refIdx = prevIdx;
+          travelFromRef = travelFromPrev[prevIdx];
+          refSide = "after";
+        } else {
+          refIdx = nextIdx;
+          travelFromRef = travelToNext[nextIdx];
+          refSide = "before";
+        }
+
         const ref = timeline[refIdx];
-        const travelFromRef = timelineDurations[refIdx];
 
         // Time gap penalty: prefer slots close in time to neighbouring bookings
         const gapMinutes = prevIdx >= 0
           ? slotMin - timeline[prevIdx].minutes
           : nextIdx >= 0
           ? timeline[nextIdx].minutes - slotMin
-          : 480; // 8h fallback
+          : 480;
 
         // Combined score: low travel time + low gap = high score
         const score = 1 / (1 + travelFromRef) * (1 / (1 + gapMinutes / 60));
@@ -139,7 +193,7 @@ class RouteOptimizer {
           slot,
           score,
           travelMin: travelFromRef,
-          reason: `${travelFromRef.toFixed(0)}min from ${ref.time} booking, ${gapMinutes}min gap`,
+          reason: `${travelFromRef.toFixed(0)}min ${refSide} ${ref.time} booking, ${gapMinutes}min gap`,
         };
       })
       .sort((a, b) => b.score - a.score);
@@ -156,30 +210,48 @@ class RouteOptimizer {
    * @param {string} dateRequested - "YYYY-MM-DD"
    * @param {object} instructor - Instructor object with baseLocation
    * @param {string} userPhone
+   * @param {object} [userLocationOverride] - Optional override for user location
    * @returns {string[]} filtered/ranked slot times
    */
   async filterAvailableSlotsByLocation(
     availableSlotsForDate,
     dateRequested,
     instructor,
-    userPhone
+    userPhone,
+    userLocationOverride = null
   ) {
     try {
       if (!availableSlotsForDate || availableSlotsForDate.length === 0) {
         return availableSlotsForDate;
       }
 
-      // Get user info
-      const user = await User.findOne({ phone: userPhone });
-      if (!user?.location?.latitude || !user?.location?.longitude) {
-        logger.warn(`User location not found for ${userPhone}, returning all slots`);
-        return availableSlotsForDate;
+      // Prefer the explicit override (e.g. real pickup coordinates from the
+      // current conversation) when supplied; fall back to the user's profile
+      // location otherwise.
+      let userLocation = null;
+      if (
+        userLocationOverride &&
+        typeof userLocationOverride.lat === "number" &&
+        typeof userLocationOverride.long === "number"
+      ) {
+        userLocation = {
+          lat: userLocationOverride.lat,
+          long: userLocationOverride.long,
+        };
+        logger.info(
+          `Route optimiser: using userLocationOverride (${userLocation.lat.toFixed(4)},${userLocation.long.toFixed(4)})`
+        );
+      } else {
+        const user = await User.findOne({ phone: userPhone });
+        if (!user?.location?.latitude || !user?.location?.longitude) {
+          logger.warn(`User location not found for ${userPhone}, returning all slots`);
+          return availableSlotsForDate;
+        }
+        userLocation = {
+          lat: user.location.latitude,
+          long: user.location.longitude,
+        };
       }
-
-      const userLocation = {
-        lat: user.location.latitude,
-        long: user.location.longitude,
-      };
 
       // Get CONFIRMED bookings for that date (ignore cancelled ones)
       const instructorId = instructor?.phoneNumberId || instructor;
@@ -247,12 +319,17 @@ class RouteOptimizer {
     );
 
     for (const booking of bookings) {
-      if (!this.hasValidLocation(booking)) continue;
+      const loc = this._pickLoc(
+        booking.pickupLocation,
+        booking.dropoffLocation,
+        booking.location
+      );
+      if (!loc) continue;
       const dist = haversine(
         userLocation.lat,
         userLocation.long,
-        booking.location.latitude,
-        booking.location.longitude
+        loc.latitude,
+        loc.longitude
       );
       if (dist < minDist) minDist = dist;
     }

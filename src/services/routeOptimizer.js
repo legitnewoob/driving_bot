@@ -2,11 +2,15 @@ const haversine = require("../utils/haversine.js");
 const Booking = require("../models/bookingModel.js");
 const User = require("../models/userModel.js");
 const logger = require("../utils/logger-advanced.js");
+const { getDrivingDurations } = require("./distanceMatrixService.js");
+
+// Rough conversion: 1 km ≈ 2 min driving in urban areas (used as fallback)
+const KM_TO_MIN_FACTOR = 2;
 
 class RouteOptimizer {
   constructor() {
-    // Max km between consecutive bookings before we consider it "far"
-    this.NEARBY_THRESHOLD_KM = 8;
+    // Max driving-time (minutes) before we consider it "far"
+    this.NEARBY_THRESHOLD_MIN = 20;
   }
 
   /**
@@ -35,24 +39,26 @@ class RouteOptimizer {
   }
 
   /**
-   * Scores each available slot based on proximity to existing bookings.
+   * Scores each available slot based on driving time to existing bookings.
    *
    * Strategy:
+   *  - Uses Google Distance Matrix API for real driving durations.
+   *  - Falls back to haversine (straight-line) if API is unavailable.
    *  - For every available slot we look at the bookings immediately before
    *    and after it (by time).
-   *  - We compute the detour the instructor would need to travel to reach the
+   *  - We compute the driving time the instructor would need to reach the
    *    new user's location from those neighbouring bookings.
    *  - Slots where the instructor is already nearby score highest.
-   *  - If there are no bookings yet, slots are scored by distance from the
-   *    instructor's home base (closer users get earlier slots).
+   *  - If there are no bookings yet, slots are scored by driving time from
+   *    the instructor's home base.
    *
    * @param {string[]} availableSlots - e.g. ["09:00","10:00","15:00"]
    * @param {object[]} bookings - existing confirmed bookings with location
    * @param {{lat:number, long:number}} userLocation
    * @param {{lat:number, long:number}} instructorBase
-   * @returns {{slot:string, score:number}[]} slots sorted best-first
+   * @returns {Promise<{slot:string, score:number}[]>} slots sorted best-first
    */
-  scoreSlots(availableSlots, bookings, userLocation, instructorBase) {
+  async scoreSlots(availableSlots, bookings, userLocation, instructorBase) {
     // Build a timeline: bookings sorted by time
     const timeline = bookings
       .filter((b) => this.hasValidLocation(b))
@@ -64,54 +70,76 @@ class RouteOptimizer {
       }))
       .sort((a, b) => a.minutes - b.minutes);
 
-    const distFromBase = haversine(
+    // Batch all destinations for a single Distance Matrix call:
+    // [instructorBase, ...each booking location]
+    const allDestinations = [
+      { lat: instructorBase.lat, lng: instructorBase.long },
+      ...timeline.map((t) => ({ lat: t.lat, lng: t.long })),
+    ];
+
+    const durations = await getDrivingDurations(
+      userLocation.lat,
+      userLocation.long,
+      allDestinations
+    );
+
+    // durations[0] = user → instructor base
+    // durations[1..n] = user → each timeline booking (in timeline order)
+    const durationFromBase = durations[0];
+    const haversineFromBase = haversine(
       userLocation.lat,
       userLocation.long,
       instructorBase.lat,
       instructorBase.long
     );
+    // Use API duration if available, else estimate from haversine
+    const travelFromBase = durationFromBase ?? (haversineFromBase * KM_TO_MIN_FACTOR);
+
+    // Map each timeline entry to its driving duration
+    const timelineDurations = timeline.map((t, idx) => {
+      const apiDur = durations[idx + 1]; // offset by 1 (base is at index 0)
+      if (apiDur !== null && apiDur !== undefined) return apiDur;
+      // Fallback: haversine estimate
+      return haversine(userLocation.lat, userLocation.long, t.lat, t.long) * KM_TO_MIN_FACTOR;
+    });
 
     return availableSlots
       .map((slot) => {
         const slotMin = this.timeToMinutes(slot);
 
-        // If no bookings with locations exist, score purely on base distance
+        // If no bookings with locations exist, score purely on base travel time
         if (timeline.length === 0) {
-          // Lower distance → higher score (invert)
-          const score = 1 / (1 + distFromBase);
-          return { slot, score, reason: `${distFromBase.toFixed(1)}km from base` };
+          const score = 1 / (1 + travelFromBase);
+          return { slot, score, travelMin: travelFromBase, reason: `${travelFromBase.toFixed(0)}min from base` };
         }
 
         // Find the closest booking BEFORE and AFTER this slot
-        let prev = null;
-        let next = null;
-        for (const entry of timeline) {
-          if (entry.minutes <= slotMin) prev = entry;
-          if (entry.minutes > slotMin && !next) next = entry;
+        let prevIdx = -1;
+        let nextIdx = -1;
+        for (let i = 0; i < timeline.length; i++) {
+          if (timeline[i].minutes <= slotMin) prevIdx = i;
+          if (timeline[i].minutes > slotMin && nextIdx === -1) nextIdx = i;
         }
 
         // Reference point = the booking the instructor would travel FROM
-        const ref = prev || next;
-        const distFromRef = haversine(
-          userLocation.lat,
-          userLocation.long,
-          ref.lat,
-          ref.long
-        );
+        const refIdx = prevIdx >= 0 ? prevIdx : nextIdx;
+        const ref = timeline[refIdx];
+        const travelFromRef = timelineDurations[refIdx];
 
         // Time gap penalty: prefer slots close in time to neighbouring bookings
-        const gapMinutes = prev
-          ? slotMin - prev.minutes
-          : next
-          ? next.minutes - slotMin
+        const gapMinutes = prevIdx >= 0
+          ? slotMin - timeline[prevIdx].minutes
+          : nextIdx >= 0
+          ? timeline[nextIdx].minutes - slotMin
           : 480; // 8h fallback
 
-        // Combined score: low distance + low gap = high score
-        const score = 1 / (1 + distFromRef) * (1 / (1 + gapMinutes / 60));
+        // Combined score: low travel time + low gap = high score
+        const score = 1 / (1 + travelFromRef) * (1 / (1 + gapMinutes / 60));
         return {
           slot,
           score,
-          reason: `${distFromRef.toFixed(1)}km from ${ref.time} booking, ${gapMinutes}min gap`,
+          travelMin: travelFromRef,
+          reason: `${travelFromRef.toFixed(0)}min from ${ref.time} booking, ${gapMinutes}min gap`,
         };
       })
       .sort((a, b) => b.score - a.score);
@@ -120,6 +148,9 @@ class RouteOptimizer {
   /**
    * Filters and ranks available time slots based on the user's location
    * relative to existing bookings for that day.
+   *
+   * Uses Google Distance Matrix API for real driving durations.
+   * Falls back to haversine if the API is unavailable.
    *
    * @param {string[]} availableSlotsForDate - e.g. ["09:00","10:00","15:00"]
    * @param {string} dateRequested - "YYYY-MM-DD"
@@ -169,38 +200,22 @@ class RouteOptimizer {
         `bookings=${bookingsForDate.length}, slots=${availableSlotsForDate.length}`
       );
 
-      // Score every available slot
-      const scored = this.scoreSlots(
+      // Score every available slot (uses Distance Matrix API with haversine fallback)
+      const scored = await this.scoreSlots(
         availableSlotsForDate,
         bookingsForDate,
         userLocation,
         instructorBase
       );
 
-      // Keep only slots where the instructor detour is within threshold,
+      // Keep only slots where travel time is within threshold,
       // OR if that yields nothing, return the top-3 best-scored slots.
-      const distFromBase = haversine(
-        userLocation.lat,
-        userLocation.long,
-        instructorBase.lat,
-        instructorBase.long
-      );
-
-      const nearbySlots = scored.filter((s) => {
-        // Re-derive distance for the threshold check
-        const ref = this.getNearestReferenceDistance(
-          s.slot,
-          bookingsForDate,
-          userLocation,
-          instructorBase
-        );
-        return ref <= this.NEARBY_THRESHOLD_KM;
-      });
+      const nearbySlots = scored.filter((s) => s.travelMin <= this.NEARBY_THRESHOLD_MIN);
 
       let result;
       if (nearbySlots.length > 0) {
         result = nearbySlots.map((s) => s.slot);
-        logger.info(`Route optimiser: ${result.length} slot(s) within ${this.NEARBY_THRESHOLD_KM}km threshold`);
+        logger.info(`Route optimiser: ${result.length} slot(s) within ${this.NEARBY_THRESHOLD_MIN}min threshold`);
       } else {
         // Fallback: return top-3 best-scored slots so user always has options
         result = scored.slice(0, 3).map((s) => s.slot);
@@ -219,11 +234,11 @@ class RouteOptimizer {
   }
 
   /**
-   * Returns the distance (km) from the user to the nearest reference point
-   * (neighbouring booking or instructor base) for a given slot time.
+   * Returns the haversine distance (km) from the user to the nearest
+   * reference point (neighbouring booking or instructor base).
+   * This is a lightweight synchronous helper used outside the main scoring path.
    */
   getNearestReferenceDistance(slotTime, bookings, userLocation, instructorBase) {
-    const slotMin = this.timeToMinutes(slotTime);
     let minDist = haversine(
       userLocation.lat,
       userLocation.long,

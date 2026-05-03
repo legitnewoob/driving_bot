@@ -3,6 +3,7 @@ const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
+const bookingRoutes = require('./src/routes/bookings');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
@@ -47,6 +48,7 @@ app.use('/webhook', webhookRoutes);
 app.use('/auth' , authRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
+app.use('/api/bookings', logAuth, bookingRoutes);
 
 // Mock Route (development only)
 if (process.env.NODE_ENV === 'development') {

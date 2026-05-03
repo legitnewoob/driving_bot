@@ -243,7 +243,7 @@ describe("Flow – BOOK Action", () => {
       })
     );
     expect(sheetsService.updateLearnerRecord).toHaveBeenCalledWith(
-      "flow-sheet", expect.any(Object), expect.any(Object), "create"
+      "flow-sheet", expect.any(Object), expect.any(Object), "create", MOCK_INSTRUCTOR
     );
   });
 
@@ -307,7 +307,7 @@ describe("Flow – SHOW_BOOKINGS Action", () => {
     Booking.find.mockReturnValue({
       sort: jest.fn().mockResolvedValue([
         {
-          bookingId: "DL-AAAA", date: new Date("2025-07-01"),
+          bookingId: "DL-AAAA", date: new Date("2027-07-01"),
           time: "10:00", status: "confirmed",
         },
       ]),

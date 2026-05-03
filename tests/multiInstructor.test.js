@@ -235,7 +235,8 @@ describe("Multi-Instructor – Booking Service Isolation", () => {
       "spreadsheet-ALICE",
       expect.any(Object),
       expect.any(Object),
-      "create"
+      "create",
+      INSTRUCTOR_A
     );
   });
 
@@ -263,7 +264,8 @@ describe("Multi-Instructor – Booking Service Isolation", () => {
       "spreadsheet-BOB",
       expect.any(Object),
       expect.any(Object),
-      "create"
+      "create",
+      INSTRUCTOR_B
     );
   });
 

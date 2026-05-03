@@ -26,6 +26,7 @@ async function seed() {
   // Edit these values or pass them via env vars before running.
   const data = {
     phoneNumberId: process.env.PHONE_NUMBER_ID || "CHANGE_ME",
+    phone: process.env.INSTRUCTOR_PHONE || "",
     name: process.env.INSTRUCTOR_NAME || "Default Instructor",
     email: process.env.INSTRUCTOR_EMAIL || "instructor@example.com",
     googleCalendarId: process.env.INSTRUCTOR_EMAIL || "instructor@example.com",
@@ -52,6 +53,7 @@ async function seed() {
 
   console.log(`\nInstructor upserted:`);
   console.log(`  Name:           ${result.name}`);
+  console.log(`  Phone:          ${result.phone || "(not set)"}`);
   console.log(`  PhoneNumberId:  ${result.phoneNumberId}`);
   console.log(`  CalendarId:     ${result.googleCalendarId}`);
   console.log(`  Base Location:  (${result.baseLocation.latitude}, ${result.baseLocation.longitude})`);

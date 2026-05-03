@@ -1,13 +1,16 @@
 /**
  * Distance Matrix Service
  * ────────────────────────
- * Wraps the Google Distance Matrix API to return driving durations (in minutes)
- * between an origin and one or more destinations.
+ * Wraps the Google Routes API (computeRouteMatrix) to return driving
+ * durations (in minutes) between an origin and one or more destinations.
+ *
+ * Uses the modern Routes API instead of the legacy Distance Matrix API.
+ * Endpoint: POST https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix
  *
  * Features:
  *  - In-memory cache (TTL-based) to avoid redundant API calls
  *  - Batch support: one origin → many destinations in a single API call
- *  - Optional departure_time for traffic-aware estimates
+ *  - Optional departureTime for traffic-aware estimates
  *  - Graceful fallback: returns null on error so callers can use haversine
  */
 
@@ -65,6 +68,7 @@ async function getDrivingDuration(originLat, originLng, destLat, destLng, depart
 
 /**
  * Get driving durations from one origin to many destinations in a single API call.
+ * Uses Google Routes API computeRouteMatrix.
  *
  * @param {number} originLat
  * @param {number} originLng
@@ -77,7 +81,7 @@ async function getDrivingDurations(originLat, originLng, destinations, departure
 
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
-    logger.error("GOOGLE_MAPS_API_KEY not set — Distance Matrix unavailable");
+    logger.error("GOOGLE_MAPS_API_KEY not set — Routes API unavailable");
     return destinations.map(() => null);
   }
 
@@ -99,70 +103,85 @@ async function getDrivingDurations(originLat, originLng, destinations, departure
 
   // If everything was cached, return immediately
   if (uncachedDests.length === 0) {
-    logger.info(`Distance Matrix: all ${destinations.length} result(s) served from cache`);
+    logger.info(`Routes API: all ${destinations.length} result(s) served from cache`);
     return results;
   }
 
-  // Build API request
-  const origin = `${originLat},${originLng}`;
-  const destString = uncachedDests.map((d) => `${d.lat},${d.lng}`).join("|");
-
-  const params = {
-    origins: origin,
-    destinations: destString,
-    mode: "driving",
-    units: "metric",
-    key: apiKey,
+  // Build Routes API request body
+  const requestBody = {
+    origins: [{
+      waypoint: {
+        location: {
+          latLng: { latitude: originLat, longitude: originLng },
+        },
+      },
+    }],
+    destinations: uncachedDests.map((d) => ({
+      waypoint: {
+        location: {
+          latLng: { latitude: d.lat, longitude: d.lng },
+        },
+      },
+    })),
+    travelMode: "DRIVE",
   };
 
-  // Add departure_time for traffic-aware duration_in_traffic
+  // Add departureTime for traffic-aware estimates
   if (departureTime) {
     const epochSeconds = Math.floor(departureTime.getTime() / 1000);
-    // Must be in the future for traffic estimates
     if (epochSeconds > Math.floor(Date.now() / 1000)) {
-      params.departure_time = epochSeconds;
+      requestBody.departureTime = departureTime.toISOString();
+      requestBody.routingPreference = "TRAFFIC_AWARE";
     }
   }
 
   try {
-    const { data } = await axios.get(
-      "https://maps.googleapis.com/maps/api/distancematrix/json",
-      { params }
+    const { data } = await axios.post(
+      "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix",
+      requestBody,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": "originIndex,destinationIndex,duration,condition",
+        },
+      }
     );
 
-    if (data.status !== "OK") {
-      logger.error(`Distance Matrix API error: ${data.status} — ${data.error_message || ""}`);
-      return results; // return partially-cached results, nulls for the rest
-    }
+    // Routes API returns an array of route matrix elements
+    const elements = Array.isArray(data) ? data : [];
 
-    const elements = data.rows[0]?.elements || [];
+    let okCount = 0;
+    for (const el of elements) {
+      if (el.condition === "ROUTE_EXISTS" && el.duration) {
+        // duration is a string like "1234s"
+        const seconds = parseInt(el.duration.replace("s", ""), 10);
+        if (!isNaN(seconds)) {
+          const minutes = seconds / 60;
+          const destIdx = uncachedIndices[el.destinationIndex];
 
-    for (let i = 0; i < elements.length; i++) {
-      const el = elements[i];
-      if (el.status === "OK") {
-        // Prefer duration_in_traffic when available (requires departure_time)
-        const seconds = el.duration_in_traffic?.value ?? el.duration?.value;
-        const minutes = seconds / 60;
-        const destIdx = uncachedIndices[i];
+          results[destIdx] = minutes;
 
-        results[destIdx] = minutes;
-
-        // Cache the result
-        const key = cacheKey(originLat, originLng, uncachedDests[i].lat, uncachedDests[i].lng);
-        setCache(key, minutes);
-      } else {
-        logger.warn(`Distance Matrix element ${i}: ${el.status}`);
+          // Cache the result
+          const dest = uncachedDests[el.destinationIndex];
+          const key = cacheKey(originLat, originLng, dest.lat, dest.lng);
+          setCache(key, minutes);
+          okCount++;
+        }
+      } else if (el.condition && el.condition !== "ROUTE_EXISTS") {
+        logger.warn(`Routes API element [${el.originIndex}→${el.destinationIndex}]: ${el.condition}`);
       }
     }
 
     logger.info(
-      `Distance Matrix: ${elements.filter((e) => e.status === "OK").length}/${elements.length} OK, ` +
+      `Routes API: ${okCount}/${uncachedDests.length} OK, ` +
       `${destinations.length - uncachedDests.length} from cache`
     );
 
     return results;
   } catch (err) {
-    logger.error(`Distance Matrix request failed: ${err.message}`);
+    const errMsg = err.response?.data?.error?.message || err.message;
+    logger.error(`Routes API request failed: ${errMsg}`);
     return results; // return what we have from cache, nulls for the rest
   }
 }

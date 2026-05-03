@@ -65,15 +65,11 @@ app.get("/logs-viewer", logAuth , logLimiter , (req, res) => {
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({ 
-        success: true, 
-        response: "🤖 Enhanced AI WhatsApp Driving School Bot with Automatic Availability Checking! 🚗📅✨",
-        features: [
-            "✅ Automatic date/time extraction from user messages",
-            "✅ Real-time calendar availability checking", 
-            "✅ Smart availability suggestions",
-            "✅ Enhanced AI responses with availability context",
-            "✅ Seamless booking flow"
-        ]
+        status: "ok",
+        name: "Donna",
+        description: "WhatsApp Driving School Bot",
+        version: require('./package.json').version || "1.0.0",
+        uptime: `${Math.floor(process.uptime())}s`,
     });
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-driving-bot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "WhatsApp bot for driving test bookings",
   "main": "app.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "test:integration": "jest --verbose tests/integration",
     "test:route": "jest --verbose tests/integration/routeOptimizer",
     "test:coverage": "jest --coverage --collectCoverageFrom=\"src/**/*.js\" --testPathIgnorePatterns=tests/e2e",
-    "test:e2e": "jest --verbose --config jest.config.e2e.js",
+    "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --verbose --config jest.config.e2e.js",
     "test:e2e:report": "cross-env EMAIL_REPORT=1 jest --verbose --config jest.config.e2e.js"
   },
   "dependencies": {

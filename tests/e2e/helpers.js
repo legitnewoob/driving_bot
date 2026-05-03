@@ -34,12 +34,18 @@
  *   const { sendMessage, ... } = require("./helpers");
  */
 
-// ── 1. Load environment BEFORE any other require ─────────────────────────
-process.env.NODE_ENV = "test";
-process.env.LOAD_ENV = "test";
-require("../../src/config/env");
+// ── 1. Verify env was loaded by Jest setupFiles ──────────────────────────
+// envs/.env.test is loaded via tests/e2e/setup.js (configured in
+// jest.config.e2e.js as setupFiles). If you see this error, your Jest
+// config is wrong — make sure you're running with jest.config.e2e.js.
+if (process.env.NODE_ENV !== "test") {
+  throw new Error(
+    "E2E setup did not run. Make sure Jest is using jest.config.e2e.js " +
+    "(or the e2e project in jest.config.js)."
+  );
+}
 
-// ── 2. Dependencies (loaded AFTER env is configured) ─────────────────────
+// ── 2. Dependencies ──────────────────────────────────────────────────────
 const mongoose = require("mongoose");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require("fs");

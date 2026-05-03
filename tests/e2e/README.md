@@ -55,6 +55,37 @@ npm run test:e2e -- bookingFlow -t "date-only message"
 $env:E2E_SKIP_MISSING="1"; npm run test:e2e
 ```
 
+## HTML report + email after each run
+
+After every e2e run, a beautiful HTML report is automatically saved to:
+
+```
+tests/e2e/reports/e2e-report-<timestamp>.html
+```
+
+Open it in your browser to see a summary of every suite, every test,
+durations, and full error stack traces — much easier than scrolling
+the terminal.
+
+### Email the report after each run
+
+```powershell
+npm run test:e2e:report
+```
+
+This sets `EMAIL_REPORT=1` and reuses the existing `nodemailer` setup from
+`src/utils/emailNotifier.js`.
+
+Required env vars (in `envs/.env.test` or `.env`):
+
+| Var | Description |
+|-----|-------------|
+| `NOTIFY_EMAIL_USER` | Gmail address to send from |
+| `NOTIFY_EMAIL_PASS` | Gmail App Password (16 chars) |
+| `NOTIFY_EMAIL_TO` | Recipient (defaults to `NOTIFY_EMAIL_USER`) |
+
+> Get a Gmail App Password from: Google Account → Security → 2-Step Verification → App Passwords
+
 ## Debugging in VS Code
 
 Two ways:

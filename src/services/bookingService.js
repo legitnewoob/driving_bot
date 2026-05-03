@@ -207,8 +207,10 @@ class BookingService {
     // Step 6: Geocode new pickup/drop-off if provided
     if (bookingData.pickupAddress) {
       try {
+        logger.info(`Geocoding pickup address for reschedule ${bookingId}: "${bookingData.pickupAddress}"`);
         const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
         booking.pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Pickup geocoded for reschedule ${bookingId}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.pickupAddress}`);
       } catch (err) {
         logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
         booking.pickupLocation = { address: bookingData.pickupAddress };
@@ -217,8 +219,10 @@ class BookingService {
 
     if (bookingData.dropoffAddress) {
       try {
+        logger.info(`Geocoding drop-off address for reschedule ${bookingId}: "${bookingData.dropoffAddress}"`);
         const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
         booking.dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Drop-off geocoded for reschedule ${bookingId}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.dropoffAddress}`);
       } catch (err) {
         logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
         booking.dropoffLocation = { address: bookingData.dropoffAddress };
@@ -274,8 +278,10 @@ class BookingService {
 
     if (bookingData.pickupAddress) {
       try {
+        logger.info(`Geocoding pickup address for ${from}: "${bookingData.pickupAddress}"`);
         const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
         pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Pickup geocoded for ${from}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.pickupAddress}`);
       } catch (err) {
         logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
         pickupLocation = { address: bookingData.pickupAddress };
@@ -284,8 +290,10 @@ class BookingService {
 
     if (bookingData.dropoffAddress) {
       try {
+        logger.info(`Geocoding drop-off address for ${from}: "${bookingData.dropoffAddress}"`);
         const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
         dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Drop-off geocoded for ${from}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.dropoffAddress}`);
       } catch (err) {
         logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
         dropoffLocation = { address: bookingData.dropoffAddress };

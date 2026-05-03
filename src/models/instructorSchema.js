@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const instructorSchema = new mongoose.Schema({
   phoneNumberId: { type: String, required: true, unique: true, index: true },
+  phone: { type: String, unique: true, sparse: true, index: true },
   name: { type: String, required: true },
   email: { type: String, required: true },
   googleCalendarId: { type: String, required: true },

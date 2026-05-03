@@ -5,22 +5,22 @@
  * Integration tests: filterAvailableSlotsByLocation (Mongoose mocked)
  */
 
-const haversine = require("../src/utils/haversine");
+const haversine = require("../../src/utils/haversine");
 
 // ── We need a FRESH RouteOptimizer class (not the singleton) so we can
 //    control constructor defaults without env vars leaking between tests.
 //    Jest's module cache is reset per-file, but we also jest.mock the DB models.
 
-jest.mock("../src/models/bookingModel");
-jest.mock("../src/models/userModel");
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/models/bookingModel");
+jest.mock("../../src/models/userModel");
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
 // Mock Distance Matrix API — returns null for every destination so
 // routeOptimizer falls back to haversine, keeping existing test logic intact.
-jest.mock("../src/services/distanceMatrixService", () => ({
+jest.mock("../../src/services/distanceMatrixService", () => ({
   getDrivingDurations: jest.fn(async (_oLat, _oLng, destinations) =>
     destinations.map(() => null)
   ),
@@ -28,12 +28,12 @@ jest.mock("../src/services/distanceMatrixService", () => ({
   clearCache: jest.fn(),
 }));
 
-const Booking = require("../src/models/bookingModel");
-const User = require("../src/models/userModel");
-const logger = require("../src/utils/logger-advanced");
+const Booking = require("../../src/models/bookingModel");
+const User = require("../../src/models/userModel");
+const logger = require("../../src/utils/logger-advanced");
 
 // Import the singleton – its constructor has already run with default env
-const routeOptimizer = require("../src/services/routeOptimizer");
+const routeOptimizer = require("../../src/services/routeOptimizer");
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1057,7 +1057,7 @@ describe("RouteOptimizer – Multi-User Day Simulation", () => {
 // to return real driving durations, verifying that routeOptimizer correctly
 // uses API results for scoring and threshold filtering.
 
-const distanceMatrixService = require("../src/services/distanceMatrixService");
+const distanceMatrixService = require("../../src/services/distanceMatrixService");
 
 describe("RouteOptimizer – Distance Matrix Integration", () => {
   beforeEach(() => {

@@ -15,22 +15,22 @@
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
-jest.mock("../src/models/bookingModel");
-jest.mock("../src/models/userModel");
-jest.mock("../src/services/calendarService", () => ({
+jest.mock("../../src/models/bookingModel");
+jest.mock("../../src/models/userModel");
+jest.mock("../../src/services/calendarService", () => ({
   createEvent: jest.fn(),
   updateEvent: jest.fn(),
   getEventsForDate: jest.fn(),
   checkSlotAgainstEvents: jest.fn(),
   findEarliestAvailableSlot: jest.fn(),
 }));
-jest.mock("../src/services/sheetsService", () => ({
+jest.mock("../../src/services/sheetsService", () => ({
   getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-fallback"),
   getLearnerName: jest.fn().mockResolvedValue("Test User"),
   updateLearnerRecord: jest.fn().mockResolvedValue({}),
   initializeCredentials: jest.fn(),
 }));
-jest.mock("../src/services/mapsService", () => ({
+jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02,
     lng: -2.22,
@@ -40,19 +40,19 @@ jest.mock("../src/services/mapsService", () => ({
   }),
   getGoogleMapsLink: jest.fn(),
 }));
-jest.mock("../src/services/whatsappService", () => ({
+jest.mock("../../src/services/whatsappService", () => ({
   sendTextMessage: jest.fn().mockResolvedValue({}),
   sendMessage: jest.fn().mockResolvedValue({}),
 }));
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
-jest.mock("../src/utils/chatLogger", () => jest.fn(() => ({
+jest.mock("../../src/utils/chatLogger", () => jest.fn(() => ({
   info: jest.fn(),
 })));
-jest.mock("../src/utils/dbChatLogger", () => jest.fn(() => ({
+jest.mock("../../src/utils/dbChatLogger", () => jest.fn(() => ({
   user: jest.fn(),
   assistant: jest.fn(),
 })));
@@ -106,7 +106,7 @@ const INSTRUCTOR_B = {
   active: true,
 };
 
-jest.mock("../src/models/instructorModel", () => ({
+jest.mock("../../src/models/instructorModel", () => ({
   getInstructor: jest.fn(async (phoneNumberId) => {
     if (phoneNumberId === "phone-A-111") return INSTRUCTOR_A;
     if (phoneNumberId === "phone-B-222") return INSTRUCTOR_B;
@@ -119,16 +119,16 @@ jest.mock("../src/models/instructorModel", () => ({
 
 // ── Requires (after mocks) ──────────────────────────────────────────────
 
-const Booking = require("../src/models/bookingModel");
-const User = require("../src/models/userModel");
-const calendarService = require("../src/services/calendarService");
-const sheetsService = require("../src/services/sheetsService");
-const whatsappService = require("../src/services/whatsappService");
-const bookingService = require("../src/services/bookingService");
-const webhookController = require("../src/controllers/webhookController");
-const aiService = require("../src/services/gemini/aiService");
-const { getInstructor } = require("../src/models/instructorModel");
-const logger = require("../src/utils/logger-advanced");
+const Booking = require("../../src/models/bookingModel");
+const User = require("../../src/models/userModel");
+const calendarService = require("../../src/services/calendarService");
+const sheetsService = require("../../src/services/sheetsService");
+const whatsappService = require("../../src/services/whatsappService");
+const bookingService = require("../../src/services/bookingService");
+const webhookController = require("../../src/controllers/webhookController");
+const aiService = require("../../src/services/gemini/aiService");
+const { getInstructor } = require("../../src/models/instructorModel");
+const logger = require("../../src/utils/logger-advanced");
 
 // ── Test Data ──────────────────────────────────────────────────────────
 

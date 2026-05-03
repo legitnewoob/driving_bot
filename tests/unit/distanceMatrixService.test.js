@@ -14,20 +14,20 @@
  */
 
 jest.mock("axios");
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
 
 const axios = require("axios");
-const logger = require("../src/utils/logger-advanced");
+const logger = require("../../src/utils/logger-advanced");
 const {
   getDrivingDuration,
   getDrivingDurations,
   clearCache,
   _cache,
-} = require("../src/services/distanceMatrixService");
+} = require("../../src/services/distanceMatrixService");
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

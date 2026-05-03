@@ -22,9 +22,9 @@
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
-jest.mock("../src/models/bookingModel");
-jest.mock("../src/models/userModel");
-jest.mock("../src/services/calendarService", () => ({
+jest.mock("../../src/models/bookingModel");
+jest.mock("../../src/models/userModel");
+jest.mock("../../src/services/calendarService", () => ({
   createEvent: jest.fn(),
   updateEvent: jest.fn(),
   deleteEvent: jest.fn(),
@@ -34,13 +34,13 @@ jest.mock("../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn(),
   checkAvailability: jest.fn(),
 }));
-jest.mock("../src/services/sheetsService", () => ({
+jest.mock("../../src/services/sheetsService", () => ({
   getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
   getLearnerName: jest.fn().mockResolvedValue("Test User"),
   updateLearnerRecord: jest.fn().mockResolvedValue({}),
   initializeCredentials: jest.fn(),
 }));
-jest.mock("../src/services/mapsService", () => ({
+jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,
     formattedAddress: "Mock Address",
@@ -49,17 +49,17 @@ jest.mock("../src/services/mapsService", () => ({
   }),
   getGoogleMapsLink: jest.fn(),
 }));
-jest.mock("../src/services/whatsappService", () => ({
+jest.mock("../../src/services/whatsappService", () => ({
   sendTextMessage: jest.fn().mockResolvedValue({}),
   sendMessage: jest.fn().mockResolvedValue({}),
 }));
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
-jest.mock("../src/utils/chatLogger", () => jest.fn(() => ({ info: jest.fn() })));
-jest.mock("../src/utils/dbChatLogger", () => jest.fn(() => ({ user: jest.fn(), assistant: jest.fn() })));
+jest.mock("../../src/utils/chatLogger", () => jest.fn(() => ({ info: jest.fn() })));
+jest.mock("../../src/utils/dbChatLogger", () => jest.fn(() => ({ user: jest.fn(), assistant: jest.fn() })));
 
 jest.mock("@google/generative-ai", () => ({
   GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
@@ -91,7 +91,7 @@ const MOCK_INSTRUCTOR = {
   active: true,
 };
 
-jest.mock("../src/models/instructorModel", () => ({
+jest.mock("../../src/models/instructorModel", () => ({
   getInstructor: jest.fn(async (id) => {
     if (id === "inst-flow") return MOCK_INSTRUCTOR;
     return null;
@@ -103,16 +103,16 @@ jest.mock("../src/models/instructorModel", () => ({
 
 // ── Requires ──────────────────────────────────────────────────────────
 
-const Booking = require("../src/models/bookingModel");
-const User = require("../src/models/userModel");
-const calendarService = require("../src/services/calendarService");
-const sheetsService = require("../src/services/sheetsService");
-const whatsappService = require("../src/services/whatsappService");
-const bookingService = require("../src/services/bookingService");
-const webhookController = require("../src/controllers/webhookController");
-const aiService = require("../src/services/gemini/aiService");
-const { getInstructor, getUserSession, updateUserSession } = require("../src/models/instructorModel");
-const logger = require("../src/utils/logger-advanced");
+const Booking = require("../../src/models/bookingModel");
+const User = require("../../src/models/userModel");
+const calendarService = require("../../src/services/calendarService");
+const sheetsService = require("../../src/services/sheetsService");
+const whatsappService = require("../../src/services/whatsappService");
+const bookingService = require("../../src/services/bookingService");
+const webhookController = require("../../src/controllers/webhookController");
+const aiService = require("../../src/services/gemini/aiService");
+const { getInstructor, getUserSession, updateUserSession } = require("../../src/models/instructorModel");
+const logger = require("../../src/utils/logger-advanced");
 
 // ── Shared test data ──────────────────────────────────────────────────
 

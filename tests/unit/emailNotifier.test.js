@@ -9,20 +9,20 @@
  */
 
 jest.mock("nodemailer");
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
 
 const nodemailer = require("nodemailer");
-const logger = require("../src/utils/logger-advanced");
+const logger = require("../../src/utils/logger-advanced");
 const {
   sendNotification,
   notifyInvalidGrant,
   clearCooldowns,
   resetTransporter,
-} = require("../src/utils/emailNotifier");
+} = require("../../src/utils/emailNotifier");
 
 // ── Mock transporter ─────────────────────────────────────────────────────
 

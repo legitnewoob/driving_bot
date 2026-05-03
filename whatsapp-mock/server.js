@@ -17,8 +17,9 @@ const { Server } = require("socket.io");
 const path    = require("path");
 const axios = require("axios");
 // ─── Config ───────────────────────────────────────────────────────────────────
-const MOCK_PORT = process.env.MOCK_PORT || 4000;
-const APP_URL   = process.env.APP_URL   || "http://localhost:3000/mock-webhook";
+const MOCK_PORT        = process.env.MOCK_PORT        || 4000;
+const APP_URL          = process.env.APP_URL          || "http://localhost:3000/mock-webhook";
+const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID  || "MOCK_PHONE_NUMBER_ID";
 
 const app    = express();
 const server = http.createServer(app);
@@ -42,7 +43,7 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
           messaging_product: "whatsapp",
           metadata: {
             display_phone_number: "15550001234",
-            phone_number_id: "MOCK_PHONE_NUMBER_ID",
+            phone_number_id: PHONE_NUMBER_ID,
           },
           contacts: [{
             profile: { name: "Dev User" },

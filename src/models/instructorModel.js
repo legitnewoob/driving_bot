@@ -1,24 +1,9 @@
 const timezoneUtils = require("../utils/timezoneUtils");
-// Store user sessions with conversation history
+const Instructor = require("./instructorSchema");
+const logger = require("../utils/logger-advanced");
+
+// ── In-memory session store (per-user conversation state) ─────────────
 const userSessions = {};
-
-
-const instructorName = process.env.INSTRUCTOR_NAME || "";
-const instructorEmail = process.env.INSTRUCTOR_EMAIL || "";
-// Instructor data
-const instructors = {
-    [process.env.PHONE_NUMBER_ID]: {
-        name: `${instructorName} Instructor`,
-        googleCalendarId: `${instructorEmail}`,
-        availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
-        specialties: ['Basic driving', 'Highway driving', 'Parking', 'City driving'],
-        rates: {
-            basic: 50,
-            highway: 60,
-            parking: 45
-        }
-    }
-};
 
 function getUserSession(phone) {
     if (!userSessions[phone]) {
@@ -35,29 +20,45 @@ function updateUserSession(phone, session) {
     userSessions[phone] = session;
 }
 
-function getInstructor(instructorId) {
-    return instructors[instructorId];
+// ── Instructor lookup (DB-backed) ─────────────────────────────────────
+
+// In-memory cache to avoid hitting DB on every message.
+// Maps phoneNumberId → instructor document.
+const _instructorCache = {};
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Fetch an instructor from DB (with cache).
+ * @param {string} phoneNumberId - The WhatsApp phone_number_id
+ * @returns {Promise<Object|null>} Instructor document or null
+ */
+async function getInstructor(phoneNumberId) {
+    const cached = _instructorCache[phoneNumberId];
+    if (cached && Date.now() - cached._cachedAt < CACHE_TTL_MS) {
+        return cached;
+    }
+
+    try {
+        const instructor = await Instructor.findOne({ phoneNumberId, active: true }).lean();
+        if (instructor) {
+            instructor._cachedAt = Date.now();
+            _instructorCache[phoneNumberId] = instructor;
+        }
+        return instructor;
+    } catch (err) {
+        logger.error(`Error fetching instructor ${phoneNumberId}: ${err.message}`);
+        return cached || null; // return stale cache on DB error
+    }
 }
 
-// function getAvailableDates() {
-//     const dates = [];
-//     const today = new Date();
-    
-//     for (let i = 1; i <= 90; i++) {
-//         const date = new Date(today);
-//         date.setDate(today.getDate() + i);
-        
-//         // Skip weekends
-//         if (date.getDay() !== 0 && date.getDay() !== 6) {
-//             dates.push(date.toISOString().split('T')[0]);
-//         }
-        
-//         // if (dates.length >= 7) break;
-//     }
-    
-//     return dates;
-// }
+/**
+ * Invalidate the cache for an instructor (e.g. after admin update).
+ */
+function invalidateInstructorCache(phoneNumberId) {
+    delete _instructorCache[phoneNumberId];
+}
 
+// ── Available dates (next 90 weekdays) ────────────────────────────────
 
 function getAvailableDates() {
     const dates = [];
@@ -85,9 +86,9 @@ function getAvailableDates() {
 
 module.exports = {
     userSessions,
-    instructors,
     getUserSession,
     updateUserSession,
     getInstructor,
+    invalidateInstructorCache,
     getAvailableDates
 };

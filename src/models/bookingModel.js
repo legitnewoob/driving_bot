@@ -15,11 +15,25 @@ const bookingSchema = new mongoose.Schema({
   },
   postalCode: { type: String, required: true },
 
-  // Fields for location details
+  // Fields for location details (legacy – user profile location)
   location: {
     latitude: { type: Number, required: false },
     longitude: { type: Number, required: false },
-  }
+  },
+
+  // Pickup location for this booking
+  pickupLocation: {
+    address: { type: String, required: false },
+    latitude: { type: Number, required: false },
+    longitude: { type: Number, required: false },
+  },
+
+  // Drop-off location for this booking
+  dropoffLocation: {
+    address: { type: String, required: false },
+    latitude: { type: Number, required: false },
+    longitude: { type: Number, required: false },
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Booking", bookingSchema);

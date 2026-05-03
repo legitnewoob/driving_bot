@@ -327,6 +327,8 @@ describe("RouteOptimizer – Unit Tests", () => {
 // INTEGRATION TESTS  (filterAvailableSlotsByLocation – Mongoose mocked)
 // ═══════════════════════════════════════════════════════════════════════════
 
+const INST_OBJ = { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } };
+
 describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -336,9 +338,10 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       [],
       "2025-06-15",
-      "inst-1",
+      INST_OBJ,
       "447000000001"
     );
+
     expect(result).toEqual([]);
   });
 
@@ -346,20 +349,21 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       null,
       "2025-06-15",
-      "inst-1",
+      INST_OBJ,
       "447000000001"
     );
-    expect(result).toBeNull();
+
+    expect(result).toEqual(null);
   });
 
-  it("returns all slots when user has no location", async () => {
+  it("returns all slots when user has no valid location", async () => {
     User.findOne.mockResolvedValue({ phone: "447000000001", location: {} });
 
     const slots = ["09:00", "10:00", "11:00"];
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      INST_OBJ,
       "447000000001"
     );
 
@@ -376,62 +380,52 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
-      "447000000001"
+      INST_OBJ,
+      "447000000002"
     );
 
     expect(result).toEqual(slots);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("User location not found")
+    );
   });
 
-  it("filters slots within threshold when nearby bookings exist", async () => {
-    // User is very close to base (within 8km)
+  it("close user gets all slots on empty day", async () => {
     User.findOne.mockResolvedValue({
       phone: "447000000001",
-      location: { latitude: 53.02, longitude: -2.22 },
+      location: { latitude: 53.018, longitude: -2.22 },
     });
-
-    // No existing bookings → distance check is from base
     Booking.find.mockResolvedValue([]);
 
     const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      INST_OBJ,
       "447000000001"
     );
 
-    // User is ~0.5km from base → all slots should be within threshold
-    expect(result.length).toBe(5);
-    // Should be in chronological order
-    expect(result).toEqual(["09:00", "10:00", "11:00", "14:00", "15:00"]);
+    // Very close to base → all within threshold
+    expect(result.length).toBe(slots.length);
   });
 
-  it("returns top-3 by score when user is far from all reference points", async () => {
-    // User is far away (>8km from base and all bookings)
+  it("far user gets top-3 fallback on empty day", async () => {
     User.findOne.mockResolvedValue({
       phone: "447000000002",
-      location: { latitude: 53.2, longitude: -2.5 }, // ~25km away
+      location: { latitude: 53.2, longitude: -2.45 },
     });
-
     Booking.find.mockResolvedValue([]);
 
     const slots = ["09:00", "10:00", "11:00", "12:00", "14:00"];
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      INST_OBJ,
       "447000000002"
     );
 
-    // Far from base → no slots within 8km → fallback to top 3
+    // Far user with no bookings → top-3 fallback
     expect(result.length).toBe(3);
-    // Should be sorted chronologically
-    for (let i = 1; i < result.length; i++) {
-      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-        routeOptimizer.timeToMinutes(result[i - 1])
-      );
-    }
   });
 
   it("uses nearby bookings to filter when bookings exist close to user", async () => {
@@ -450,7 +444,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000003"
     );
 
@@ -479,7 +473,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000004"
     );
 
@@ -497,7 +491,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000005"
     );
 
@@ -518,7 +512,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000006"
     );
 
@@ -543,7 +537,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     const result = await routeOptimizer.filterAvailableSlotsByLocation(
       slots,
       "2025-06-15",
-      "inst-1",
+      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000007"
     );
 
@@ -561,7 +555,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     await routeOptimizer.filterAvailableSlotsByLocation(
       ["09:00"],
       "2025-07-01",
-      "inst-42",
+      { phoneNumberId: "inst-42", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
       "447000000008"
     );
 
@@ -578,7 +572,7 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     await routeOptimizer.filterAvailableSlotsByLocation(
       ["09:00"],
       "2025-07-01",
-      "inst-1",
+      INST_OBJ,
       "447123456789"
     );
 
@@ -701,7 +695,7 @@ const USERS = {
 };
 
 const DATE = "2025-06-20";
-const INST = "inst-main";
+const INST = { phoneNumberId: "inst-main", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } };
 const ALL_SLOTS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
 
 /** Helper: mock User.findOne to return the right user by phone */

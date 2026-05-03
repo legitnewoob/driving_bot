@@ -16,16 +16,19 @@ const timezoneUtils = require("../utils/timezoneUtils");
 
 class WebhookController {
 
-  // ─── THE ONLY CHANGE NEEDED EVERYWHERE ───────────────────────────────────
-  // Instead of calling whatsappService.sendTextMessage(from, text) directly,
-  // all methods now call this._send(from, text).
-  // In mock mode it captures the reply. In prod it calls WhatsApp as normal.
+  // ─── Send helper ────────────────────────────────────────────────────────
+  // In mock mode it captures the reply. In prod it calls WhatsApp using
+  // the instructor's credentials.
   _send(from, text) {
     if (this._isMock && this._mockReplyCallback) {
       this._mockReplyCallback(text);
       return Promise.resolve();
     }
-    return whatsappService.sendTextMessage(from, text);
+    if (!this._instructor) {
+      logger.error("_send called without instructor context");
+      return Promise.resolve();
+    }
+    return whatsappService.sendTextMessage(from, text, this._instructor);
   }
 
   /* ========== HELPER METHOD ========== */
@@ -47,10 +50,10 @@ class WebhookController {
 
   /* ========== BOOKING ACTIONS ========== */
 
-  async next_available_slot(from) {
+  async next_available_slot(from, instructor) {
     logger.info("Finding next available appointment...");
     const earliestSlot = await calendarService.findEarliestAvailableSlot(
-      process.env.PHONE_NUMBER_ID
+      instructor
     );
     if (earliestSlot) {
       logger.info(`Next available slot for ${from}: ${earliestSlot.date} at ${earliestSlot.time}`);
@@ -104,7 +107,8 @@ class WebhookController {
       message += `⏰ ${booking.time}\n`;
 
       if (booking.service) message += `🎯 Service: *${booking.service}*\n`;
-      if (booking.postalCode) message += `📍 ${booking.postalCode}\n`;
+      if (booking.pickupLocation?.address) message += `📍 Pickup: ${booking.pickupLocation.address}\n`;
+      if (booking.dropoffLocation?.address) message += `🏁 Drop-off: ${booking.dropoffLocation.address}\n`;
       if (booking.status) {
         const statusEmoji =
           booking.status.toLowerCase() === "confirmed" ? "✅" :
@@ -164,25 +168,31 @@ class WebhookController {
     }
   }
 
-  async processBooking(from, bookingData) {
+  async processBooking(from, bookingData, instructor) {
     try {
       logger.info(`Processing booking for ${from}: ${bookingData.date} at ${bookingData.time}`);
-      const booking = await bookingService.createBooking(from, bookingData);
-      const confirmationMessage = [
+      const booking = await bookingService.createBooking(from, bookingData, instructor);
+      const lines = [
         "🎉 Booking Confirmed!",
         "",
         `🆔 Booking ID: ${booking.booking.bookingId}`,
         "✅ Your driving lesson has been successfully booked:",
         "",
-        `👨‍🏫 Instructor: ${booking.instructor.name}`,
+        `👨‍🏫 Instructor: ${instructor.name}`,
         `📅 Date: ${timezoneUtils.formatDate(
           timezoneUtils.createDateInTimezone(bookingData.date, "12:00"),
           "dddd, MMMM D, YYYY"
         )}`,
         `🕐 Time: ${bookingData.time}`,
-        "",
-        "Good luck with your driving lesson! 🚗💨",
-      ].join("\n");
+      ];
+      if (bookingData.pickupAddress) {
+        lines.push(`📍 Pickup: ${bookingData.pickupAddress}`);
+      }
+      if (bookingData.dropoffAddress) {
+        lines.push(`🏁 Drop-off: ${bookingData.dropoffAddress}`);
+      }
+      lines.push("", "Good luck with your driving lesson! 🚗💨");
+      const confirmationMessage = lines.join("\n");
 
       await this._send(from, confirmationMessage);
       this.clearUserConversationHistoryAndContext(from);
@@ -217,6 +227,9 @@ class WebhookController {
         for (const entry of body.entry || []) {
           for (const change of entry.changes || []) {
             if (change.field === "messages") {
+              // Extract the phone_number_id from WhatsApp metadata
+              const phoneNumberId = change.value?.metadata?.phone_number_id;
+
               for (const message of change.value.messages || []) {
                 const from = message.from;
                 const messageType = message.type;
@@ -233,16 +246,15 @@ class WebhookController {
                 }
 
                 if (messageContent) {
-                  const instructor = process.env.PHONE_NUMBER_ID;
                   try {
                     const chatLogger = getChatLogger(from);
-                    const dbChatLogger = getDbChatLogger(instructor, from);
+                    const dbChatLogger = getDbChatLogger(phoneNumberId, from);
                     chatLogger.info(`${messageContent}`);
                     dbChatLogger.user(`${messageContent}`);
                   } catch (logErr) {
                     logger.warn(`Chat logger skipped: ${logErr.message}`);
                   }
-                  await this.handleIncomingMessage(from, messageContent);
+                  await this.handleIncomingMessage(from, messageContent, phoneNumberId);
                 }
               }
             }
@@ -258,19 +270,28 @@ class WebhookController {
 
   /* ========== MESSAGE HANDLER ========== */
 
-  async handleIncomingMessage(from, messageContent, isMock = false, mockReplyCallback = null) {
+  async handleIncomingMessage(from, messageContent, instructorPhoneId, isMock = false, mockReplyCallback = null) {
     // Store on instance so _send can access them without passing around everywhere
     this._isMock = isMock;
     this._mockReplyCallback = mockReplyCallback;
 
     try {
-      logger.info(`Message from ${from}: "${messageContent}"`);
+      logger.info(`Message from ${from} (instructor: ${instructorPhoneId}): "${messageContent}"`);
 
-      // Step 1: Check user profile before AI flow (skip in mock mode)
+      // Step 0: Resolve instructor from DB
+      const instructor = await getInstructor(instructorPhoneId);
+      if (!instructor) {
+        logger.error(`No instructor found for phoneNumberId: ${instructorPhoneId}`);
+        return;
+      }
+      this._instructor = instructor;
+
+      // Step 1: Check user profile before AI flow
       const { inProgress, user, justCompleted } = await ensureUserDetails(
         from,
         messageContent,
-        this._send.bind(this)   // ← works in both mock and real mode
+        this._send.bind(this),
+        instructorPhoneId
       );
       if (inProgress) {
         return;
@@ -286,7 +307,8 @@ class WebhookController {
       const aiResponse = await aiService.getResponse(
         messageContent,
         session.conversationHistory,
-        from
+        from,
+        instructor
       );
 
       const { hasAction, actionType, bookingData, responseText } =
@@ -304,7 +326,7 @@ class WebhookController {
         switch (actionType) {
           case "book":
             bookingData.userPhone = from;
-            await this.processBooking(from, bookingData);
+            await this.processBooking(from, bookingData, instructor);
             break;
           case "show_bookings":
             await this.showBookings(from);
@@ -316,7 +338,7 @@ class WebhookController {
             await this.cancelBooking(from, bookingData);
             break;
           case "next_available_slot":
-            await this.next_available_slot(from);
+            await this.next_available_slot(from, instructor);
             break;
           case "null":
             break;
@@ -338,9 +360,10 @@ class WebhookController {
       logger.error("Error handling message from " + from + ": " + error.message);
       await this._send(from, "⚠️ Sorry, I'm having trouble processing your message. Please try again.");
     } finally {
-      // Clean up mock state after request completes
+      // Clean up state after request completes
       this._isMock = false;
       this._mockReplyCallback = null;
+      this._instructor = null;
     }
   }
 }

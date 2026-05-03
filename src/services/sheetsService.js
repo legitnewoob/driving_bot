@@ -8,9 +8,9 @@ class SheetsService {
         this.sheets = google.sheets({ version: 'v4', auth: oauth2Client });
     }
 
-    async initializeCredentials() {
+    async initializeCredentials(refreshToken) {
         oauth2Client.setCredentials({
-            refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+            refresh_token: refreshToken
         });
     }
 
@@ -169,13 +169,11 @@ class SheetsService {
      * Get instructor's spreadsheet ID from environment or config
      */
     getInstructorSpreadsheetId(instructorId) {
-        // Always return the main spreadsheet ID for now
+        // Fallback: return env var if instructor record doesn't have one
         const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
-        
         if (!spreadsheetId) {
-            throw new Error('Google Spreadsheet ID not configured');
+            logger.warn(`No spreadsheet ID found for instructor ${instructorId}`);
         }
-        
         return spreadsheetId;
     }
 

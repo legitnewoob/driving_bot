@@ -1,5 +1,6 @@
 // services/mapsService.js
 const axios = require("axios");
+const logger = require("../utils/logger-advanced");
 
 async function getGoogleMapsLink(postalCode) {
   if (!postalCode) throw new Error("Postal code is required");
@@ -22,7 +23,7 @@ async function getCoordinatesFromPostalCode(postalCode) {
 
   const { data } = await axios.get(url);
 
-  console.log("Geocoding response:", data);
+  logger.info(`Geocoding for "${postalCode}": status=${data.status}`);
   if (data.status === "OK") {
     const location = data.results[0].geometry.location;
     const formattedAddress = data.results[0].formatted_address;

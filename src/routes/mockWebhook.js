@@ -29,15 +29,16 @@ router.post("/", async (req, res) => {
 
     const from = message.from;
     const text = message.text.body;
+    const phoneNumberId = value?.metadata?.phone_number_id;
 
-    console.log(`[mock-webhook] Message from ${from}: "${text}"`);
+    console.log(`[mock-webhook] Message from ${from}: "${text}" (instructor: ${phoneNumberId})`);
 
     // Collect all replies the bot sends during this request
     const replies = [];
 
     // isMock = true tells handleIncomingMessage to capture replies
     // instead of firing them off to the real WhatsApp API
-    await webhookController.handleIncomingMessage(from, text, true, (reply) => {
+    await webhookController.handleIncomingMessage(from, text, phoneNumberId, true, (reply) => {
       replies.push(reply);
     });
 

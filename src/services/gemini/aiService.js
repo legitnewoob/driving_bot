@@ -4,7 +4,6 @@ const dateTimeService = require("./dateTimeService");
 const dateTimeUtils = require("../../utils/dateTimeUtils");
 const timezoneUtils = require("../../utils/timezoneUtils");
 const routeOptimizer = require("../routeOptimizer");
-const { getInstructor } = require("../../models/instructorModel");
 const logger = require("../../utils/logger-advanced");
 const fs = require("fs");
 const path = require("path");
@@ -12,7 +11,7 @@ const path = require("path");
 // ─────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────
-const VALID_BOOKING_TIMES = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"];
+const DEFAULT_BOOKING_TIMES = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"];
 
 // Max age (ms) before a user's pending context is considered stale
 const PENDING_CONTEXT_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -48,9 +47,9 @@ function computeNextAvailableDate() {
 /**
  * Checks whether a time string (HH:MM) is one of the allowed booking slots.
  */
-function isValidBookingTime(time) {
+function isValidBookingTime(time, validTimes) {
   if (!time) return false;
-  return VALID_BOOKING_TIMES.includes(time);
+  return (validTimes || DEFAULT_BOOKING_TIMES).includes(time);
 }
 
 // ─────────────────────────────────────────────
@@ -72,8 +71,8 @@ class AIService {
 
   // ── System Prompt ──────────────────────────
 
-  getSystemPrompt(instructorId) {
-    return this._systemPromptRaw.replaceAll("{{INSTRUCTOR_NAME}}", process.env.INSTRUCTOR_NAME);
+  getSystemPrompt(instructor) {
+    return this._systemPromptRaw.replaceAll("{{INSTRUCTOR_NAME}}", instructor.name || "");
   }
 
   // ── Pending Context Helpers ────────────────
@@ -161,10 +160,11 @@ class AIService {
     const { finalDate, finalTime } = completeness;
 
     // ── CHECK 1: Is the requested time a valid slot? ──
-    if (finalTime && !isValidBookingTime(finalTime)) {
+    const validTimes = this._currentInstructorTimes || DEFAULT_BOOKING_TIMES;
+    if (finalTime && !isValidBookingTime(finalTime, validTimes)) {
       return (
         `\n\n[SYSTEM: The time ${finalTime} is not an available booking slot. ` +
-        `Valid times are: ${VALID_BOOKING_TIMES.join(", ")}. ` +
+        `Valid times are: ${validTimes.join(", ")}. ` +
         `Please ask the user to choose one of these times. Do NOT book or suggest rounding.]`
       );
     }
@@ -246,15 +246,14 @@ class AIService {
 
   // ── Availability Info Fetcher ──────────────
 
-  async getAvailabilityInfo(dateRequested, timeRequested, instructorId, userPhone) {
+  async getAvailabilityInfo(dateRequested, timeRequested, instructor, userPhone) {
     try {
-      const instructor = getInstructor(instructorId);
       if (!instructor) {
         return { error: "Instructor not found", isValidRequest: false };
       }
 
       // Early-exit: reject times not in the allowed list BEFORE hitting the calendar
-      if (timeRequested && !isValidBookingTime(timeRequested)) {
+      if (timeRequested && !isValidBookingTime(timeRequested, instructor.availableTimes)) {
         return {
           isValidRequest: false,
           requestedSlotAvailable: false,
@@ -266,7 +265,7 @@ class AIService {
 
       const availableSlotsForDate = await calendarService.getAvailableTimeSlotsForDate(
         dateRequested,
-        instructorId
+        instructor
       );
 
       logger.info(`Slots for ${dateRequested} (pre-optimization): [${availableSlotsForDate}]`);
@@ -275,7 +274,7 @@ class AIService {
       const optimizedSlots = await routeOptimizer.filterAvailableSlotsByLocation(
         availableSlotsForDate,
         dateRequested,
-        instructorId,
+        instructor,
         userPhone
       );
 
@@ -307,8 +306,11 @@ class AIService {
 
   // ── Main Response Handler ──────────────────
 
-  async getResponse(userMessage, conversationHistory, userPhone) {
+  async getResponse(userMessage, conversationHistory, userPhone, instructor) {
     try {
+      // Store instructor times for use in generateSystemMessage
+      this._currentInstructorTimes = instructor?.availableTimes || DEFAULT_BOOKING_TIMES;
+
       // 1. Extract and sanitize date/time from the user's message
       const rawDateTime = await dateTimeService.extractDateTimeFromMessage(userMessage);
       const dateTimeInfo = dateTimeUtils.sanitize(rawDateTime, this.pendingContext[userPhone]);
@@ -327,7 +329,7 @@ class AIService {
             availabilityInfo = await this.getAvailabilityInfo(
               completeness.finalDate,
               completeness.finalTime,
-              process.env.PHONE_NUMBER_ID,
+              instructor,
               userPhone
             );
           } catch (err) {
@@ -339,8 +341,9 @@ class AIService {
       }
 
       // 3. Build prompt and call Gemini
-      const systemPrompt = this.getSystemPrompt(process.env.PHONE_NUMBER_ID);
-      const today = `(${process.env.APP_TIMEZONE || "Asia/Kolkata"}): ${timezoneUtils.getCurrentDateString()}`;
+      const systemPrompt = this.getSystemPrompt(instructor);
+      const timezone = instructor?.timezone || process.env.APP_TIMEZONE || "Asia/Kolkata";
+      const today = `(${timezone}): ${timezoneUtils.getCurrentDateString()}`;
       const nextAvailableDate = computeNextAvailableDate();
 
       const conversationText = this.buildConversationForGemini(

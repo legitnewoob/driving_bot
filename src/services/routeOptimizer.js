@@ -5,11 +5,6 @@ const logger = require("../utils/logger-advanced.js");
 
 class RouteOptimizer {
   constructor() {
-    this.LATITUDE_DEFAULT =
-      parseFloat(process.env.LATITUDE_DEFAULT) || 53.0168046;
-    this.LONGITUDE_DEFAULT =
-      parseFloat(process.env.LONGITUDE_DEFAULT) || -2.2190649;
-
     // Max km between consecutive bookings before we consider it "far"
     this.NEARBY_THRESHOLD_KM = 8;
   }
@@ -128,14 +123,14 @@ class RouteOptimizer {
    *
    * @param {string[]} availableSlotsForDate - e.g. ["09:00","10:00","15:00"]
    * @param {string} dateRequested - "YYYY-MM-DD"
-   * @param {string} instructorId
+   * @param {object} instructor - Instructor object with baseLocation
    * @param {string} userPhone
    * @returns {string[]} filtered/ranked slot times
    */
   async filterAvailableSlotsByLocation(
     availableSlotsForDate,
     dateRequested,
-    instructorId,
+    instructor,
     userPhone
   ) {
     try {
@@ -156,16 +151,17 @@ class RouteOptimizer {
       };
 
       // Get CONFIRMED bookings for that date (ignore cancelled ones)
+      const instructorId = instructor?.phoneNumberId || instructor;
       const bookingsForDate = await Booking.find({
         date: dateRequested,
         instructorId,
         status: { $in: ["confirmed", "rescheduled"] },
       });
 
-      // Instructor's home base
+      // Instructor's home base (from DB record)
       const instructorBase = {
-        lat: this.LATITUDE_DEFAULT,
-        long: this.LONGITUDE_DEFAULT,
+        lat: instructor?.baseLocation?.latitude || 53.0168046,
+        long: instructor?.baseLocation?.longitude || -2.2190649,
       };
 
       logger.info(

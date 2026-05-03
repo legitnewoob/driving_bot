@@ -1,5 +1,6 @@
 const config = require("./src/config/env");
 const logEnvironment = require("./src/utils/envLogger");
+const { startTokenRefreshSchedule } = require("./src/utils/refreshWhatsappToken");
 
 const app = require('./app');
 
@@ -11,8 +12,10 @@ app.listen(PORT, () => {
     console.log(`🌐 Root URL: http://localhost:${PORT}/`);
     console.log(`🛠️ Health Check URL: http://localhost:${PORT}/api/status/health`);
     console.log(`🔗 Webhook URL: http://localhost:${PORT}/webhook`);
-    console.log(`📅 Google Auth URL: http://localhost:${PORT}/auth/google`);
+    console.log(`📅 Google Auth URL: http://localhost:${PORT}/auth/google?phone=YOUR_PHONE`);
     console.log(`✨ Enhanced with automatic availability checking!`);
     logEnvironment(config.env || "development");
 
+    // Refresh WhatsApp token on startup and every 7 days
+    startTokenRefreshSchedule();
 });

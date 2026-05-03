@@ -19,6 +19,18 @@ const fs = require("fs");
 
 const PROJECT_ROOT = path.join(__dirname, "..", "..", "..");
 
+// ── Load env vars ────────────────────────────────────────────────────────
+// Jest reporters run in the MAIN Jest process — NOT the test sandbox where
+// tests/e2e/setup.js runs. So we need to load envs/.env.test here too,
+// otherwise NOTIFY_EMAIL_USER / NOTIFY_EMAIL_PASS won't be available.
+if (!process.env.NODE_ENV) process.env.NODE_ENV = "test";
+if (!process.env.LOAD_ENV) process.env.LOAD_ENV = "test";
+try {
+  require(path.join(PROJECT_ROOT, "src", "config", "env"));
+} catch (_) {
+  // env config is optional — reporter still works for the local HTML file
+}
+
 class EmailReporter {
   constructor(globalConfig, reporterOptions = {}) {
     this._globalConfig = globalConfig;
@@ -52,7 +64,9 @@ class EmailReporter {
       // Lazy-require so the reporter still works when nodemailer isn't installed
       const { sendNotification } = require("../../../src/utils/emailNotifier");
 
-      const status = results.success ? "✅ PASS" : "❌ FAIL";
+      const passed = (results.numFailedTests || 0) === 0
+        && (results.numFailedTestSuites || 0) === 0;
+      const status = passed ? "✅ PASS" : "❌ FAIL";
       const subject =
         `${status} E2E Report — ${results.numPassedTests}/${results.numTotalTests} passed` +
         (results.numFailedTests ? ` (${results.numFailedTests} failed)` : "");
@@ -87,8 +101,12 @@ function buildHtmlReport(results, startTime) {
     skipped: results.numPendingTests + results.numTodoTests,
   };
 
-  const overallStatus = results.success ? "PASS" : "FAIL";
-  const statusColor = results.success ? "#10b981" : "#ef4444";
+  // results.success can be flaky (false positives from open handles, etc).
+  // Trust the actual counts instead.
+  const passed = (results.numFailedTests || 0) === 0
+    && (results.numFailedTestSuites || 0) === 0;
+  const overallStatus = passed ? "PASS" : "FAIL";
+  const statusColor = passed ? "#10b981" : "#ef4444";
 
   // Build per-suite sections
   const suitesHtml = (results.testResults || [])

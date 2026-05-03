@@ -204,8 +204,10 @@ describe("buildDateTimes", () => {
   it("handles midnight crossing", () => {
     const { startDateTime, endDateTime } = calendarService.buildDateTimes("2025-07-15", "23:30");
 
-    expect(endDateTime.getHours()).toBe(0);
-    expect(endDateTime.getMinutes()).toBe(30);
+    // Use timezoneUtils to extract hours/minutes in the configured timezone
+    // (avoids system-timezone dependency that breaks on CI vs local)
+    const endTime = timezoneUtils.formatDate(endDateTime, "HH:mm");
+    expect(endTime).toBe("00:30");
   });
 });
 

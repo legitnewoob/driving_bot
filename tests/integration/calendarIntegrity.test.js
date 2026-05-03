@@ -104,13 +104,10 @@ describe("Timezone Correctness", () => {
     );
 
     const resource = calendar.events.insert.mock.calls[0][0].resource;
-    const startDt = new Date(resource.start.dateTime);
 
-    // The event should represent 10:00 in the configured timezone
-    // Build the expected time in the same timezone
-    const expected = timezoneUtils.createDateInTimezone("2025-07-15", "10:00");
-
-    expect(startDt.getTime()).toBe(expected.getTime());
+    // The dateTime string should contain the exact local time requested
+    expect(resource.start.dateTime).toContain("2025-07-15T10:00:00");
+    expect(resource.start.timeZone).toBe(timezoneUtils.timezone);
   });
 
   it("event duration is exactly 1 hour", async () => {
@@ -122,10 +119,10 @@ describe("Timezone Correctness", () => {
     );
 
     const resource = calendar.events.insert.mock.calls[0][0].resource;
-    const start = new Date(resource.start.dateTime);
-    const end = new Date(resource.end.dateTime);
 
-    expect(end.getTime() - start.getTime()).toBe(60 * 60 * 1000);
+    // Start at 14:00, end at 15:00 — exactly 1 hour
+    expect(resource.start.dateTime).toContain("2025-07-15T14:00:00");
+    expect(resource.end.dateTime).toContain("2025-07-15T15:00:00");
   });
 
   it("timezone string is set correctly on the event", async () => {
@@ -153,10 +150,12 @@ describe("Timezone Correctness", () => {
     );
 
     const resource = calendar.events.update.mock.calls[0][0].resource;
-    const startDt = new Date(resource.start.dateTime);
-    const expected = timezoneUtils.createDateInTimezone("2025-07-16", "15:00");
 
-    expect(startDt.getTime()).toBe(expected.getTime());
+    // updateEvent uses .toISOString() so the dateTime is in UTC
+    // Build the expected UTC ISO string from the same timezone logic
+    const expectedISO = timezoneUtils.createDateInTimezone("2025-07-16", "15:00").toISOString();
+    expect(resource.start.dateTime).toBe(expectedISO);
+    expect(resource.start.timeZone).toBe(timezoneUtils.timezone);
   });
 });
 
@@ -174,10 +173,9 @@ describe("Correct Date Placement", () => {
     );
 
     const resource = calendar.events.insert.mock.calls[0][0].resource;
-    const startDt = new Date(resource.start.dateTime);
-    const dateStr = timezoneUtils.formatDate(startDt, "YYYY-MM-DD");
 
-    expect(dateStr).toBe("2025-08-20");
+    // Compare the datetime string directly — avoids system-timezone parsing issues
+    expect(resource.start.dateTime).toContain("2025-08-20T11:00:00");
   });
 
   it("month boundary dates are handled correctly (July 31 → not Aug 1)", async () => {
@@ -189,10 +187,8 @@ describe("Correct Date Placement", () => {
     );
 
     const resource = calendar.events.insert.mock.calls[0][0].resource;
-    const startDt = new Date(resource.start.dateTime);
-    const dateStr = timezoneUtils.formatDate(startDt, "YYYY-MM-DD");
 
-    expect(dateStr).toBe("2025-07-31");
+    expect(resource.start.dateTime).toContain("2025-07-31T16:00:00");
   });
 });
 

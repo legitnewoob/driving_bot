@@ -10,8 +10,9 @@
     "test:unit": "jest --verbose tests/unit",
     "test:integration": "jest --verbose tests/integration",
     "test:route": "jest --verbose tests/integration/routeOptimizer",
-    "test:coverage": "jest --coverage --collectCoverageFrom=\"src/**/*.js\"",
-    "test:e2e": "jest --verbose --selectProjects e2e"
+    "test:coverage": "jest --coverage --collectCoverageFrom=\"src/**/*.js\" --testPathIgnorePatterns=tests/e2e",
+    "test:e2e": "jest --verbose --selectProjects e2e",
+    "test:e2e:one": "jest --verbose --config jest.config.e2e.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",

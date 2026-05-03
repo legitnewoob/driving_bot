@@ -39,15 +39,14 @@ jest.mock("../../src/utils/chatLogger", () => jest.fn(() => ({ info: jest.fn() }
 const {
   sendMessage,
   setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const SINGLE_MSG_LIMIT_MS = 15000; // 15s max (includes date extraction + Gemini)
 const AVG_LIMIT_MS = 12000;        // 12s average
 const TIMEOUT = 20000;
 
-const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
-
-describeE2E("E2E – Response Time (Real Pipeline)", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Response Time (Real Pipeline)", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });

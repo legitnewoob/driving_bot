@@ -18,18 +18,9 @@
  */
 
 // Load env before anything else
-const { TEST_INSTRUCTOR, connectTestDB, disconnectTestDB, cleanupTestDB } = require("./helpers");
+const { TEST_INSTRUCTOR, connectTestDB, disconnectTestDB, cleanupTestDB, describeE2E, E2E_KEYS } = require("./helpers");
 
 const TIMEOUT = 15000;
-
-// Skip if no real Calendar credentials
-const hasCalendarCreds =
-  process.env.GOOGLE_REFRESH_TOKEN &&
-  process.env.GOOGLE_CALENDAR_ID &&
-  process.env.GOOGLE_CLIENT_ID &&
-  process.env.GOOGLE_CLIENT_SECRET;
-
-const describeE2E = hasCalendarCreds ? describe : describe.skip;
 
 // Real calendarService — no mocks
 const calendarService = require("../../src/services/calendarService");
@@ -48,7 +39,7 @@ function getFutureWeekday(daysAhead = 30) {
 // Track created event IDs for cleanup
 const createdEventIds = [];
 
-describeE2E("E2E – Calendar Service (Real Google Calendar API)", () => {
+describeE2E(E2E_KEYS.CALENDAR, "E2E – Calendar Service (Real Google Calendar API)", () => {
   beforeAll(async () => { await connectTestDB(); }, 30000);
   afterAll(async () => {
     // Cleanup: delete all events created during tests

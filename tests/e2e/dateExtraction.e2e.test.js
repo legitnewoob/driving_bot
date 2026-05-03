@@ -43,16 +43,16 @@ const {
   sendMessage,
   setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
   getTestPendingContext,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const TIMEOUT = 30000;
-const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Time Format – Pending Context Captures 24h Time
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Time Format Extraction", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Time Format Extraction", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -105,7 +105,7 @@ describeE2E("E2E – Time Format Extraction", () => {
 // 2. Date Format – YYYY-MM-DD in Pending Context
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Date Format Extraction", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Date Format Extraction", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -172,7 +172,7 @@ describeE2E("E2E – Date Format Extraction", () => {
 // 3. Colloquial Date/Time References
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Colloquial Date/Time References", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Colloquial Date/Time References", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -247,7 +247,7 @@ describeE2E("E2E – Colloquial Date/Time References", () => {
 // 4. Invalid Time Handling (real validation via aiService)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Invalid Time Handling", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Invalid Time Handling", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });

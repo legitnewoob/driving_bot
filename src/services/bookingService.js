@@ -8,6 +8,7 @@ const Booking = require("../models/bookingModel");
 const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
 const logger = require("../utils/logger-advanced");
+const { getCoordinatesFromPostalCode } = require("./mapsService");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
@@ -72,10 +73,8 @@ class BookingService {
     }
   }
 
-  async validateBooking(bookingData) {
+  async validateBooking(bookingData, instructor) {
     const availableDates = getAvailableDates();
-    const instructorId = process.env.PHONE_NUMBER_ID;
-    const instructor = getInstructor(instructorId);
 
     const errors = [];
 
@@ -112,7 +111,7 @@ class BookingService {
     if (errors.length === 0) {
       const events = await calendarService.getEventsForDate(
         bookingData.date,
-        instructorId
+        instructor
       );
 
       const availability = calendarService.checkSlotAgainstEvents(
@@ -163,12 +162,16 @@ class BookingService {
     const user = await User.findOne({ phone: from });
     if (!user) throw new Error("User not found");
 
+    // Step 2b: Resolve instructor from the booking's stored instructorId
+    const instructor = await getInstructor(booking.instructorId);
+    if (!instructor) throw new Error("Instructor not found for this booking");
+
     // Step 3: Validate slot availability
     const validationErrors = await this.validateBooking({
       ...booking.toObject(),
       date: newDate,
       time: newTime,
-    });
+    }, instructor);
     if (validationErrors.length > 0)
       throw new Error(validationErrors.join(". "));
 
@@ -176,7 +179,7 @@ class BookingService {
     await calendarService.updateEvent(
       booking.calendarEventId,
       bookingData,
-      from
+      instructor
     );
 
     // Step 5: Update Google Sheets
@@ -201,7 +204,28 @@ class BookingService {
       // Continue even if Sheets update fails
     }
 
-    // Step 6: Update Mongo booking fields
+    // Step 6: Geocode new pickup/drop-off if provided
+    if (bookingData.pickupAddress) {
+      try {
+        const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
+        booking.pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+      } catch (err) {
+        logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
+        booking.pickupLocation = { address: bookingData.pickupAddress };
+      }
+    }
+
+    if (bookingData.dropoffAddress) {
+      try {
+        const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
+        booking.dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+      } catch (err) {
+        logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
+        booking.dropoffLocation = { address: bookingData.dropoffAddress };
+      }
+    }
+
+    // Step 7: Update Mongo booking fields
     booking.date = newDate;
     booking.time = newTime;
     booking.status = "rescheduled";
@@ -221,8 +245,8 @@ class BookingService {
     return booking;
   }
 
-  async createBooking(from, bookingData) {
-    const validationErrors = await this.validateBooking(bookingData);
+  async createBooking(from, bookingData, instructor) {
+    const validationErrors = await this.validateBooking(bookingData, instructor);
     if (validationErrors.length > 0) {
       throw new Error(validationErrors.join(". "));
     }
@@ -244,20 +268,44 @@ class BookingService {
       );
     }
 
-    // ✅ Step 2: Create event in Google Calendar
-    const calendarEvent = await calendarService.createEvent(bookingData);
+    // ✅ Step 2: Geocode pickup & drop-off addresses
+    let pickupLocation = {};
+    let dropoffLocation = {};
 
-    // ✅ Step 3: Generate booking ID
+    if (bookingData.pickupAddress) {
+      try {
+        const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
+        pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+      } catch (err) {
+        logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
+        pickupLocation = { address: bookingData.pickupAddress };
+      }
+    }
+
+    if (bookingData.dropoffAddress) {
+      try {
+        const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
+        dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+      } catch (err) {
+        logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
+        dropoffLocation = { address: bookingData.dropoffAddress };
+      }
+    }
+
+    // ✅ Step 3: Create event in Google Calendar
+    const calendarEvent = await calendarService.createEvent(bookingData, instructor);
+
+    // ✅ Step 4: Generate booking ID
     const nanoid = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4); // no O/0/I/1 confusion
     const bookingId = `DL-${nanoid()}`;
 
-    // ✅ Step 4: Create booking with user location + postal code
+    // ✅ Step 5: Create booking with user location + pickup/drop-off
     const newBooking = await Booking.create({
       bookingId,
       userPhone: bookingData.userPhone,
       date: bookingData.date,
       time: bookingData.time,
-      instructorId: process.env.PHONE_NUMBER_ID,
+      instructorId: instructor.phoneNumberId,
       calendarEventId: calendarEvent.id,
       status: "confirmed",
       postalCode: user.postalCode,
@@ -265,14 +313,14 @@ class BookingService {
         latitude: user.location.latitude,
         longitude: user.location.longitude,
       },
+      pickupLocation,
+      dropoffLocation,
     });
 
-    const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
-
-    // ✅ Step 5: Update Google Sheets
+    // ✅ Step 6: Update Google Sheets
     try {
-      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
-        process.env.PHONE_NUMBER_ID
+      const spreadsheetId = instructor.spreadsheetId || sheetsService.getInstructorSpreadsheetId(
+        instructor.phoneNumberId
       );
       const learnerName = await sheetsService.getLearnerName(
         bookingData.userPhone,
@@ -297,7 +345,6 @@ class BookingService {
     return {
       booking: newBooking,
       calendarEvent,
-      instructor,
       bookingData,
     };
   }

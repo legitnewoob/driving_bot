@@ -1,35 +1,37 @@
 const { oauth2Client, calendar } = require("../config/google");
-const { getInstructor } = require("../models/instructorModel");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 
 class CalendarService {
 
-  async findEarliestAvailableSlot(instructorId) {
+  /**
+   * Set OAuth2 credentials from the instructor's refresh token.
+   * @param {Object} instructor - Instructor record from DB
+   */
+  _setCredentials(instructor) {
+    oauth2Client.setCredentials({
+      refresh_token: instructor.googleRefreshToken,
+    });
+  }
+
+  async findEarliestAvailableSlot(instructor) {
     try {
-      const instructor = getInstructor(instructorId);
       if (!instructor) {
-        throw new Error(`Instructor not found: ${instructorId}`);
+        throw new Error("Instructor object is required");
       }
 
-      // Rule: Start checking from 2 days from now.
-      // Get today's date string and add 2 days to it.
       const today = timezoneUtils.getCurrentDateString();
       let dateToCheck = timezoneUtils.addDays(today, 2);
 
-      // Search for up to 90 days in the future
       for (let i = 0; i < 90; i++) {
-        // For every loop after the first, advance the date by one day.
         if (i > 0) {
           dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
         }
-        // Skip weekends
         if (timezoneUtils.isWeekend(dateToCheck)) {
-          continue; // Skip to the next day
+          continue;
         }
 
-        // Single API call for the whole day, then check slots in-memory
-        const events = await this.getEventsForDate(dateToCheck, instructorId);
+        const events = await this.getEventsForDate(dateToCheck, instructor);
 
         for (const time of instructor.availableTimes) {
           const { isAvailable } = this.checkSlotAgainstEvents(dateToCheck, time, events);
@@ -48,6 +50,7 @@ class CalendarService {
       return null;
     }
   }
+
   /**
    * Build start and end DateTime objects in configured timezone
    */
@@ -58,21 +61,16 @@ class CalendarService {
 
     return { startDateTime, endDateTime };
   }
+
   /**
    * Fetches all calendar events for a given date in a single API call.
    * @param {string} date - "YYYY-MM-DD"
-   * @param {string} instructorId
+   * @param {Object} instructor - Instructor record from DB
    * @returns {object[]} array of calendar event objects
    */
-  async getEventsForDate(date, instructorId) {
-    oauth2Client.setCredentials({
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-    });
+  async getEventsForDate(date, instructor) {
+    this._setCredentials(instructor);
 
-    const instructor = getInstructor(instructorId);
-    if (!instructor) throw new Error(`Instructor not found: ${instructorId}`);
-
-    // Build day boundaries: start of day → start of next day
     const dayStart = timezoneUtils.createDateInTimezone(date, "00:00");
     const dayEnd = timezoneUtils.createDateInTimezone(date, "00:00");
     dayEnd.setDate(dayEnd.getDate() + 1);
@@ -112,15 +110,13 @@ class CalendarService {
     return { isAvailable: conflictingEvents.length === 0, conflictingEvents };
   }
 
-  async checkAvailability(date, time, instructorId) {
+  async checkAvailability(date, time, instructor) {
     try {
-
-      const instructor = getInstructor(instructorId);
       if (!instructor) {
         return { isAvailable: false, error: "Instructor not found" };
       }
 
-      const events = await this.getEventsForDate(date, instructorId);
+      const events = await this.getEventsForDate(date, instructor);
       const result = this.checkSlotAgainstEvents(date, time, events);
 
       return result;
@@ -134,14 +130,10 @@ class CalendarService {
     }
   }
 
-  async getAvailableTimeSlotsForDate(date, instructorId) {
+  async getAvailableTimeSlotsForDate(date, instructor) {
     try {
-      const instructor = getInstructor(instructorId);
+      const events = await this.getEventsForDate(date, instructor);
 
-      // Single API call for the entire day
-      const events = await this.getEventsForDate(date, instructorId);
-
-      // Check each slot against the fetched events in-memory
       const availableSlots = instructor.availableTimes.filter((time) => {
         const { isAvailable } = this.checkSlotAgainstEvents(date, time, events);
         return isAvailable;
@@ -150,18 +142,13 @@ class CalendarService {
       return availableSlots;
     } catch (error) {
       logger.error(`Error getting available time slots: ${error.message}`);
-      const instructor = getInstructor(instructorId);
       return instructor.availableTimes;
     }
   }
 
-  async getCalendarContext(instructorId) {
+  async getCalendarContext(instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
-
-      const instructor = getInstructor(instructorId);
+      this._setCredentials(instructor);
 
       const now = timezoneUtils.getCurrentDate();
       const twoWeeksFromNow = new Date(
@@ -196,13 +183,10 @@ class CalendarService {
     }
   }
 
-  async createEvent(bookingData) {
+  async createEvent(bookingData, instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
+      this._setCredentials(instructor);
 
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.date,
         bookingData.time
@@ -210,7 +194,12 @@ class CalendarService {
 
       const event = {
         summary: `Driving Lesson - ${bookingData.userPhone}`,
-        description: `Driving lesson booking\nPhone: ${bookingData.userPhone}`,
+        description: [
+          `Driving lesson booking`,
+          `Phone: ${bookingData.userPhone}`,
+          bookingData.pickupAddress ? `Pickup: ${bookingData.pickupAddress}` : null,
+          bookingData.dropoffAddress ? `Drop-off: ${bookingData.dropoffAddress}` : null,
+        ].filter(Boolean).join("\n"),
         start: {
           dateTime: timezoneUtils.formatDate(
             startDateTime,
@@ -241,21 +230,22 @@ class CalendarService {
     }
   }
 
-  async updateEvent(eventId, bookingData, fromUser) {
+  async updateEvent(eventId, bookingData, instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
+      this._setCredentials(instructor);
 
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.newDate,
         bookingData.newTime
       );
 
       const event = {
-        summary: `Driving Lesson - ${bookingData.newLessonType} - ${fromUser}`,
-        description: `Driving lesson booking\nPhone: ${fromUser}`,
+        summary: `Driving Lesson - ${bookingData.userPhone || ""}`,
+        description: [
+          `Driving lesson booking`,
+          bookingData.pickupAddress ? `Pickup: ${bookingData.pickupAddress}` : null,
+          bookingData.dropoffAddress ? `Drop-off: ${bookingData.dropoffAddress}` : null,
+        ].filter(Boolean).join("\n"),
         start: {
           dateTime: startDateTime.toISOString(),
           timeZone: timezoneUtils.timezone,
@@ -281,17 +271,13 @@ class CalendarService {
     }
   }
 
-  async deleteEvent(eventId) {
+  async deleteEvent(eventId, instructor) {
     try {
       if (!eventId) {
         throw new Error("Event ID is required for deletion");
       }
 
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
-
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
+      this._setCredentials(instructor);
 
       await calendar.events.delete({
         calendarId: instructor.googleCalendarId,

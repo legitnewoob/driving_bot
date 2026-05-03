@@ -1,11 +1,12 @@
 const User = require("../models/userModel");
 const whatsappService = require("../services/whatsappService");
 const mapsService = require("../services/mapsService");
+const logger = require("../utils/logger-advanced");
 
 const steps = ["name", "age", "dob", "postalCode"];
 
 // sendFn defaults to real WhatsApp — in mock mode, pass this._send.bind(this)
-async function ensureUserDetails(from, messageContent, sendFn = null) {
+async function ensureUserDetails(from, messageContent, sendFn = null, instructorId = null) {
   const send = sendFn || ((to, text) => whatsappService.sendTextMessage(to, text));
 
   // Handle data deletion request
@@ -19,7 +20,7 @@ async function ensureUserDetails(from, messageContent, sendFn = null) {
 
   // If new user → start flow
   if (!user) {
-    user = new User({ phone: from, currentStep: steps[0] });
+    user = new User({ phone: from, instructorId: instructorId, currentStep: steps[0] });
     await user.save();
     await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
     return { inProgress: true };
@@ -46,7 +47,7 @@ async function ensureUserDetails(from, messageContent, sendFn = null) {
         user.location = { latitude: lat, longitude: lng };
         await send(from, message);
       } catch (err) {
-        console.error("❌ Error getting coordinates:", err.message);
+        logger.error(`Error getting coordinates: ${err.message}`);
         await send(from, "⚠️ Couldn't fetch your location from the postal code.");
       }
 

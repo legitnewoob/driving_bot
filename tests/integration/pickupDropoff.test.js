@@ -10,24 +10,24 @@
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
-jest.mock("../src/models/bookingModel");
-jest.mock("../src/models/userModel");
-jest.mock("../src/services/calendarService", () => ({
+jest.mock("../../src/models/bookingModel");
+jest.mock("../../src/models/userModel");
+jest.mock("../../src/services/calendarService", () => ({
   createEvent: jest.fn(),
   updateEvent: jest.fn(),
   getEventsForDate: jest.fn(),
   checkSlotAgainstEvents: jest.fn(),
 }));
-jest.mock("../src/services/sheetsService", () => ({
+jest.mock("../../src/services/sheetsService", () => ({
   getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
   getLearnerName: jest.fn().mockResolvedValue("Test User"),
   updateLearnerRecord: jest.fn().mockResolvedValue({}),
 }));
-jest.mock("../src/services/mapsService", () => ({
+jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn(),
   getGoogleMapsLink: jest.fn(),
 }));
-jest.mock("../src/models/instructorModel", () => ({
+jest.mock("../../src/models/instructorModel", () => ({
   getAvailableDates: jest.fn().mockReturnValue(["2025-06-20"]),
   getInstructor: jest.fn().mockResolvedValue({
     phoneNumberId: "inst-1",
@@ -44,18 +44,18 @@ jest.mock("../src/models/instructorModel", () => ({
     active: true,
   }),
 }));
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
 
-const Booking = require("../src/models/bookingModel");
-const User = require("../src/models/userModel");
-const calendarService = require("../src/services/calendarService");
-const { getCoordinatesFromPostalCode } = require("../src/services/mapsService");
-const logger = require("../src/utils/logger-advanced");
-const bookingService = require("../src/services/bookingService");
+const Booking = require("../../src/models/bookingModel");
+const User = require("../../src/models/userModel");
+const calendarService = require("../../src/services/calendarService");
+const { getCoordinatesFromPostalCode } = require("../../src/services/mapsService");
+const logger = require("../../src/utils/logger-advanced");
+const bookingService = require("../../src/services/bookingService");
 
 // extractActions is on the aiService singleton – require after mocks
 // We only need it for parsing tests, no Gemini calls involved
@@ -73,7 +73,7 @@ jest.mock("fs", () => {
     readFileSync: jest.fn().mockReturnValue("mock system prompt"),
   };
 });
-const aiService = require("../src/services/gemini/aiService");
+const aiService = require("../../src/services/gemini/aiService");
 
 // ── Test Data ──────────────────────────────────────────────────────────
 

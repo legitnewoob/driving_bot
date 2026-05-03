@@ -9,26 +9,26 @@
  */
 
 jest.mock("axios");
-jest.mock("../src/utils/logger-advanced", () => ({
+jest.mock("../../src/utils/logger-advanced", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
 }));
-jest.mock("../src/models/instructorSchema");
-jest.mock("../src/models/instructorModel", () => ({
+jest.mock("../../src/models/instructorSchema");
+jest.mock("../../src/models/instructorModel", () => ({
   invalidateInstructorCache: jest.fn(),
 }));
 
 const axios = require("axios");
-const logger = require("../src/utils/logger-advanced");
-const Instructor = require("../src/models/instructorSchema");
-const { invalidateInstructorCache } = require("../src/models/instructorModel");
+const logger = require("../../src/utils/logger-advanced");
+const Instructor = require("../../src/models/instructorSchema");
+const { invalidateInstructorCache } = require("../../src/models/instructorModel");
 const {
   exchangeForLongLivedToken,
   refreshAndUpdateAll,
   startTokenRefreshSchedule,
   stopTokenRefreshSchedule,
-} = require("../src/utils/refreshWhatsappToken");
+} = require("../../src/utils/refreshWhatsappToken");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Setup / Teardown

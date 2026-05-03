@@ -73,22 +73,43 @@ class WebhookController {
       return;
     }
 
+    const now = timezoneUtils.getCurrentDate();
+
     const sortedBookings = bookings.sort(
       (a, b) => timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
     );
 
-    const nowStr = timezoneUtils.getCurrentDateString();
-    const now = timezoneUtils.getCurrentDate();
+    const pastBookings = sortedBookings.filter(booking => {
+      const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
+      const isToday = timezoneUtils.isToday(dateStr);
+      return !isToday && timezoneUtils.toTimezone(booking.date) < now;
+    });
+
+    const upcomingBookings = sortedBookings.filter(booking => {
+      const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
+      const isToday = timezoneUtils.isToday(dateStr);
+      return isToday || timezoneUtils.toTimezone(booking.date) >= now;
+    });
 
     let message = `*📆 YOUR BOOKINGS* (${sortedBookings.length})\n`;
     message += "━━━━━━━━━━━━━━━━━\n\n";
 
-    sortedBookings.forEach((booking, index) => {
+    // Past bookings summary
+    if (pastBookings.length > 0) {
+      const lastCompleted = pastBookings[pastBookings.length - 1];
+      const lastDate = timezoneUtils.formatDate(lastCompleted.date, "ddd, MMM D");
+      message += `✅ *${pastBookings.length} Completed Booking${pastBookings.length > 1 ? "s" : ""}*\n`;
+      message += `🕓 Last: ${lastDate}\n`;
+      if (upcomingBookings.length > 0) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
+      message += "\n";
+    }
+
+    // Upcoming bookings
+    upcomingBookings.forEach((booking, index) => {
       const bookingId = booking.bookingId;
       const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
       const isToday = timezoneUtils.isToday(dateStr);
       const isTomorrow = timezoneUtils.isTomorrow(dateStr);
-      const isPast = timezoneUtils.toTimezone(booking.date) < now && !isToday;
 
       let dateDisplay;
       if (isToday) {
@@ -97,11 +118,11 @@ class WebhookController {
         dateDisplay = "⭐ *TOMORROW*";
       } else {
         const formattedDate = timezoneUtils.formatDate(booking.date, "ddd, MMM D");
-        dateDisplay = isPast ? `✅ ${formattedDate}` : `📅 ${formattedDate}`;
+        dateDisplay = `📅 ${formattedDate}`;
       }
 
-      let statusIcon = isPast ? "✅" : isToday ? "🔥" : "📌";
-      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1}*\n`;
+      const statusIcon = isToday ? "🔥" : "📌";
+      message += `${statusIcon} *Booking #${index + 1}*\n`;
       message += `🆔 ${bookingId}\n`;
       message += `${dateDisplay}\n`;
       message += `⏰ ${booking.time}\n`;
@@ -117,13 +138,13 @@ class WebhookController {
         message += `${statusEmoji} Status: ${booking.status}\n`;
       }
       if (booking.notes) message += `📝 ${booking.notes}\n`;
-      if (index < sortedBookings.length - 1) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
+      if (index < upcomingBookings.length - 1) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
       message += "\n";
     });
 
-    const upcomingCount = sortedBookings.filter(
-      (b) => timezoneUtils.toTimezone(b.date) >= now &&
-        (b.status === "confirmed" || b.status === "rescheduled")
+    // Footer
+    const upcomingCount = upcomingBookings.filter(
+      b => b.status === "confirmed" || b.status === "rescheduled"
     ).length;
 
     if (upcomingCount > 0) {

@@ -1,34 +1,44 @@
 /**
- * Tonality – E2E Tests (Real Gemini)
- * ────────────────────────────────────
- * Verifies that the real Gemini model responds with the right tone:
+ * Tonality – E2E Tests (Real Pipeline)
+ * ──────────────────────────────────────
+ * Tests through the REAL application pipeline (handleIncomingMessage):
  *  1. Friendly greeting — bot is warm and welcoming
  *  2. Professional when user is frustrated
  *  3. Stays on topic — redirects off-topic questions
- *  4. Uses present continuous tense for actions
- *  5. Never exposes system info or action blocks in natural language
- *  6. Suggests alternatives when slot is unavailable
+ *  4. Never exposes system info or action blocks in replies
+ *  5. Asks for missing info on incomplete requests
+ *  6. Multi-turn: remembers context via sessions
  *
- * Requires: GOOGLE_AI_API_KEY env var
- * Run:      npm run test:e2e
+ * Env:  Loaded via helpers.js → envs/.env.test
+ * Run:  npm run test:e2e
  */
 
-require("dotenv").config();
-const { askGemini, extractAction } = require("./helpers");
+const { E2E_MOCKS } = require("./helpers");
+jest.mock("../../src/services/calendarService", E2E_MOCKS.calendarService);
+jest.mock("../../src/services/sheetsService", E2E_MOCKS.sheetsService);
+jest.mock("../../src/services/whatsappService", E2E_MOCKS.whatsappService);
+jest.mock("../../src/utils/chatLogger", E2E_MOCKS.chatLogger);
+
+const {
+  sendMessage,
+  setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
+  getTestSession,
+} = require("./helpers");
 
 const TIMEOUT = 30000;
-
 const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
-describeE2E("E2E – Tonality (Real Gemini)", () => {
+describeE2E("E2E – Tonality (Real Pipeline)", () => {
+  beforeAll(async () => { await setupE2ESuite(); }, 30000);
+  afterEach(() => { cleanupE2ETest(); });
+  afterAll(async () => { await teardownE2ESuite(); });
+
   it(
     "responds with a friendly greeting",
     async () => {
-      const response = await askGemini("Hello!");
-      const { responseText } = extractAction(response);
-      const lower = responseText.toLowerCase();
+      const { raw } = await sendMessage("Hello!");
+      const lower = raw.toLowerCase();
 
-      // Should be warm — contain at least one friendly indicator
       const friendlyWords = ["hello", "hi", "welcome", "help", "happy", "glad", "hey"];
       const isFriendly = friendlyWords.some((w) => lower.includes(w));
       expect(isFriendly).toBe(true);
@@ -39,18 +49,15 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
   it(
     "stays professional when user is frustrated",
     async () => {
-      const response = await askGemini(
+      const { raw } = await sendMessage(
         "This is so annoying, I've been trying to book for ages and nothing works!"
       );
-      const { responseText } = extractAction(response);
-      const lower = responseText.toLowerCase();
+      const lower = raw.toLowerCase();
 
-      // Should apologize or empathize, not mirror frustration
       const professionalWords = ["sorry", "apologize", "understand", "help", "assist", "let me"];
       const isProfessional = professionalWords.some((w) => lower.includes(w));
       expect(isProfessional).toBe(true);
 
-      // Should NOT be rude back
       expect(lower).not.toContain("annoying");
       expect(lower).not.toContain("your fault");
     },
@@ -60,13 +67,9 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
   it(
     "redirects off-topic questions back to driving lessons",
     async () => {
-      const response = await askGemini("What's the weather like tomorrow?");
-      const { actionType, responseText } = extractAction(response);
+      const { raw } = await sendMessage("What's the weather like tomorrow?");
+      const lower = raw.toLowerCase();
 
-      expect(actionType).toBe("NULL");
-
-      const lower = responseText.toLowerCase();
-      // Should redirect to driving lessons
       expect(
         lower.includes("lesson") ||
         lower.includes("driving") ||
@@ -78,27 +81,14 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
   );
 
   it(
-    "does not expose [SYSTEM AVAILABILITY INFO] or [ACTION:] in natural language",
+    "does not expose [SYSTEM ...] or [ACTION:] in user-facing replies",
     async () => {
-      const response = await askGemini("Book a lesson for tomorrow at 10am");
-      const { responseText } = extractAction(response);
+      const { raw } = await sendMessage("Book a lesson for tomorrow at 10am");
 
-      // After action extraction, the user-facing text should be clean
-      expect(responseText).not.toContain("[ACTION:");
-      expect(responseText).not.toContain("[SYSTEM AVAILABILITY INFO");
-      expect(responseText).not.toContain("[SYSTEM:");
-    },
-    TIMEOUT
-  );
-
-  it(
-    "always ends response with an action block",
-    async () => {
-      const response = await askGemini("Can I get a lesson next week?");
-      const { actionType } = extractAction(response);
-
-      // Should have some action type (even if NULL)
-      expect(actionType).not.toBeNull();
+      // The reply sent back to user should be clean
+      expect(raw).not.toContain("[ACTION:");
+      expect(raw).not.toContain("[SYSTEM AVAILABILITY INFO");
+      expect(raw).not.toContain("[SYSTEM:");
     },
     TIMEOUT
   );
@@ -106,13 +96,12 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
   it(
     "asks for missing info when user gives incomplete booking details",
     async () => {
-      const response = await askGemini("I want to book a lesson");
-      const { actionType, responseText } = extractAction(response);
+      const { raw } = await sendMessage("I want to book a lesson");
+      const lower = raw.toLowerCase();
 
-      // Should NOT book — missing date, time, addresses
-      expect(actionType).toBe("NULL");
+      // Should NOT have booked
+      expect(raw).not.toContain("Booking Confirmed");
 
-      const lower = responseText.toLowerCase();
       // Should ask for more details
       expect(
         lower.includes("date") ||
@@ -125,20 +114,20 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
   );
 
   it(
-    "multi-turn: remembers context from previous messages",
+    "multi-turn: remembers context via session across messages",
     async () => {
-      const history = [
-        { role: "user", content: "I want to book a lesson" },
-        { role: "assistant", content: "Sure! What date works best for you?" },
-      ];
+      // Turn 1: vague booking intent
+      await sendMessage("I want to book a lesson");
 
-      const response = await askGemini("How about next Friday at 10am?", {
-        conversationHistory: history,
-      });
-      const { responseText } = extractAction(response);
-      const lower = responseText.toLowerCase();
+      // Session should have history
+      const session = getTestSession();
+      expect(session.conversationHistory.length).toBeGreaterThan(0);
 
-      // Should reference the booking details (friday, 10)
+      // Turn 2: provide date+time — session carries context
+      const { raw } = await sendMessage("How about next Friday at 10am?");
+      const lower = raw.toLowerCase();
+
+      // Should reference the booking details
       expect(
         lower.includes("friday") ||
         lower.includes("10") ||
@@ -146,6 +135,6 @@ describeE2E("E2E – Tonality (Real Gemini)", () => {
         lower.includes("address")
       ).toBe(true);
     },
-    TIMEOUT
+    60000 // 2 Gemini calls
   );
 });

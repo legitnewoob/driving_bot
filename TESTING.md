@@ -101,16 +101,67 @@ Then open [http://localhost:9090](http://localhost:9090)
 | Functions | >80% | ~65% |
 | Lines | >80% | ~60% |
 
-## E2E Tests (Real Gemini API)
+## E2E Tests (Real Pipeline)
 
-E2E tests call the **real Gemini API** — they are excluded from `npm test` and CI.
+E2E tests exercise the **real application pipeline** through `webhookController.handleIncomingMessage` — they are excluded from `npm test` and CI.
+
+### What runs real vs mocked
+
+| Real | Mocked |
+|------|--------|
+| Gemini AI (`@google/generative-ai`) | Calendar API (`calendarService`) |
+| MongoDB (test database) | Google Sheets (`sheetsService`) |
+| Sessions (`getUserSession/updateUserSession`) | WhatsApp sends (captured via mock callback) |
+| Pending context (`aiService.pendingContext`) | File chat logger (`chatLogger`) |
+| Date/time extraction (`dateTimeService`) | |
+| Geocoding (`mapsService`) | |
+| DB chat logging (`dbChatLogger`) | |
 
 ### Setup
 
-Make sure your `.env` file has:
-```
-GOOGLE_AI_API_KEY=your-actual-api-key
-GOOGLE_MAPS_API_KEY=your-actual-maps-key
+1. **Create `envs/.env.test`** — copy `envs/.env.example` and fill in real keys:
+   ```
+   NODE_ENV=development
+   LOAD_ENV=test
+   MONGO_URI=mongodb+srv://.../<test_db_name>?retryWrites=true&w=majority
+   DB_NAME=driving_school_test
+   GOOGLE_AI_API_KEY=your-actual-api-key
+   GOOGLE_MAPS_API_KEY=your-actual-maps-key
+   APP_TIMEZONE=Asia/Kolkata
+   ```
+   > **Important:** Use a **separate test database** (`DB_NAME=driving_school_test`) — all collections are wiped between tests.
+
+2. Env is loaded automatically via `helpers.js` → `src/config/env.js` with `LOAD_ENV=test`.
+
+### How it works
+
+- **Entry point**: `sendMessage(msg)` calls `webhookController.handleIncomingMessage` with `isMock=true` and captures all replies via a callback
+- **Sessions**: Real in-memory sessions accumulate conversation history across `sendMessage()` calls within the same test. Cleared between tests via `cleanupE2ETest()`
+- **Pending context**: `aiService.pendingContext` accumulates date/time across turns automatically via `dateTimeService` — no manual context injection needed
+- **DB seeding**: `setupE2ESuite()` seeds a test instructor + test user in the DB so the pipeline can resolve them
+- **Mocking**: Each test file calls `jest.mock()` at the top using factories from `E2E_MOCKS` (calendar, sheets, whatsapp, chatLogger)
+
+### Test file pattern
+
+```js
+const { E2E_MOCKS } = require("./helpers");
+jest.mock("../../src/services/calendarService", E2E_MOCKS.calendarService);
+jest.mock("../../src/services/sheetsService", E2E_MOCKS.sheetsService);
+jest.mock("../../src/services/whatsappService", E2E_MOCKS.whatsappService);
+jest.mock("../../src/utils/chatLogger", E2E_MOCKS.chatLogger);
+
+const { sendMessage, setupE2ESuite, cleanupE2ETest, teardownE2ESuite } = require("./helpers");
+
+describe("E2E – My Test", () => {
+  beforeAll(async () => { await setupE2ESuite(); }, 30000);
+  afterEach(() => { cleanupE2ETest(); });
+  afterAll(async () => { await teardownE2ESuite(); });
+
+  it("does something", async () => {
+    const { raw, replies } = await sendMessage("Hello!");
+    expect(raw).toContain("help");
+  }, 30000);
+});
 ```
 
 ### Run
@@ -123,16 +174,16 @@ npm run test:e2e
 
 | Suite | What it verifies |
 |-------|------------------|
-| `vulgarMessages.e2e` | Gemini deflects vulgar/dodgy messages, rejects prompt injection |
-| `tonality.e2e` | Friendly tone, professional responses, stays on topic |
-| `bookingFlow.e2e` | Correct ACTION tags, date/time extraction, 24h format |
-| `fullBookingFlow.e2e` | Multi-turn booking, cancel, reschedule, show bookings, dynamic dropoff, weekend/past rejection |
-| `conversationStress.e2e` | Long messages, emojis, typos, contradictions, topic switching, long context |
-| `dateExtraction.e2e` | 12h→24h conversion, YYYY-MM-DD format, day-of-week, colloquial times, invalid hours |
-| `geocoding.e2e` | Real postcode → lat/lng, UK bounds, nearby/far validation |
-| `userDetails.e2e` | User onboarding flow, postcode geocoding, link generation |
-| `responseTime.e2e` | Real API latency (< 10s per call, < 8s average) |
-| `routeOptimizer.e2e` | Real Distance Matrix durations, multi-user slot ranking |
+| `bookingFlow.e2e` | Multi-turn booking, session + pending context, show/cancel/ASAP |
+| `fullBookingFlow.e2e` | Complete flows: booking, cancel, reschedule, show, weekend/past rejection, edge cases |
+| `conversationStress.e2e` | Long messages, emojis, typos, contradictions, topic switching, long context via sessions |
+| `dateExtraction.e2e` | 12h→24h via dateTimeService, YYYY-MM-DD in pendingContext, colloquial times, invalid hours |
+| `vulgarMessages.e2e` | Deflects vulgar messages, rejects prompt injection/system prompt extraction |
+| `tonality.e2e` | Friendly tone, professional responses, stays on topic, multi-turn context |
+| `responseTime.e2e` | Full pipeline latency (< 15s per call, < 12s average) |
+| `geocoding.e2e` | Real postcode → lat/lng, UK bounds (isolated service test) |
+| `userDetails.e2e` | Postcode geocoding, link generation (isolated service test) |
+| `routeOptimizer.e2e` | Real Distance Matrix durations, multi-user slot ranking (isolated service test) |
 
 ### Notes
 

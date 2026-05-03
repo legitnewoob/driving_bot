@@ -15,19 +15,21 @@
  * Run:      npm run test:e2e
  */
 
-require("dotenv").config();
+const {
+  connectTestDB, disconnectTestDB, cleanupTestDB,
+} = require("./helpers");
 
 const TIMEOUT = 15000;
 
 const describeE2E = process.env.GOOGLE_MAPS_API_KEY ? describe : describe.skip;
 
-// We'll use the real mapsService (real API calls)
+// Real module — no mocks (tests geocoding directly)
 const mapsService = require("../../src/services/mapsService");
 
 describeE2E("E2E – User Details Collection", () => {
-  // Simulate the step-by-step collection flow manually
-  // (we can't easily run ensureUserDetails without MongoDB,
-  //  so we test the critical external call: geocoding on postal code)
+  beforeAll(async () => { await connectTestDB(); }, 30000);
+  afterEach(async () => { await cleanupTestDB(); });
+  afterAll(async () => { await disconnectTestDB(); });
 
   const steps = ["name", "age", "dob", "postalCode"];
 

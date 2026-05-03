@@ -1,30 +1,44 @@
 /**
- * Response Time – E2E Tests (Real Gemini)
- * ─────────────────────────────────────────
- * Measures actual Gemini API response latency:
- *  1. Single message latency (< 10s)
+ * Response Time – E2E Tests (Real Pipeline)
+ * ───────────────────────────────────────────
+ * Measures full pipeline latency through handleIncomingMessage:
+ *   instructor resolution → user details → date extraction → Gemini → action dispatch
+ *
+ *  1. Single message latency (< 15s — includes date extraction + Gemini)
  *  2. Average latency across multiple messages
  *  3. Consistency — no single response takes excessively long
  *
- * Requires: GOOGLE_AI_API_KEY env var
- * Run:      npm run test:e2e
+ * Env:  Loaded via helpers.js → envs/.env.test
+ * Run:  npm run test:e2e
  */
 
-require("dotenv").config();
-const { askGemini } = require("./helpers");
+const { E2E_MOCKS } = require("./helpers");
+jest.mock("../../src/services/calendarService", E2E_MOCKS.calendarService);
+jest.mock("../../src/services/sheetsService", E2E_MOCKS.sheetsService);
+jest.mock("../../src/services/whatsappService", E2E_MOCKS.whatsappService);
+jest.mock("../../src/utils/chatLogger", E2E_MOCKS.chatLogger);
 
-const SINGLE_MSG_LIMIT_MS = 10000; // 10s max for a single Gemini call
-const AVG_LIMIT_MS = 8000;         // 8s average
-const TIMEOUT = 15000;
+const {
+  sendMessage,
+  setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
+} = require("./helpers");
+
+const SINGLE_MSG_LIMIT_MS = 15000; // 15s max (includes date extraction + Gemini)
+const AVG_LIMIT_MS = 12000;        // 12s average
+const TIMEOUT = 20000;
 
 const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
-describeE2E("E2E – Response Time (Real Gemini)", () => {
+describeE2E("E2E – Response Time (Real Pipeline)", () => {
+  beforeAll(async () => { await setupE2ESuite(); }, 30000);
+  afterEach(() => { cleanupE2ETest(); });
+  afterAll(async () => { await teardownE2ESuite(); });
+
   it(
     `greeting responds within ${SINGLE_MSG_LIMIT_MS}ms`,
     async () => {
       const start = Date.now();
-      await askGemini("Hello!");
+      await sendMessage("Hello!");
       const elapsed = Date.now() - start;
 
       console.log(`  ⏱ Greeting: ${elapsed}ms`);
@@ -37,7 +51,7 @@ describeE2E("E2E – Response Time (Real Gemini)", () => {
     `booking request responds within ${SINGLE_MSG_LIMIT_MS}ms`,
     async () => {
       const start = Date.now();
-      await askGemini("I want to book a lesson next Monday at 10am");
+      await sendMessage("I want to book a lesson next Monday at 10am");
       const elapsed = Date.now() - start;
 
       console.log(`  ⏱ Booking request: ${elapsed}ms`);
@@ -50,7 +64,7 @@ describeE2E("E2E – Response Time (Real Gemini)", () => {
     `show bookings responds within ${SINGLE_MSG_LIMIT_MS}ms`,
     async () => {
       const start = Date.now();
-      await askGemini("Show me my bookings");
+      await sendMessage("Show me my bookings");
       const elapsed = Date.now() - start;
 
       console.log(`  ⏱ Show bookings: ${elapsed}ms`);
@@ -73,8 +87,9 @@ describeE2E("E2E – Response Time (Real Gemini)", () => {
       const times = [];
       for (const msg of messages) {
         const start = Date.now();
-        await askGemini(msg);
+        await sendMessage(msg);
         times.push(Date.now() - start);
+        cleanupE2ETest(); // isolate each message
       }
 
       const avg = times.reduce((a, b) => a + b, 0) / times.length;
@@ -83,6 +98,6 @@ describeE2E("E2E – Response Time (Real Gemini)", () => {
 
       expect(avg).toBeLessThan(AVG_LIMIT_MS);
     },
-    60000
+    120000 // 5 API calls
   );
 });

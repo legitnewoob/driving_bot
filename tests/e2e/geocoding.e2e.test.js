@@ -13,7 +13,8 @@
  * Run:      npm run test:e2e
  */
 
-require("dotenv").config();
+// Env loaded via helpers.js → envs/.env.test
+require("./helpers");
 
 const TIMEOUT = 15000;
 

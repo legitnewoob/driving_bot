@@ -1,11 +1,22 @@
 const { google } = require('googleapis');
-const { oauth2Client } = require('../config/google'); // Assuming you have this from calendar service
+const { oauth2Client } = require('../config/google');
 const timezoneUtils = require('../utils/timezoneUtils');
 const logger = require('../utils/logger-advanced');
+const { notifyInvalidGrant } = require('../utils/emailNotifier');
+
+/**
+ * Check if an error is an invalid_grant (expired/revoked refresh token).
+ */
+function isInvalidGrant(error) {
+  const msg = error?.message || '';
+  const code = error?.response?.data?.error || '';
+  return msg.includes('invalid_grant') || code === 'invalid_grant';
+}
 
 class SheetsService {
     constructor() {
         this.sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        this._lastInstructor = null;
     }
 
     async initializeCredentials(refreshToken) {
@@ -43,6 +54,10 @@ class SheetsService {
 
             return { exists: false, nextEmptyRow: rows.length + 1 };
         } catch (error) {
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets findLearnerRow`);
+                notifyInvalidGrant(this._lastInstructor || {}, 'Sheets', error.message);
+            }
             logger.error(`Error finding learner row: ${error.message}`);
             throw error;
         }
@@ -55,13 +70,16 @@ class SheetsService {
      * @param {Object} bookingData - Booking details
      * @param {string} action - 'create', 'update', 'cancel', 'reschedule'
      */
-    async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create') {
+    async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create', instructor = null) {
         try {
             logger.info(`Sheets: ${action} record for ${learnerData.phoneNumber}`);
             
             if (!spreadsheetId) {
                 throw new Error('Spreadsheet ID is required but not provided');
             }
+
+            // Store instructor reference for invalid_grant notifications in sub-calls
+            if (instructor) this._lastInstructor = instructor;
 
             await this.initializeCredentials();
 
@@ -92,6 +110,10 @@ class SheetsService {
             logger.info(`Sheets updated for ${learnerData.phoneNumber} - Action: ${action}`);
             return response.data;
         } catch (error) {
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets updateLearnerRecord for ${learnerData.phoneNumber}`);
+                notifyInvalidGrant(instructor || this._lastInstructor || {}, 'Sheets', error.message);
+            }
             logger.error(`Error updating sheets: ${error.message}`);
             throw error;
         }
@@ -204,6 +226,10 @@ class SheetsService {
 
             return response.data;
         } catch (error) {
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets batchUpdate`);
+                notifyInvalidGrant(this._lastInstructor || {}, 'Sheets', error.message);
+            }
             logger.error(`Error in batch update: ${error.message}`);
             throw error;
         }

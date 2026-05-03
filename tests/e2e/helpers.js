@@ -63,7 +63,7 @@ const TEST_INSTRUCTOR = {
   phone: "+440000000000",
   name: process.env.INSTRUCTOR_NAME || "Test Instructor",
   email: process.env.INSTRUCTOR_EMAIL || "test@test.com",
-  googleCalendarId: process.env.GOOGLE_CALENDAR_ID || "test-calendar@group.calendar.google.com",
+  googleCalendarId: process.env.INSTRUCTOR_EMAIL || "test-calendar@group.calendar.google.com",
   googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN || "test-refresh-token",
   whatsappToken: "test-whatsapp-token",
   spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || "test-spreadsheet-id",
@@ -147,6 +147,7 @@ async function cleanupTestDB() {
   for (const col of collections) {
     await mongoose.connection.db.dropCollection(col.name).catch(() => {});
   }
+  console.log("  🗄️  Test DB cleaned up");
 }
 
 async function disconnectTestDB() {
@@ -393,7 +394,7 @@ const E2E_KEYS = {
   /** Tests that call Google Maps (geocoding, distance matrix) */
   MAPS: ["GOOGLE_MAPS_API_KEY"],
   /** Tests that call real Google Calendar API */
-  CALENDAR: ["GOOGLE_REFRESH_TOKEN", "GOOGLE_CALENDAR_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+  CALENDAR: ["GOOGLE_REFRESH_TOKEN", "INSTRUCTOR_EMAIL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   /** Tests that call real Google Sheets API */
   SHEETS: ["GOOGLE_REFRESH_TOKEN", "GOOGLE_SPREADSHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
 };

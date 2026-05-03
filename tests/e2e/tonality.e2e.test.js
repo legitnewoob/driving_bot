@@ -41,12 +41,12 @@ const {
   sendMessage,
   setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
   getTestSession,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const TIMEOUT = 30000;
-const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
-describeE2E("E2E – Tonality (Real Pipeline)", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Tonality (Real Pipeline)", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });

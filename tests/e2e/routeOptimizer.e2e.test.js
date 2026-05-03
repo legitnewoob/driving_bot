@@ -24,11 +24,9 @@
  */
 
 // Env loaded via helpers.js → envs/.env.test
-require("./helpers");
+const { describeE2E, E2E_KEYS } = require("./helpers");
 
 const TIMEOUT = 30000;
-
-const describeE2E = process.env.GOOGLE_MAPS_API_KEY ? describe : describe.skip;
 
 // ── Real modules (no mocks) ────────────────────────────────────────────
 const { getDrivingDurations, getDrivingDuration, clearCache } = require("../../src/services/distanceMatrixService");
@@ -61,7 +59,7 @@ const AVAILABLE_SLOTS = ["10:00", "12:00", "13:00", "15:00", "16:00"];
 // 1. Distance Matrix API – Real Calls
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Distance Matrix API (Real Routes API)", () => {
+describeE2E(E2E_KEYS.MAPS, "E2E – Distance Matrix API (Real Routes API)", () => {
   beforeEach(() => {
     clearCache();
   });
@@ -172,7 +170,7 @@ describeE2E("E2E – Distance Matrix API (Real Routes API)", () => {
 // 2. Route Optimizer – scoreSlots with Real Driving Durations
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – scoreSlots with Real Driving Durations", () => {
+describeE2E(E2E_KEYS.MAPS, "E2E – scoreSlots with Real Driving Durations", () => {
   beforeEach(() => {
     clearCache();
   });
@@ -256,7 +254,7 @@ describeE2E("E2E – scoreSlots with Real Driving Durations", () => {
 // 3. Multi-User Booking Scenario
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Multi-User Booking Scenario", () => {
+describeE2E(E2E_KEYS.MAPS, "E2E – Multi-User Booking Scenario", () => {
   beforeEach(() => {
     clearCache();
   });

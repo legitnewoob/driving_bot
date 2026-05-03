@@ -46,16 +46,16 @@ const {
   sendMessage,
   setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
   getTestSession,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const TIMEOUT = 30000;
-const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Message Format Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Message Format Edge Cases", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Message Format Edge Cases", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -134,7 +134,7 @@ describeE2E("E2E – Message Format Edge Cases", () => {
 // 2. Ambiguous & Contradictory Requests
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Ambiguous & Contradictory Requests", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Ambiguous & Contradictory Requests", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -215,7 +215,7 @@ describeE2E("E2E – Ambiguous & Contradictory Requests", () => {
 // 3. Topic Switching (via real sessions)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Topic Switching", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Topic Switching", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -272,7 +272,7 @@ describeE2E("E2E – Topic Switching", () => {
 // 4. Long Conversation Context (via real sessions)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Long Conversation Context", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Long Conversation Context", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -313,7 +313,7 @@ describeE2E("E2E – Long Conversation Context", () => {
 // 5. Action Dispatch Validation (through real pipeline)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Action Dispatch", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Action Dispatch", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });

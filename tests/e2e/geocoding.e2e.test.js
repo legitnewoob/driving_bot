@@ -14,11 +14,9 @@
  */
 
 // Env loaded via helpers.js → envs/.env.test
-require("./helpers");
+const { describeE2E, E2E_KEYS } = require("./helpers");
 
 const TIMEOUT = 15000;
-
-const describeE2E = process.env.GOOGLE_MAPS_API_KEY ? describe : describe.skip;
 
 // Real module — no mocks
 const mapsService = require("../../src/services/mapsService");
@@ -31,7 +29,7 @@ const UK_BOUNDS = {
   lngMax: 1.8,
 };
 
-describeE2E("E2E – Geocoding (Real Google Maps API)", () => {
+describeE2E(E2E_KEYS.MAPS, "E2E – Geocoding (Real Google Maps API)", () => {
   // ─── Valid UK postcodes ──────────────────────────────────────────────
 
   it(

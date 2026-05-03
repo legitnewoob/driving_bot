@@ -350,11 +350,73 @@ async function teardownE2ESuite() {
   await disconnectTestDB();
 }
 
+// ── 12. describeE2E — centralized guard with clear errors ────────────────
+//
+// Usage:
+//   const { describeE2E, E2E_KEYS } = require("./helpers");
+//   describeE2E(E2E_KEYS.AI, "My Suite Name", () => { ... });
+//
+// Behaviour:
+//   - If all required env vars are present → runs normally (plain describe).
+//   - If vars are missing AND E2E_SKIP_MISSING=1 → describe.skip (CI-friendly).
+//   - If vars are missing AND E2E_SKIP_MISSING is NOT set → throws a clear error
+//     telling you exactly which vars are missing so you can fix envs/.env.test.
+//
+// To run a single file easily:
+//   npm run test:e2e -- --testPathPattern=bookingFlow
+
+/** Predefined key groups for the 3 categories of e2e tests */
+const E2E_KEYS = {
+  /** Tests that call the Gemini AI pipeline */
+  AI: ["GOOGLE_AI_API_KEY"],
+  /** Tests that call Google Maps (geocoding, distance matrix) */
+  MAPS: ["GOOGLE_MAPS_API_KEY"],
+  /** Tests that call real Google Calendar API */
+  CALENDAR: ["GOOGLE_REFRESH_TOKEN", "GOOGLE_CALENDAR_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+  /** Tests that call real Google Sheets API */
+  SHEETS: ["GOOGLE_REFRESH_TOKEN", "GOOGLE_SPREADSHEET_ID", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+};
+
+/**
+ * @param {string[]} requiredKeys - env var names that must be set
+ * @param {string}   suiteName    - describe() suite name
+ * @param {Function} suiteFn      - the function passed to describe()
+ */
+function describeE2E(requiredKeys, suiteName, suiteFn) {
+  const missing = requiredKeys.filter((k) => !process.env[k]);
+
+  if (missing.length === 0) {
+    // All keys present — run normally
+    return describe(suiteName, suiteFn);
+  }
+
+  if (process.env.E2E_SKIP_MISSING === "1") {
+    // Opt-in silent skip (useful in CI where some creds aren't available)
+    return describe.skip(`[SKIPPED — missing env] ${suiteName}`, suiteFn);
+  }
+
+  // DEFAULT: Fail loudly so you know exactly what's wrong
+  describe(suiteName, () => {
+    it("should have required environment variables", () => {
+      throw new Error(
+        `\n\n❌  E2E suite "${suiteName}" cannot run.\n` +
+        `    Missing env vars: ${missing.join(", ")}\n\n` +
+        `    Fix: Add them to envs/.env.test\n` +
+        `    Or:  set E2E_SKIP_MISSING=1 to skip instead of fail.\n`
+      );
+    });
+  });
+}
+
 // ── Exports ──────────────────────────────────────────────────────────────
 
 module.exports = {
   // Mock factories (use at top of test files with jest.mock)
   E2E_MOCKS,
+
+  // Centralized describe guard
+  describeE2E,
+  E2E_KEYS,
 
   // Core e2e helper
   sendMessage,

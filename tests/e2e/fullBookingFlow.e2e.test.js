@@ -45,16 +45,16 @@ const {
   sendMessage,
   setupE2ESuite, cleanupE2ETest, teardownE2ESuite,
   getTestSession, getTestPendingContext,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const TIMEOUT = 30000;
-const describeE2E = process.env.GOOGLE_AI_API_KEY ? describe : describe.skip;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Full Multi-Turn Booking Flow
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Full Booking Conversation", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Full Booking Conversation", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -107,7 +107,7 @@ describeE2E("E2E – Full Booking Conversation", () => {
 // 2. Dynamic Dropoff
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Dynamic Dropoff", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Dynamic Dropoff", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -176,7 +176,7 @@ describeE2E("E2E – Dynamic Dropoff", () => {
 // 3. Cancellation Flow
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Cancellation Flow", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Cancellation Flow", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -223,7 +223,7 @@ describeE2E("E2E – Cancellation Flow", () => {
 // 4. Rescheduling Flow
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Rescheduling Flow", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Rescheduling Flow", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -275,7 +275,7 @@ describeE2E("E2E – Rescheduling Flow", () => {
 // 5. Show Bookings
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Show Bookings", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Show Bookings", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -309,7 +309,7 @@ describeE2E("E2E – Show Bookings", () => {
 // 6. Date Validation (Weekend / Past)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Date Validation", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Date Validation", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -372,7 +372,7 @@ describeE2E("E2E – Date Validation", () => {
 // 7. Next Available Slot
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Next Available Slot", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Next Available Slot", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });
@@ -405,7 +405,7 @@ describeE2E("E2E – Next Available Slot", () => {
 // 8. Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-describeE2E("E2E – Conversation Edge Cases", () => {
+describeE2E(E2E_KEYS.AI, "E2E – Conversation Edge Cases", () => {
   beforeAll(async () => { await setupE2ESuite(); }, 30000);
   afterEach(() => { cleanupE2ETest(); });
   afterAll(async () => { await teardownE2ESuite(); });

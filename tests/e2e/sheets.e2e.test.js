@@ -17,18 +17,9 @@
  */
 
 // Load env before anything else
-const { TEST_INSTRUCTOR, connectTestDB, disconnectTestDB, cleanupTestDB } = require("./helpers");
+const { TEST_INSTRUCTOR, connectTestDB, disconnectTestDB, cleanupTestDB, describeE2E, E2E_KEYS } = require("./helpers");
 
 const TIMEOUT = 15000;
-
-// Skip if no real Sheets credentials
-const hasSheetsCreds =
-  process.env.GOOGLE_REFRESH_TOKEN &&
-  process.env.GOOGLE_SPREADSHEET_ID &&
-  process.env.GOOGLE_CLIENT_ID &&
-  process.env.GOOGLE_CLIENT_SECRET;
-
-const describeE2E = hasSheetsCreds ? describe : describe.skip;
 
 // Real sheetsService — no mocks
 const sheetsService = require("../../src/services/sheetsService");
@@ -36,7 +27,7 @@ const sheetsService = require("../../src/services/sheetsService");
 const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID;
 const TEST_LEARNER_PHONE = "447700900099";
 
-describeE2E("E2E – Sheets Service (Real Google Sheets API)", () => {
+describeE2E(E2E_KEYS.SHEETS, "E2E – Sheets Service (Real Google Sheets API)", () => {
   beforeAll(async () => { await connectTestDB(); }, 30000);
   afterAll(async () => {
     await cleanupTestDB();

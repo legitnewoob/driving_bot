@@ -17,16 +17,15 @@
 
 const {
   connectTestDB, disconnectTestDB, cleanupTestDB,
+  describeE2E, E2E_KEYS,
 } = require("./helpers");
 
 const TIMEOUT = 15000;
 
-const describeE2E = process.env.GOOGLE_MAPS_API_KEY ? describe : describe.skip;
-
 // Real module — no mocks (tests geocoding directly)
 const mapsService = require("../../src/services/mapsService");
 
-describeE2E("E2E – User Details Collection", () => {
+describeE2E(E2E_KEYS.MAPS, "E2E – User Details Collection", () => {
   beforeAll(async () => { await connectTestDB(); }, 30000);
   afterEach(async () => { await cleanupTestDB(); });
   afterAll(async () => { await disconnectTestDB(); });

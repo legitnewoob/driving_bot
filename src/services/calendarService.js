@@ -1,6 +1,16 @@
 const { oauth2Client, calendar } = require("../config/google");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
+const { notifyInvalidGrant } = require("../utils/emailNotifier");
+
+/**
+ * Check if an error is an invalid_grant (expired/revoked refresh token).
+ */
+function isInvalidGrant(error) {
+  const msg = error?.message || "";
+  const code = error?.response?.data?.error || "";
+  return msg.includes("invalid_grant") || code === "invalid_grant";
+}
 
 class CalendarService {
 
@@ -75,15 +85,23 @@ class CalendarService {
     const dayEnd = timezoneUtils.createDateInTimezone(date, "00:00");
     dayEnd.setDate(dayEnd.getDate() + 1);
 
-    const response = await calendar.events.list({
-      calendarId: instructor.googleCalendarId,
-      timeMin: dayStart.toISOString(),
-      timeMax: dayEnd.toISOString(),
-      singleEvents: true,
-      orderBy: "startTime",
-    });
+    try {
+      const response = await calendar.events.list({
+        calendarId: instructor.googleCalendarId,
+        timeMin: dayStart.toISOString(),
+        timeMax: dayEnd.toISOString(),
+        singleEvents: true,
+        orderBy: "startTime",
+      });
 
-    return response.data.items || [];
+      return response.data.items || [];
+    } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in getEventsForDate`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -178,6 +196,10 @@ class CalendarService {
         })
         .filter(Boolean);
     } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in getCalendarContext`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
       logger.error(`Error getting calendar context: ${error.message}`);
       return [];
     }
@@ -225,6 +247,10 @@ class CalendarService {
 
       return response.data;
     } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in createEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
       logger.error(`Error creating calendar event: ${error.message}`);
       throw error;
     }
@@ -266,6 +292,10 @@ class CalendarService {
       logger.info(`Calendar event updated: ${eventId}`);
       return response.data;
     } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in updateEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
       logger.error(`Error updating calendar event: ${error.message}`);
       throw error;
     }
@@ -287,6 +317,10 @@ class CalendarService {
       logger.info(`Calendar event deleted: ${eventId}`);
       return { success: true, eventId };
     } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in deleteEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
       logger.error(`Error deleting calendar event: ${error.message}`);
       throw error;
     }

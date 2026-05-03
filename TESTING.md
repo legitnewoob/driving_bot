@@ -29,11 +29,17 @@ tests/
 │   ├── routeOptimizer.test.js
 │   ├── tonality.test.js
 │   └── vulgarMessages.test.js
-├── e2e/                # 4 suites — real Gemini API (NOT in CI)
+├── e2e/                # 9 suites — real API calls (NOT in CI)
 │   ├── helpers.js
 │   ├── bookingFlow.e2e.test.js
+│   ├── conversationStress.e2e.test.js
+│   ├── dateExtraction.e2e.test.js
+│   ├── fullBookingFlow.e2e.test.js
+│   ├── geocoding.e2e.test.js
 │   ├── responseTime.e2e.test.js
+│   ├── routeOptimizer.e2e.test.js
 │   ├── tonality.e2e.test.js
+│   ├── userDetails.e2e.test.js
 │   └── vulgarMessages.e2e.test.js
 ├── BulkTest.js
 └── TestPlan.txt
@@ -104,6 +110,7 @@ E2E tests call the **real Gemini API** — they are excluded from `npm test` and
 Make sure your `.env` file has:
 ```
 GOOGLE_AI_API_KEY=your-actual-api-key
+GOOGLE_MAPS_API_KEY=your-actual-maps-key
 ```
 
 ### Run
@@ -119,14 +126,21 @@ npm run test:e2e
 | `vulgarMessages.e2e` | Gemini deflects vulgar/dodgy messages, rejects prompt injection |
 | `tonality.e2e` | Friendly tone, professional responses, stays on topic |
 | `bookingFlow.e2e` | Correct ACTION tags, date/time extraction, 24h format |
+| `fullBookingFlow.e2e` | Multi-turn booking, cancel, reschedule, show bookings, dynamic dropoff, weekend/past rejection |
+| `conversationStress.e2e` | Long messages, emojis, typos, contradictions, topic switching, long context |
+| `dateExtraction.e2e` | 12h→24h conversion, YYYY-MM-DD format, day-of-week, colloquial times, invalid hours |
+| `geocoding.e2e` | Real postcode → lat/lng, UK bounds, nearby/far validation |
+| `userDetails.e2e` | User onboarding flow, postcode geocoding, link generation |
 | `responseTime.e2e` | Real API latency (< 10s per call, < 8s average) |
+| `routeOptimizer.e2e` | Real Distance Matrix durations, multi-user slot ranking |
 
 ### Notes
 
-- These tests hit the real API — they cost tokens and may be rate-limited
-- They auto-skip if `GOOGLE_AI_API_KEY` is not set
+- These tests hit real APIs — they cost tokens and may be rate-limited
+- Gemini tests auto-skip if `GOOGLE_AI_API_KEY` is not set
+- Route optimizer tests auto-skip if `GOOGLE_MAPS_API_KEY` is not set
 - Do NOT add them to CI — they require secrets and are non-deterministic
-- Run them locally before major releases to verify AI behavior
+- Run them locally before major releases to verify AI + routing behavior
 
 ## Notes
 

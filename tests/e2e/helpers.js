@@ -35,7 +35,7 @@
  */
 
 // ── 1. Load environment BEFORE any other require ─────────────────────────
-process.env.NODE_ENV = "development";
+process.env.NODE_ENV = "test";
 process.env.LOAD_ENV = "test";
 require("../../src/config/env");
 

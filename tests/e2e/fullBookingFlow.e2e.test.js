@@ -17,11 +17,29 @@
  * Run:  npm run test:e2e
  */
 
-const { E2E_MOCKS } = require("./helpers");
-jest.mock("../../src/services/calendarService", E2E_MOCKS.calendarService);
-jest.mock("../../src/services/sheetsService", E2E_MOCKS.sheetsService);
-jest.mock("../../src/services/whatsappService", E2E_MOCKS.whatsappService);
-jest.mock("../../src/utils/chatLogger", E2E_MOCKS.chatLogger);
+jest.mock("../../src/services/calendarService", () => ({
+  createEvent: jest.fn().mockResolvedValue({ id: "cal-event-e2e-123" }),
+  updateEvent: jest.fn().mockResolvedValue({ id: "cal-event-e2e-123" }),
+  deleteEvent: jest.fn().mockResolvedValue({}),
+  getEventsForDate: jest.fn().mockResolvedValue([]),
+  checkSlotAgainstEvents: jest.fn().mockReturnValue({ isAvailable: true, conflictingEvents: [] }),
+  findEarliestAvailableSlot: jest.fn().mockResolvedValue({ date: "2026-05-06", time: "10:00" }),
+  getAvailableTimeSlotsForDate: jest.fn().mockResolvedValue(
+    ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"]
+  ),
+  checkAvailability: jest.fn().mockResolvedValue(true),
+}));
+jest.mock("../../src/services/sheetsService", () => ({
+  getInstructorSpreadsheetId: jest.fn().mockReturnValue("test-spreadsheet-id"),
+  getLearnerName: jest.fn().mockResolvedValue("E2E Test User"),
+  updateLearnerRecord: jest.fn().mockResolvedValue({}),
+  initializeCredentials: jest.fn(),
+}));
+jest.mock("../../src/services/whatsappService", () => ({
+  sendTextMessage: jest.fn().mockResolvedValue({}),
+  sendMessage: jest.fn().mockResolvedValue({}),
+}));
+jest.mock("../../src/utils/chatLogger", () => jest.fn(() => ({ info: jest.fn() })));
 
 const {
   sendMessage,

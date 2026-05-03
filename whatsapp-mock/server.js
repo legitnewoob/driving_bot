@@ -19,7 +19,7 @@ const axios = require("axios");
 // ─── Config ───────────────────────────────────────────────────────────────────
 const MOCK_PORT        = process.env.MOCK_PORT        || 4000;
 const APP_URL          = process.env.APP_URL          || "http://localhost:3000/mock-webhook";
-const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID  || "MOCK_PHONE_NUMBER_ID";
+const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID  || "886622201206248";
 
 const app    = express();
 const server = http.createServer(app);

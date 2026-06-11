@@ -1,26 +1,42 @@
 const { google } = require('googleapis');
-const { oauth2Client } = require('../config/google'); // Assuming you have this from calendar service
+const { oauth2Client } = require('../config/google');
+const timezoneUtils = require('../utils/timezoneUtils');
+const logger = require('../utils/logger-advanced');
+const { notifyInvalidGrant } = require('../utils/emailNotifier');
+
+/**
+ * Check if an error is an invalid_grant (expired/revoked refresh token).
+ */
+function isInvalidGrant(error) {
+  const msg = error?.message || '';
+  const code = error?.response?.data?.error || '';
+  return msg.includes('invalid_grant') || code === 'invalid_grant';
+}
 
 class SheetsService {
     constructor() {
         this.sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        this._lastInstructor = null;
     }
 
-    async initializeCredentials() {
-        oauth2Client.setCredentials({
-            refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-        });
+    initializeCredentials(refreshToken) {
+        if (refreshToken) {
+            oauth2Client.setCredentials({
+                refresh_token: refreshToken,
+            });
+        }
     }
 
     /**
      * Find a learner's row in the sheet
      * @param {string} spreadsheetId - Google Sheets ID
      * @param {string} phoneNumber - Learner's phone number
+     * @param {Object|null} instructor - Instructor record to provide refresh token
      * @returns {Promise<Object>} Row data and index
      */
-    async findLearnerRow(spreadsheetId, phoneNumber) {
+    async findLearnerRow(spreadsheetId, phoneNumber, instructor = null) {
         try {
-            await this.initializeCredentials();
+            this.initializeCredentials(instructor?.googleRefreshToken);
 
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId,
@@ -41,7 +57,11 @@ class SheetsService {
 
             return { exists: false, nextEmptyRow: rows.length + 1 };
         } catch (error) {
-            console.error('❌ Error finding learner row:', error.message);
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets findLearnerRow`);
+                notifyInvalidGrant(this._lastInstructor || {}, 'Sheets', error.message);
+            }
+            logger.error(`Error finding learner row: ${error.message}`);
             throw error;
         }
     }
@@ -53,34 +73,37 @@ class SheetsService {
      * @param {Object} bookingData - Booking details
      * @param {string} action - 'create', 'update', 'cancel', 'reschedule'
      */
-    async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create') {
+    async updateLearnerRecord(spreadsheetId, learnerData, bookingData, action = 'create', instructor = null) {
         try {
-            console.log(`📊 Updating learner record - SpreadsheetID: ${spreadsheetId}, Phone: ${learnerData.phoneNumber}, Action: ${action}`);
+            logger.info(`Sheets: ${action} record for ${learnerData.phoneNumber}`);
             
             if (!spreadsheetId) {
                 throw new Error('Spreadsheet ID is required but not provided');
             }
 
-            await this.initializeCredentials();
+            // Store instructor reference for invalid_grant notifications in sub-calls
+            if (instructor) this._lastInstructor = instructor;
 
-            const learnerRow = await this.findLearnerRow(spreadsheetId, learnerData.phoneNumber);
+            this.initializeCredentials(instructor?.googleRefreshToken);
+
+            const learnerRow = await this.findLearnerRow(
+                spreadsheetId,
+                learnerData.phoneNumber,
+                instructor
+            );
             
             let rowData;
             let range;
 
             if (learnerRow.exists) {
                 // Update existing learner
-                console.log(`👤 Updating existing learner at row ${learnerRow.rowIndex}`);
                 rowData = await this.buildUpdatedRowData(learnerRow.data, bookingData, action);
-                range = `A${learnerRow.rowIndex}:I${learnerRow.rowIndex}`;
+                range = `A${learnerRow.rowIndex}:J${learnerRow.rowIndex}`;
             } else {
                 // Create new learner record
-                console.log(`👤 Creating new learner record at row ${learnerRow.nextEmptyRow}`);
                 rowData = await this.buildNewRowData(learnerData, bookingData);
-                range = `A${learnerRow.nextEmptyRow}:I${learnerRow.nextEmptyRow}`;
+                range = `A${learnerRow.nextEmptyRow}:J${learnerRow.nextEmptyRow}`;
             }
-
-            console.log(`📝 Writing to range: ${range}, Data:`, rowData);
 
             const response = await this.sheets.spreadsheets.values.update({
                 spreadsheetId,
@@ -91,10 +114,14 @@ class SheetsService {
                 }
             });
 
-            console.log(`✅ Sheets updated for ${learnerData.phoneNumber} - Action: ${action}`);
+            logger.info(`Sheets updated for ${learnerData.phoneNumber} - Action: ${action}`);
             return response.data;
         } catch (error) {
-            console.error('❌ Error updating sheets:', error.message);
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets updateLearnerRecord for ${learnerData.phoneNumber}`);
+                notifyInvalidGrant(instructor || this._lastInstructor || {}, 'Sheets', error.message);
+            }
+            logger.error(`Error updating sheets: ${error.message}`);
             throw error;
         }
     }
@@ -103,20 +130,23 @@ class SheetsService {
      * Build row data for new learner
      */
     async buildNewRowData(learnerData, bookingData) {
-        const bookingDate = new Date(bookingData.date);
-        const formattedDate = bookingDate.toLocaleDateString('en-GB'); // DD/MM/YYYY format
+        const formattedDate = timezoneUtils.formatDate(
+            timezoneUtils.createDateInTimezone(bookingData.date, '12:00'),
+            'DD/MM/YYYY'
+        );
         const dateTime = `${formattedDate} ${bookingData.time}`;
 
         return [
             learnerData.name || 'Unknown', // A: learner name
-            learnerData.phoneNumber,       // B: phone number  
+            learnerData.phoneNumber,       // B: phone number
             learnerData.location || '',    // C: location
             '1',                          // D: lessons had (starting with 1)
             '',                           // E: test booked date days until test (empty initially)
-            '',                           // F: xxx (unclear what this field is)
-            'Yes',                        // G: lesson booked
-            dateTime,                     // H: date/time
-            'Confirmed'                   // I: status
+            bookingData.pickupAddress || '',  // F: pickup address
+            bookingData.dropoffAddress || '', // G: dropoff address
+            'Yes',                        // H: lesson booked
+            dateTime,                     // I: date/time
+            'Confirmed'                   // J: status
         ];
     }
 
@@ -126,16 +156,34 @@ class SheetsService {
     async buildUpdatedRowData(existingData, bookingData, action) {
         const updatedData = [...existingData];
         
-        // Ensure we have at least 9 columns
-        while (updatedData.length < 9) {
+        // Ensure we have at least 10 columns (updated structure)
+        while (updatedData.length < 10) {
             updatedData.push('');
+        }
+
+        // Handle migration from old format (notes in column F) to new format (separate pickup/dropoff columns)
+        if (updatedData.length >= 7 && updatedData[5] && !updatedData[6]) {
+            // Old format: notes in F, try to parse pickup/dropoff
+            const notes = updatedData[5];
+            if (notes.includes('Pickup:') || notes.includes('Drop-off:')) {
+                const pickupMatch = notes.match(/Pickup:\s*([^;]+)/);
+                const dropoffMatch = notes.match(/Drop-off:\s*([^;]+)/);
+                updatedData[5] = pickupMatch ? pickupMatch[1].trim() : '';
+                updatedData[6] = dropoffMatch ? dropoffMatch[1].trim() : '';
+            } else {
+                // Move old notes to pickup column for backward compatibility
+                updatedData[5] = notes;
+                updatedData[6] = '';
+            }
         }
 
         switch (action) {
             case 'create':
             case 'reschedule':
-                const bookingDate = new Date(bookingData.date || bookingData.newDate);
-                const formattedDate = bookingDate.toLocaleDateString('en-GB');
+                const formattedDate = timezoneUtils.formatDate(
+                    timezoneUtils.createDateInTimezone(bookingData.date || bookingData.newDate, '12:00'),
+                    'DD/MM/YYYY'
+                );
                 const time = bookingData.time || bookingData.newTime;
                 const dateTime = `${formattedDate} ${time}`;
 
@@ -145,18 +193,22 @@ class SheetsService {
                     updatedData[3] = (currentLessons + 1).toString();
                 }
 
-                updatedData[6] = 'Yes';      // G: lesson booked
-                updatedData[7] = dateTime;   // H: date/time
-                updatedData[8] = action === 'reschedule' ? 'Rescheduled' : 'Confirmed'; // I: status
+                // Update pickup and dropoff columns
+                updatedData[5] = bookingData.pickupAddress || updatedData[5] || '';  // F: pickup address
+                updatedData[6] = bookingData.dropoffAddress || updatedData[6] || ''; // G: dropoff address
+
+                updatedData[7] = 'Yes';      // H: lesson booked
+                updatedData[8] = dateTime;   // I: date/time
+                updatedData[9] = action === 'reschedule' ? 'Rescheduled' : 'Confirmed'; // J: status
                 break;
 
             case 'cancel':
-                updatedData[6] = 'No';       // G: lesson booked
-                updatedData[8] = 'Cancelled'; // I: status
+                updatedData[7] = 'No';       // H: lesson booked
+                updatedData[9] = 'Cancelled'; // J: status
                 break;
 
             case 'complete':
-                updatedData[8] = 'Completed'; // I: status
+                updatedData[9] = 'Completed'; // J: status
                 break;
         }
 
@@ -167,15 +219,11 @@ class SheetsService {
      * Get instructor's spreadsheet ID from environment or config
      */
     getInstructorSpreadsheetId(instructorId) {
-        // Always return the main spreadsheet ID for now
+        // Fallback: return env var if instructor record doesn't have one
         const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
-        
         if (!spreadsheetId) {
-            console.error('❌ GOOGLE_SPREADSHEET_ID not found in environment variables');
-            throw new Error('Google Spreadsheet ID not configured');
+            logger.warn(`No spreadsheet ID found for instructor ${instructorId}`);
         }
-        
-        console.log(`📊 Using spreadsheet ID: ${spreadsheetId} for instructor: ${instructorId}`);
         return spreadsheetId;
     }
 
@@ -206,7 +254,11 @@ class SheetsService {
 
             return response.data;
         } catch (error) {
-            console.error('❌ Error in batch update:', error.message);
+            if (isInvalidGrant(error)) {
+                logger.error(`invalid_grant in Sheets batchUpdate`);
+                notifyInvalidGrant(this._lastInstructor || {}, 'Sheets', error.message);
+            }
+            logger.error(`Error in batch update: ${error.message}`);
             throw error;
         }
     }

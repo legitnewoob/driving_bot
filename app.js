@@ -3,6 +3,7 @@ const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
+const bookingRoutes = require('./src/routes/bookings');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
@@ -38,10 +39,6 @@ const logAuth = basicAuth({
 });
 
 
-
-
-
-
 // Middleware
 app.use(express.json());
 connectDB();
@@ -51,6 +48,14 @@ app.use('/webhook', webhookRoutes);
 app.use('/auth' , authRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
+app.use('/api/bookings', logAuth, bookingRoutes);
+
+// Mock Route (development only)
+if (process.env.NODE_ENV === 'development') {
+  const mockWebhookRoutes = require('./src/routes/mockWebhook.js');
+  app.use('/mock-webhook', mockWebhookRoutes);
+  console.log('🧪 Mock webhook route enabled at POST /mock-webhook');
+}
 
 // Logs Viewer Page
 app.get("/logs-viewer", logAuth , logLimiter , (req, res) => {
@@ -60,15 +65,11 @@ app.get("/logs-viewer", logAuth , logLimiter , (req, res) => {
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({ 
-        success: true, 
-        response: "🤖 Enhanced AI WhatsApp Driving School Bot with Automatic Availability Checking! 🚗📅✨",
-        features: [
-            "✅ Automatic date/time extraction from user messages",
-            "✅ Real-time calendar availability checking", 
-            "✅ Smart availability suggestions",
-            "✅ Enhanced AI responses with availability context",
-            "✅ Seamless booking flow"
-        ]
+        status: "ok",
+        name: "Donna",
+        description: "WhatsApp Driving School Bot",
+        version: require('./package.json').version || "1.0.0",
+        uptime: `${Math.floor(process.uptime())}s`,
     });
 });
 

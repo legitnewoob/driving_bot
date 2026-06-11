@@ -35,6 +35,12 @@ node_modules/
 # Docker
 *.pid
 
+# Test coverage (generated)
+coverage/
+
+# E2E HTML reports (generated)
+tests/e2e/reports/
+
 # Misc
 .git.env
 logging/loki/wal/**

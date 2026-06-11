@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Mock · Dev Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #1c2330;
+      --border: #30363d;
+      --green: #25d366;
+      --green-dim: #1a9e4a;
+      --green-bg: #0f2318;
+      --blue: #58a6ff;
+      --muted: #8b949e;
+      --text: #e6edf3;
+      --text-dim: #c9d1d9;
+      --error: #f85149;
+      --bubble-in: #1f6feb22;
+      --radius: 14px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100dvh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+    }
+
+    .sidebar-header {
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-header h2 {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 4px;
+    }
+
+    .sidebar-header p {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .config-section {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .config-section label {
+      display: block;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .config-section input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .config-section input:focus {
+      border-color: var(--green);
+    }
+
+    .status-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      padding: 16px 20px;
+    }
+
+    .status-dot::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--error);
+      transition: background 0.3s;
+    }
+
+    .status-dot.connected::before {
+      background: var(--green);
+    }
+
+    .status-dot.connected {
+      color: var(--green);
+    }
+
+    .log-section {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .log-header {
+      padding: 12px 20px 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .log-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .log-body .log-in {
+      color: #79c0ff;
+    }
+
+    .log-body .log-out {
+      color: var(--green);
+    }
+
+    .log-body .log-err {
+      color: var(--error);
+    }
+
+    .log-body .log-sys {
+      color: #d2a8ff;
+    }
+
+    /* ── Main chat ── */
+    .chat-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .chat-topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--green-dim), #0d4f2a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .chat-topbar-info h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+
+    .chat-topbar-info span {
+      font-size: 12px;
+      color: var(--green);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .badge {
+      margin-left: auto;
+      background: var(--green-bg);
+      border: 1px solid var(--green-dim);
+      color: var(--green);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    /* ── Messages ── */
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background-image:
+        radial-gradient(circle at 20% 80%, #25d36608 0%, transparent 50%),
+        radial-gradient(circle at 80% 10%, #1f6feb08 0%, transparent 50%);
+    }
+
+    .messages::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .messages::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .messages::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .msg-row {
+      display: flex;
+      flex-direction: column;
+      max-width: 68%;
+      animation: msgIn 0.2s ease-out;
+    }
+
+    @keyframes msgIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .msg-row.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .msg-row.bot {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      line-height: 1.55;
+      position: relative;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .user .bubble {
+      background: var(--green);
+      color: #0d1a12;
+      border-bottom-right-radius: 4px;
+      font-weight: 500;
+    }
+
+    .bot .bubble {
+      background: var(--surface2);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .bubble.error {
+      background: #2a1215;
+      border: 1px solid var(--error);
+      color: var(--error);
+    }
+
+    .msg-meta {
+      font-size: 10px;
+      color: var(--muted);
+      font-family: 'IBM Plex Mono', monospace;
+      margin-top: 4px;
+      padding: 0 2px;
+    }
+
+    .typing-indicator {
+      display: none;
+      align-self: flex-start;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      border-bottom-left-radius: 4px;
+      padding: 12px 16px;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .typing-indicator.visible {
+      display: flex;
+    }
+
+    .typing-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      animation: bounce 1.2s infinite;
+    }
+
+    .typing-dot:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typing-dot:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes bounce {
+
+      0%,
+      60%,
+      100% {
+        transform: translateY(0);
+        opacity: 0.5;
+      }
+
+      30% {
+        transform: translateY(-5px);
+        opacity: 1;
+      }
+    }
+
+    /* ── Input bar ── */
+    .input-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+
+    .input-wrap {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      transition: border-color 0.2s;
+    }
+
+    .input-wrap:focus-within {
+      border-color: var(--green);
+    }
+
+    #messageInput {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 14px;
+      resize: none;
+      min-height: 22px;
+      max-height: 120px;
+      line-height: 1.5;
+    }
+
+    #messageInput::placeholder {
+      color: var(--muted);
+    }
+
+    .send-btn {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: var(--green);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .send-btn:hover {
+      background: #20c05a;
+    }
+
+    .send-btn:active {
+      transform: scale(0.93);
+    }
+
+    .send-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: #0d1a12;
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: var(--muted);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      opacity: 0.3;
+      filter: grayscale(1);
+    }
+
+    .empty-state p {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      opacity: 0.5;
+    }
+
+    /* scrollbar */
+    .log-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    .log-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>WA Mock Console</h2>
+      <p>Simulates the WhatsApp webhook layer for local dev.</p>
+    </div>
+
+    <div class="config-section">
+      <label>Simulated Phone Number</label>
+      <input type="text" id="phoneInput" value="917726877146" placeholder="e.g. 1234567890" />
+    </div>
+
+    <div class="status-dot" id="statusDot">Disconnected</div>
+
+    <div class="log-section">
+      <div class="log-header">Event Log</div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </aside>
+
+  <!-- ── Chat ── -->
+  <div class="chat-wrap">
+    <div class="chat-topbar">
+      <div class="avatar">🤖</div>
+      <div class="chat-topbar-info">
+        <h3>Your Bot</h3>
+        <span id="topbarPhone">+1 555 000 1234</span>
+      </div>
+      <div class="badge">MOCK MODE</div>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">💬</div>
+        <p>Send a message to start testing your bot</p>
+      </div>
+      <div class="typing-indicator" id="typingIndicator">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-wrap">
+        <textarea id="messageInput" rows="1" placeholder="Type a message..."></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn" title="Send">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const phoneInput = document.getElementById('phoneInput');
+    const statusDot = document.getElementById('statusDot');
+    const logBody = document.getElementById('logBody');
+    const typingEl = document.getElementById('typingIndicator');
+    const emptyState = document.getElementById('emptyState');
+    const topbarPhone = document.getElementById('topbarPhone');
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function formatPhone(num) {
+      return '+' + num.slice(0, 3) + ' ' + num.slice(3, 6) + ' ' + num.slice(6, 9) + ' ' + num.slice(9);
+    }
+
+    function now() {
+      return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function addLog(text, type = '') {
+      const line = document.createElement('div');
+      line.className = type ? `log-${type}` : '';
+      line.textContent = `[${now()}] ${text}`;
+      logBody.appendChild(line);
+      logBody.scrollTop = logBody.scrollHeight;
+    }
+
+    function appendMessage(text, side, isError = false) {
+      emptyState.style.display = 'none';
+
+      // Move typing indicator to end (always last)
+      messagesEl.appendChild(typingEl);
+
+      const row = document.createElement('div');
+      row.className = `msg-row ${side}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble' + (isError ? ' error' : '');
+      bubble.innerHTML = parseWhatsApp(text);
+
+      const meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      meta.textContent = now();
+
+      row.appendChild(bubble);
+      row.appendChild(meta);
+      messagesEl.insertBefore(row, typingEl);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function setTyping(visible) {
+      typingEl.classList.toggle('visible', visible);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // ── Phone config ─────────────────────────────────────────────────────────
+    phoneInput.addEventListener('input', () => {
+      topbarPhone.textContent = formatPhone(phoneInput.value || '000');
+    });
+
+    // ── Socket events ─────────────────────────────────────────────────────────
+    socket.on('connect', () => {
+      statusDot.className = 'status-dot connected';
+      statusDot.textContent = 'Connected';
+      addLog('Socket connected to mock server', 'sys');
+    });
+
+    socket.on('disconnect', () => {
+      statusDot.className = 'status-dot';
+      statusDot.textContent = 'Disconnected';
+      addLog('Socket disconnected', 'err');
+    });
+
+    socket.on('bot_message', ({ text }) => {
+      setTyping(false);
+      appendMessage(text, 'bot');
+      addLog(`← bot: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`, 'out');
+    });
+
+    socket.on('bot_error', ({ message }) => {
+      setTyping(false);
+      appendMessage(`⚠️ Bot error: ${message}`, 'bot', true);
+      addLog(`ERROR: ${message}`, 'err');
+    });
+
+    // ── Send logic ────────────────────────────────────────────────────────────
+    function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+
+      const from = phoneInput.value.trim() || '2340000000000';
+
+      appendMessage(text, 'user');
+      addLog(`→ user (${from}): ${text}`, 'in');
+      setTyping(true);
+
+      socket.emit('user_message', { text, from });
+
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+    }
+
+    function parseWhatsApp(text) {
+      // 1. Escape HTML first
+      let out = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      // 2. Process line by line so bold/italic on one line
+      //    doesn't bleed into the next
+      out = out.split('\n').map(line => {
+        return line
+          .replace(/\*([^*]+)\*/g, "<strong>$1</strong>")
+          .replace(/_([^_]+)_/g, "<em>$1</em>")
+          .replace(/~([^~]+)~/g, "<s>$1</s>")
+          .replace(/`([^`]+)`/g, "<code>$1</code>");
+      }).join('<br>');
+
+      return out;
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Auto-resize textarea
+    inputEl.addEventListener('input', () => {
+      inputEl.style.height = 'auto';
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+    });
+  </script>
+</body>
+
+</html>

@@ -34,5 +34,5 @@ app.listen(PORT, async () => {
     console.log();
 
     // Refresh WhatsApp token on startup and every 7 days
-    startTokenRefreshSchedule();
+    //startTokenRefreshSchedule();
 });

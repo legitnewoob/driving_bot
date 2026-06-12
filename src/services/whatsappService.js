@@ -18,8 +18,9 @@ class WhatsAppService {
 
             const chatLogger = getChatLogger(to);
             const dbChatLogger = getDbChatLogger(phoneNumberId, to);
-            chatLogger.info(`${message.text?.body}`);
-            dbChatLogger.assistant(`${message.text?.body}`);
+            const logBody = message.text?.body || `[template: ${message.template?.name}]`;
+            chatLogger.info(logBody);
+            dbChatLogger.assistant(logBody);
 
             const response = await axios.post(apiUrl, message, {
                 headers: {
@@ -48,6 +49,33 @@ class WhatsAppService {
             to: to,
             type: "text",
             text: { body: text }
+        };
+        return await this.sendMessage(to, message, instructor);
+    }
+
+    /**
+     * Send a pre-approved template message via WhatsApp (required for
+     * business-initiated messages sent outside the 24h conversation window,
+     * e.g. lesson reminders).
+     * @param {string} to - Recipient phone number
+     * @param {string} templateName - Name of the approved Meta template (e.g. "lesson_reminder_24h")
+     * @param {string[]} params - Body placeholder values, in order ({{1}}, {{2}}, ...)
+     * @param {Object} instructor - Instructor record from DB
+     * @param {string} [languageCode="en_GB"] - Template language code
+     */
+    async sendTemplateMessage(to, templateName, params, instructor, languageCode = "en_GB") {
+        const message = {
+            messaging_product: "whatsapp",
+            to: to,
+            type: "template",
+            template: {
+                name: templateName,
+                language: { code: languageCode },
+                components: [{
+                    type: "body",
+                    parameters: params.map(text => ({ type: "text", text: String(text) }))
+                }]
+            }
         };
         return await this.sendMessage(to, message, instructor);
     }

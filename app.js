@@ -81,6 +81,10 @@ const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');
 setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
+// Lesson reminders (24h / 48h before booking)
+const { sendLessonReminders } = require('./src/services/reminderService');
+setInterval(sendLessonReminders, 15 * 60 * 1000); // every 15 minutes
+
 // Upload logs to R2 every 5 minutes
 setInterval(uploadLogsFolder, process.env.WAIT_FOR_R2_IN_MINS * 60 * 1000); 
 

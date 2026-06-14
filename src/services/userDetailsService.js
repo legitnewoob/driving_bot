@@ -20,7 +20,7 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
 
   // If new user → start flow
   if (!user) {
-    user = new User({ phone: from, instructorId: instructorId, currentStep: steps[0] });
+    user = new User({ phone: from, instructorId: instructorId, currentStep: steps[0], onboardingStarted: true });
     await user.save();
     await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
     return { inProgress: true };
@@ -28,6 +28,20 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
 
   // If user details already complete
   if (user.detailsCompleted) return { inProgress: false, user };
+
+  // If this is a pre-created record (e.g. an instructor added the learner via
+  // the dashboard) and the learner hasn't been prompted yet, send the first
+  // prompt now instead of treating their message as an answer to currentStep.
+  if (!user.onboardingStarted) {
+    user.onboardingStarted = true;
+    await user.save();
+    if (user.currentStep === steps[0]) {
+      await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
+    } else {
+      await send(from, `Please provide your *${user.currentStep}*`);
+    }
+    return { inProgress: true };
+  }
 
   const currentStep = user.currentStep;
 
@@ -67,4 +81,4 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
   return { inProgress: true };
 }
 
-module.exports = { ensureUserDetails };
+module.exports = { ensureUserDetails, steps };

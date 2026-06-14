@@ -563,6 +563,7 @@ describe("Flow – New User Signup", () => {
       name: "John",
       currentStep: "age",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn().mockResolvedValue(true),
     });
 

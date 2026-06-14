@@ -75,6 +75,7 @@ describe("Signup step progression", () => {
       phone: "447000000001",
       currentStep: "name",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -93,6 +94,7 @@ describe("Signup step progression", () => {
       phone: "447000000001",
       currentStep: "age",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -109,6 +111,7 @@ describe("Signup step progression", () => {
       phone: "447000000001",
       currentStep: "dob",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -131,6 +134,7 @@ describe("Final step – postalCode + geocoding", () => {
       phone: "447000000001",
       currentStep: "postalCode",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -159,6 +163,7 @@ describe("Final step – postalCode + geocoding", () => {
       phone: "447000000001",
       currentStep: "postalCode",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -247,6 +252,7 @@ describe("Edge cases", () => {
       phone: "447000000001",
       currentStep: "name",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -261,6 +267,7 @@ describe("Edge cases", () => {
       phone: "447000000001",
       currentStep: "age",
       detailsCompleted: false,
+      onboardingStarted: true,
       save: jest.fn(),
     };
     User.findOne.mockResolvedValue(mockUser);
@@ -269,5 +276,49 @@ describe("Edge cases", () => {
     await ensureUserDetails("447000000001", "age", sendFn);
 
     expect(sendFn).toHaveBeenCalledWith("447000000001", expect.stringContaining("age"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. Pre-created learner (instructor-added) — first prompt
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Pre-created learner (onboardingStarted = false)", () => {
+  it("sends the name prompt and marks onboardingStarted without consuming the message", async () => {
+    const mockUser = {
+      phone: "447000000001",
+      currentStep: "name",
+      detailsCompleted: false,
+      onboardingStarted: false,
+      save: jest.fn(),
+    };
+    User.findOne.mockResolvedValue(mockUser);
+
+    const result = await ensureUserDetails("447000000001", "Hi", sendFn);
+
+    expect(mockUser.onboardingStarted).toBe(true);
+    expect(mockUser.save).toHaveBeenCalled();
+    expect(mockUser.name).toBeUndefined();
+    expect(sendFn).toHaveBeenCalledWith("447000000001", expect.stringContaining("name"));
+    expect(result.inProgress).toBe(true);
+  });
+
+  it("sends the prompt for a later currentStep (e.g. age) when name was pre-filled", async () => {
+    const mockUser = {
+      phone: "447000000001",
+      name: "Raj",
+      currentStep: "age",
+      detailsCompleted: false,
+      onboardingStarted: false,
+      save: jest.fn(),
+    };
+    User.findOne.mockResolvedValue(mockUser);
+
+    const result = await ensureUserDetails("447000000001", "Hi", sendFn);
+
+    expect(mockUser.onboardingStarted).toBe(true);
+    expect(mockUser.age).toBeUndefined();
+    expect(sendFn).toHaveBeenCalledWith("447000000001", expect.stringContaining("age"));
+    expect(result.inProgress).toBe(true);
   });
 });

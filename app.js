@@ -1,9 +1,11 @@
 const express = require('express');
+const cors = require('cors');
 const authRoutes = require('./src/routes/auth');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
 const bookingRoutes = require('./src/routes/bookings');
+const learnerRoutes = require('./src/routes/learners');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
@@ -39,6 +41,14 @@ const logAuth = basicAuth({
 });
 
 
+// CORS (scoped to the instructor dashboard's origins)
+const dashboardOrigins = (process.env.DASHBOARD_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use('/api/learners', cors({ origin: dashboardOrigins }));
+
 // Middleware
 app.use(express.json());
 connectDB();
@@ -49,6 +59,7 @@ app.use('/auth' , authRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', logAuth, bookingRoutes);
+app.use('/api/learners', learnerRoutes);
 
 // Mock Route (development only)
 if (process.env.NODE_ENV === 'development') {

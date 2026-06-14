@@ -12,13 +12,15 @@
     "test:route": "jest --verbose tests/integration/routeOptimizer",
     "test:coverage": "jest --coverage --collectCoverageFrom=\"src/**/*.js\" --testPathIgnorePatterns=tests/e2e",
     "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --verbose --config jest.config.e2e.js",
-    "test:e2e:report": "cross-env NODE_OPTIONS=--experimental-vm-modules EMAIL_REPORT=1 jest --verbose --config jest.config.e2e.js"  },
+    "test:e2e:report": "cross-env NODE_OPTIONS=--experimental-vm-modules EMAIL_REPORT=1 jest --verbose --config jest.config.e2e.js"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.4.0",
     "chalk": "^5.6.0",
     "chrono-node": "^2.8.4",
+    "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.18.2",
     "express-basic-auth": "^1.2.1",

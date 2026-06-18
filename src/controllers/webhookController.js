@@ -178,7 +178,10 @@ class WebhookController {
         return this._send(from, `⚠️ No booking found with ID: ${bookingId}`);
       }
       if (booking.status === "cancelled") {
-        await this._send(from, `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`);
+        await this._send(
+          from,
+          `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.\n\n_Would you like help booking a replacement lesson, or is there anything else I can help with?_ 💬`
+        );
         this.clearUserConversationHistoryAndContext(from);
         return;
       }

@@ -77,6 +77,18 @@ class TimezoneUtils {
     return hoursUntil < 24;
   }
 
+  /**
+   * Get the number of hours from now until a given date/time (in configured timezone).
+   * @param {string} dateStr - Date in YYYY-MM-DD format
+   * @param {string} timeStr - Time in HH:MM format
+   * @returns {number} Hours until the given date/time (negative if in the past)
+   */
+  getHoursUntil(dateStr, timeStr = '00:00') {
+    const now = moment.tz(this.timezone);
+    const targetDateTime = moment.tz(`${dateStr} ${timeStr}`, 'YYYY-MM-DD HH:mm', this.timezone);
+    return targetDateTime.diff(now, 'hours', true);
+  }
+
   isDayRestricted(dateStr , timeStr = '00:00') {
     // Get the current time in your timezone
     const now = moment.tz(this.timezone);

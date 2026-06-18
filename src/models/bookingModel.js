@@ -8,12 +8,16 @@ const bookingSchema = new mongoose.Schema({
   time: { type: String, required: true },   // "09:00"
   instructorId: { type: String, required: true },
   calendarEventId: { type: String },        // Google Calendar event ID for easy reschedule/cancel
-  status: { 
-    type: String, 
-    enum: ["confirmed", "cancelled", "rescheduled"], 
-    default: "confirmed" 
+  status: {
+    type: String,
+    enum: ["confirmed", "cancelled", "rescheduled"],
+    default: "confirmed"
   },
   postalCode: { type: String, required: true },
+
+  // Lesson reminder tracking (prevents duplicate sends)
+  reminder48hSent: { type: Boolean, default: false },
+  reminder24hSent: { type: Boolean, default: false },
 
   // Fields for location details (legacy – user profile location)
   location: {

@@ -10,7 +10,7 @@ const bookingSchema = new mongoose.Schema({
   calendarEventId: { type: String },        // Google Calendar event ID for easy reschedule/cancel
   status: { 
     type: String, 
-    enum: ["confirmed", "cancelled", "rescheduled"], 
+    enum: ["confirmed", "cancelled", "rescheduled", "completed"], 
     default: "confirmed" 
   },
   postalCode: { type: String, required: true },

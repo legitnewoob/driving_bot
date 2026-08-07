@@ -184,6 +184,7 @@ router.get("/activity", async (req, res) => {
       }
 
       return {
+        id: b.bookingId || b._id.toString(),
         type,
         studentId: null, // Portal maps by phone, not mongo id
         studentName,

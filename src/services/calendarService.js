@@ -1,135 +1,66 @@
 const { oauth2Client, calendar } = require("../config/google");
-const { getInstructor } = require("../models/instructorModel");
-const timezoneUtils = require("../utils/timezoneUtils"); // ✅ import utils
+const timezoneUtils = require("../utils/timezoneUtils");
+const logger = require("../utils/logger-advanced");
+const { notifyInvalidGrant } = require("../utils/emailNotifier");
+
+/**
+ * Check if an error is an invalid_grant (expired/revoked refresh token).
+ */
+function isInvalidGrant(error) {
+  const msg = error?.message || "";
+  const code = error?.response?.data?.error || "";
+  return msg.includes("invalid_grant") || code === "invalid_grant";
+}
 
 class CalendarService {
+
   /**
-   * Finds the earliest available time slot for an instructor,
-   * starting the search 2 days from the current date.
-   * @param {string} instructorId - The ID of the instructor.
-   * @returns {Promise<{date: string, time: string} | null>} - The earliest slot or null if none found.
+   * Set OAuth2 credentials from the instructor's refresh token.
+   * @param {Object} instructor - Instructor record from DB
    */
-  // async findEarliestAvailableSlot(instructorId) {
-  //   console.log(
-  //     `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
-  //   );
-  //   try {
-  //     const instructor = getInstructor(instructorId);
-  //     if (!instructor) {
-  //       console.error(`❌ Instructor not found: ${instructorId}`);
-  //       throw new Error("Instructor not found");
-  //     }
+  _setCredentials(instructor) {
+    oauth2Client.setCredentials({
+      refresh_token: instructor.googleRefreshToken,
+    });
+  }
 
-  //     // Rule: Start checking from 2 days from now
-  //     const startDate = timezoneUtils.getCurrentDate();
-  //     startDate.setDate(startDate.getDate() + 2);
-  //     console.log(`Starting search from date: ${startDate.toDateString()}`);
-  //     // Search for up to 90 days in the future
-  //     for (let i = 0; i < 90; i++) {
-  //       const dateToCheck = new Date(startDate);
-  //       console.log(`Checking date: ${dateToCheck.toDateString()}`);
-  //       dateToCheck.setDate(startDate.getDate() + i);
-
-  //       // Skip weekends (Saturday=6, Sunday=0)
-  //       const dayOfWeek = dateToCheck.getDay();
-  //       if (dayOfWeek === 0 || dayOfWeek === 6) {
-  //         continue; // Skip to the next day
-  //       }
-
-  //       // Format date to 'YYYY-MM-DD'
-  //       const formattedDate = dateToCheck.toISOString().split("T")[0];
-
-  //       // Check each available time slot for that day
-  //       for (const time of instructor.availableTimes) {
-  //         const availability = await this.checkAvailability(
-  //           formattedDate,
-  //           time,
-  //           instructorId
-  //         );
-
-  //         if (availability.isAvailable) {
-  //           // Found the earliest slot, return it immediately
-  //           console.log(
-  //             `✅ Earliest available slot found: ${formattedDate} at ${time}`
-  //           );
-  //           return { date: formattedDate, time: time };
-  //         }
-  //       }
-  //     }
-
-  //     // If the loop finishes, no slots were found in the 90-day window
-  //     console.log("🤷 No available slots found in the next 90 days.");
-  //     return null;
-  //   } catch (error) {
-  //     console.error(
-  //       "❌ Error finding the earliest available slot:",
-  //       error.message
-  //     );
-  //     return null; // Return null on error to prevent crashes
-  //   }
-  // }
-
-  // ... rest of your CalendarService class
-  async findEarliestAvailableSlot(instructorId) {
-    console.log(
-      `🔎 Searching for the earliest available slot for instructor ${instructorId}...`
-    );
+  async findEarliestAvailableSlot(instructor) {
     try {
-      const instructor = getInstructor(instructorId);
       if (!instructor) {
-        console.error(`❌ Instructor not found: ${instructorId}`);
-        throw new Error("Instructor not found");
+        throw new Error("Instructor object is required");
       }
 
-      // Rule: Start checking from 2 days from now.
-      // Get today's date string and add 2 days to it.
       const today = timezoneUtils.getCurrentDateString();
       let dateToCheck = timezoneUtils.addDays(today, 2);
 
-      console.log(`Starting search from date: ${dateToCheck}`);
-
-      // Search for up to 90 days in the future
       for (let i = 0; i < 90; i++) {
-        // For every loop after the first, advance the date by one day.
         if (i > 0) {
           dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
         }
-        console.log(`Checking date: ${dateToCheck}`);
-
-        // Skip weekends using your new utility function
         if (timezoneUtils.isWeekend(dateToCheck)) {
-          continue; // Skip to the next day
+          continue;
         }
 
-        // The 'dateToCheck' variable is already the correctly formatted string. No more conversions needed!
-        for (const time of instructor.availableTimes) {
-          const availability = await this.checkAvailability(
-            dateToCheck, // Use the safe string directly
-            time,
-            instructorId
-          );
+        const events = await this.getEventsForDate(dateToCheck, instructor);
 
-          if (availability.isAvailable) {
-            // Found the earliest slot, return it immediately
-            console.log(
-              `✅ Earliest available slot found: ${dateToCheck} at ${time}`
-            );
+        for (const time of instructor.availableTimes) {
+          const { isAvailable } = this.checkSlotAgainstEvents(dateToCheck, time, events);
+
+          if (isAvailable) {
+            logger.info(`Earliest available slot: ${dateToCheck} at ${time}`);
             return { date: dateToCheck, time: time };
           }
         }
       }
 
-      // If the loop finishes, no slots were found
-      console.log("🤷 No available slots found in the next 90 days.");
+      logger.warn("No available slots found in the next 90 days");
       return null;
     } catch (error) {
-      console.error(
-        "❌ Error finding the earliest available slot:",
-        error.message
-      );
+      logger.error(`Error finding earliest slot: ${error.message}`);
       return null;
     }
   }
+
   /**
    * Build start and end DateTime objects in configured timezone
    */
@@ -140,58 +71,75 @@ class CalendarService {
 
     return { startDateTime, endDateTime };
   }
-  async checkAvailability(date, time, instructorId) {
+
+  /**
+   * Fetches all calendar events for a given date in a single API call.
+   * @param {string} date - "YYYY-MM-DD"
+   * @param {Object} instructor - Instructor record from DB
+   * @returns {object[]} array of calendar event objects
+   */
+  async getEventsForDate(date, instructor) {
+    this._setCredentials(instructor);
+
+    const dayStart = timezoneUtils.createDateInTimezone(date, "00:00");
+    const dayEnd = timezoneUtils.createDateInTimezone(date, "00:00");
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
     try {
-      console.log(`🔍 Checking availability for ${date} at ${time}...`);
-      // console.log("Using instructor ID:", instructorId);
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
-
-      // console.log("Refresh token:", process.env.GOOGLE_REFRESH_TOKEN);
-      const instructor = getInstructor(instructorId);
-      // console.log("Using instructor:", instructor);
-      if (!instructor) {
-        console.error(`❌ Instructor not found: ${instructorId}`);
-        return { isAvailable: false, error: "Instructor not found" };
-      }
-
-      const { startDateTime, endDateTime } = this.buildDateTimes(date, time);
-
-      if (isNaN(startDateTime.getTime())) {
-        console.error(`❌ Invalid date/time format: ${date} ${time}`);
-        return { isAvailable: false, error: "Invalid date/time format" };
-      }
-
       const response = await calendar.events.list({
         calendarId: instructor.googleCalendarId,
-        timeMin: startDateTime.toISOString(),
-        timeMax: endDateTime.toISOString(),
+        timeMin: dayStart.toISOString(),
+        timeMax: dayEnd.toISOString(),
         singleEvents: true,
         orderBy: "startTime",
       });
 
-      const events = response.data.items || [];
-
-      const conflictingEvents = events.filter((event) => {
-        if (!event.start || !event.end) return false;
-
-        const eventStart = new Date(event.start.dateTime || event.start.date);
-        const eventEnd = new Date(event.end.dateTime || event.end.date);
-
-        return startDateTime < eventEnd && endDateTime > eventStart;
-      });
-
-      const isAvailable = conflictingEvents.length === 0;
-      console.log(
-        `✅ Time slot ${date} at ${time} is ${
-          isAvailable ? "AVAILABLE" : "NOT AVAILABLE"
-        }`
-      );
-
-      return { isAvailable, conflictingEvents };
+      return response.data.items || [];
     } catch (error) {
-      console.error("❌ Error checking calendar availability:", error.message);
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in getEventsForDate`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Checks whether a specific slot conflicts with a list of events.
+   * @param {string} date
+   * @param {string} time
+   * @param {object[]} events - pre-fetched calendar events for the day
+   * @returns {{isAvailable: boolean, conflictingEvents: object[]}}
+   */
+  checkSlotAgainstEvents(date, time, events) {
+    const { startDateTime, endDateTime } = this.buildDateTimes(date, time);
+
+    if (isNaN(startDateTime.getTime())) {
+      return { isAvailable: false, error: "Invalid date/time format" };
+    }
+
+    const conflictingEvents = events.filter((event) => {
+      if (!event.start || !event.end) return false;
+      const eventStart = new Date(event.start.dateTime || event.start.date);
+      const eventEnd = new Date(event.end.dateTime || event.end.date);
+      return startDateTime < eventEnd && endDateTime > eventStart;
+    });
+
+    return { isAvailable: conflictingEvents.length === 0, conflictingEvents };
+  }
+
+  async checkAvailability(date, time, instructor) {
+    try {
+      if (!instructor) {
+        return { isAvailable: false, error: "Instructor not found" };
+      }
+
+      const events = await this.getEventsForDate(date, instructor);
+      const result = this.checkSlotAgainstEvents(date, time, events);
+
+      return result;
+    } catch (error) {
+      logger.error(`Calendar availability check error: ${error.message}`);
       return {
         isAvailable: false,
         error: `Could not verify calendar availability: ${error.message}`,
@@ -200,37 +148,25 @@ class CalendarService {
     }
   }
 
-  async getAvailableTimeSlotsForDate(date, instructorId) {
+  async getAvailableTimeSlotsForDate(date, instructor) {
     try {
-      const instructor = getInstructor(instructorId);
-      const availableSlots = [];
+      const events = await this.getEventsForDate(date, instructor);
 
-      for (const time of instructor.availableTimes) {
-        const availability = await this.checkAvailability(
-          date,
-          time,
-          instructorId
-        );
-        if (availability.isAvailable) {
-          availableSlots.push(time);
-        }
-      }
-      
+      const availableSlots = instructor.availableTimes.filter((time) => {
+        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events);
+        return isAvailable;
+      });
+
       return availableSlots;
     } catch (error) {
-      console.error("❌ Error getting available time slots:", error);
-      const instructor = getInstructor(instructorId);
+      logger.error(`Error getting available time slots: ${error.message}`);
       return instructor.availableTimes;
     }
   }
 
-  async getCalendarContext(instructorId) {
+  async getCalendarContext(instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
-
-      const instructor = getInstructor(instructorId);
+      this._setCredentials(instructor);
 
       const now = timezoneUtils.getCurrentDate();
       const twoWeeksFromNow = new Date(
@@ -260,18 +196,19 @@ class CalendarService {
         })
         .filter(Boolean);
     } catch (error) {
-      console.error("❌ Error getting calendar context:", error.message);
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in getCalendarContext`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error getting calendar context: ${error.message}`);
       return [];
     }
   }
 
-  async createEvent(bookingData) {
+  async createEvent(bookingData, instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
+      this._setCredentials(instructor);
 
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.date,
         bookingData.time
@@ -279,7 +216,12 @@ class CalendarService {
 
       const event = {
         summary: `Driving Lesson - ${bookingData.userPhone}`,
-        description: `Driving lesson booking\nPhone: ${bookingData.userPhone}`,
+        description: [
+          `Driving lesson booking`,
+          `Phone: ${bookingData.userPhone}`,
+          bookingData.pickupAddress ? `Pickup: ${bookingData.pickupAddress}` : null,
+          bookingData.dropoffAddress ? `Drop-off: ${bookingData.dropoffAddress}` : null,
+        ].filter(Boolean).join("\n"),
         start: {
           dateTime: timezoneUtils.formatDate(
             startDateTime,
@@ -305,26 +247,89 @@ class CalendarService {
 
       return response.data;
     } catch (error) {
-      console.error("❌ Error creating calendar event:", error.message);
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in createEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error creating calendar event: ${error.message}`);
       throw error;
     }
   }
 
-  async updateEvent(eventId, bookingData, fromUser) {
+  async createBlockEvent({ date, startTime, endTime, isFullDay, reason }, instructor) {
     try {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+      this._setCredentials(instructor);
+
+      const summary = reason || "Blocked";
+      let event;
+
+      if (isFullDay) {
+        // All-day event: use date-only start/end (end is exclusive in Google Calendar)
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const endDate = nextDay.toISOString().slice(0, 10);
+
+        event = {
+          summary: `🚫 ${summary}`,
+          description: `Time blocked by instructor via Portal.\nReason: ${summary}`,
+          start: { date },
+          end: { date: endDate },
+        };
+      } else {
+        const { startDateTime, endDateTime } = (() => {
+          const s = timezoneUtils.createDateInTimezone(date, startTime);
+          const e = timezoneUtils.createDateInTimezone(date, endTime);
+          return { startDateTime: s, endDateTime: e };
+        })();
+
+        event = {
+          summary: `🚫 ${summary}`,
+          description: `Time blocked by instructor via Portal.\nReason: ${summary}`,
+          start: {
+            dateTime: timezoneUtils.formatDate(startDateTime, "YYYY-MM-DDTHH:mm:ss"),
+            timeZone: timezoneUtils.timezone,
+          },
+          end: {
+            dateTime: timezoneUtils.formatDate(endDateTime, "YYYY-MM-DDTHH:mm:ss"),
+            timeZone: timezoneUtils.timezone,
+          },
+        };
+      }
+
+      const response = await calendar.events.insert({
+        calendarId: instructor.googleCalendarId,
+        auth: oauth2Client,
+        resource: event,
       });
 
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
+      logger.info(`Block event created on ${date}: ${response.data.id}`);
+      return response.data;
+    } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in createBlockEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error creating block event: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateEvent(eventId, bookingData, instructor) {
+    try {
+      this._setCredentials(instructor);
+
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.newDate,
         bookingData.newTime
       );
 
       const event = {
-        summary: `Driving Lesson - ${bookingData.newLessonType} - ${fromUser}`,
-        description: `Driving lesson booking\nPhone: ${fromUser}`,
+        summary: `Driving Lesson - ${bookingData.userPhone || ""}`,
+        description: [
+          `Driving lesson booking`,
+          bookingData.pickupAddress ? `Pickup: ${bookingData.pickupAddress}` : null,
+          bookingData.dropoffAddress ? `Drop-off: ${bookingData.dropoffAddress}` : null,
+        ].filter(Boolean).join("\n"),
         start: {
           dateTime: startDateTime.toISOString(),
           timeZone: timezoneUtils.timezone,
@@ -342,35 +347,39 @@ class CalendarService {
         resource: event,
       });
 
-      console.log(`✅ Calendar event updated: ${eventId}`);
+      logger.info(`Calendar event updated: ${eventId}`);
       return response.data;
     } catch (error) {
-      console.error("❌ Error updating calendar event:", error.message);
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in updateEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error updating calendar event: ${error.message}`);
       throw error;
     }
   }
 
-  async deleteEvent(eventId) {
+  async deleteEvent(eventId, instructor) {
     try {
       if (!eventId) {
         throw new Error("Event ID is required for deletion");
       }
 
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      });
-
-      const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
+      this._setCredentials(instructor);
 
       await calendar.events.delete({
         calendarId: instructor.googleCalendarId,
         eventId,
       });
 
-      console.log(`✅ Calendar event deleted: ${eventId}`);
+      logger.info(`Calendar event deleted: ${eventId}`);
       return { success: true, eventId };
     } catch (error) {
-      console.error("❌ Error deleting calendar event:", error.message);
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in deleteEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error deleting calendar event: ${error.message}`);
       throw error;
     }
   }

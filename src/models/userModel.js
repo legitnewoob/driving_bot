@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
   phone: { type: String, unique: true },
+  instructorId: { type: String, required: true, index: true },
   name: String,
   age: Number,
   dob: String,
@@ -13,6 +14,6 @@ const userSchema = new mongoose.Schema({
     longitude: { type: Number }
   },
 
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model("User", userSchema);

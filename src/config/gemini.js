@@ -1,7 +1,6 @@
 const config = require("./env");
 
 console.log("Running in:", config.env);
-console.log("DB URL:", config.dbUrl);
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);

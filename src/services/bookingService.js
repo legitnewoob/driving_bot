@@ -7,13 +7,14 @@ const {
 const Booking = require("../models/bookingModel");
 const User = require("../models/userModel");
 const { customAlphabet } = require("nanoid");
+const logger = require("../utils/logger-advanced");
+const { getCoordinatesFromPostalCode } = require("./mapsService");
 
 class BookingService {
   async getBookingsByUser(userPhone) {
-    console.log("Fetching bookings for user:", userPhone);
     return await Booking.find({
       userPhone,
-      status: ["confirmed", "rescheduled"],
+      status: { $in: ["confirmed", "rescheduled"] },
     }).sort({
       date: 1,
       time: 1,
@@ -33,16 +34,18 @@ class BookingService {
       try {
         await calendarService.deleteEvent(booking.calendarEventId);
       } catch (err) {
-        console.error("Calendar deletion failed:", err.message);
+        logger.error(`Calendar deletion failed: ${err.message}`);
         // continue cancellation even if calendar event deletion fails
       }
 
       // Update Google Sheets
       try {
+        const instructor = await getInstructor(booking.instructorId);
         const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
           booking.instructorId
         );
-        const learnerName = await sheetsService.getLearnerName(
+        const user = await User.findOne({ phone: booking.userPhone });
+        const learnerName = user?.name || await sheetsService.getLearnerName(
           booking.userPhone,
           booking
         );
@@ -55,10 +58,11 @@ class BookingService {
             location: booking.location || "",
           },
           booking,
-          "cancel"
+          "cancel",
+          instructor
         );
       } catch (err) {
-        console.error("Sheets update failed during cancellation:", err.message);
+        logger.error(`Sheets update failed during cancellation: ${err.message}`);
         // Continue with cancellation even if sheets update fails
       }
 
@@ -67,20 +71,13 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Cancel booking error:", err);
+      logger.error(`Cancel booking error: ${err.message}`);
       throw new Error("Internal server error while cancelling booking.");
     }
   }
 
-  async validateBooking(bookingData) {
-    console.log(
-      "🔍 Validating booking data:",
-      JSON.stringify(bookingData, null, 2)
-    );
-
+  async validateBooking(bookingData, instructor) {
     const availableDates = getAvailableDates();
-    const instructorId = process.env.PHONE_NUMBER_ID;
-    const instructor = getInstructor(instructorId);
 
     const errors = [];
 
@@ -92,7 +89,6 @@ class BookingService {
     if (errors.length > 0) return errors;
 
     // Validate date
-    console.log(availableDates);
     if (!availableDates.includes(bookingData.date)) {
       errors.push(
         "Date is not available. Please choose from available weekdays."
@@ -114,24 +110,33 @@ class BookingService {
     //   );
     // }
 
-    // Check calendar availability
+    // Check calendar availability (single API call for the whole day)
     if (errors.length === 0) {
-      const availability = await calendarService.checkAvailability(
+      const events = await calendarService.getEventsForDate(
         bookingData.date,
-        bookingData.time,
-        instructorId
+        instructor
       );
 
-      if (!availability.isAvailable && !availability.warning) {
+      const availability = calendarService.checkSlotAgainstEvents(
+        bookingData.date,
+        bookingData.time,
+        events
+      );
+
+      if (!availability.isAvailable) {
         errors.push(
           `The time slot ${bookingData.time} on ${bookingData.date} is already booked.`
         );
 
-        const availableSlots =
-          await calendarService.getAvailableTimeSlotsForDate(
+        const availableSlots = instructor.availableTimes.filter((time) => {
+          const { isAvailable } = calendarService.checkSlotAgainstEvents(
             bookingData.date,
-            instructorId
+            time,
+            events
           );
+          return isAvailable;
+        });
+
         if (availableSlots.length > 0) {
           errors.push(
             `Available times for ${bookingData.date}: ${availableSlots.join(
@@ -151,7 +156,6 @@ class BookingService {
 
   async rescheduleBooking(from, bookingData) {
     const { newDate, newTime, bookingId } = bookingData;
-    console.log("From user:", from, "bookingData:", bookingData);
     
     // Step 1: Find booking
     const booking = await Booking.findOne({ bookingId });
@@ -161,12 +165,16 @@ class BookingService {
     const user = await User.findOne({ phone: from });
     if (!user) throw new Error("User not found");
 
+    // Step 2b: Resolve instructor from the booking's stored instructorId
+    const instructor = await getInstructor(booking.instructorId);
+    if (!instructor) throw new Error("Instructor not found for this booking");
+
     // Step 3: Validate slot availability
     const validationErrors = await this.validateBooking({
       ...booking.toObject(),
       date: newDate,
       time: newTime,
-    });
+    }, instructor);
     if (validationErrors.length > 0)
       throw new Error(validationErrors.join(". "));
 
@@ -174,7 +182,7 @@ class BookingService {
     await calendarService.updateEvent(
       booking.calendarEventId,
       bookingData,
-      from
+      instructor
     );
 
     // Step 5: Update Google Sheets
@@ -182,7 +190,7 @@ class BookingService {
       const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
         booking.instructorId
       );
-      const learnerName = await sheetsService.getLearnerName(from, booking);
+      const learnerName = user.name || await sheetsService.getLearnerName(from, booking);
 
       await sheetsService.updateLearnerRecord(
         spreadsheetId,
@@ -192,39 +200,67 @@ class BookingService {
           location: booking.location || user.postalCode || "",
         },
         bookingData,
-        "reschedule"
+        "reschedule",
+        instructor
       );
     } catch (err) {
-      console.error("Sheets update failed during rescheduling:", err.message);
+      logger.error(`Sheets update failed during rescheduling: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
-    // Step 6: Update Mongo booking fields
+    // Step 6: Geocode new pickup/drop-off if provided
+    if (bookingData.pickupAddress) {
+      try {
+        logger.info(`Geocoding pickup address for reschedule ${bookingId}: "${bookingData.pickupAddress}"`);
+        const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
+        booking.pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Pickup geocoded for reschedule ${bookingId}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.pickupAddress}`);
+      } catch (err) {
+        logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
+        booking.pickupLocation = { address: bookingData.pickupAddress };
+      }
+    }
+
+    if (bookingData.dropoffAddress) {
+      try {
+        logger.info(`Geocoding drop-off address for reschedule ${bookingId}: "${bookingData.dropoffAddress}"`);
+        const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
+        booking.dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Drop-off geocoded for reschedule ${bookingId}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.dropoffAddress}`);
+      } catch (err) {
+        logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
+        booking.dropoffLocation = { address: bookingData.dropoffAddress };
+      }
+    }
+
+    // Step 7: Update Mongo booking fields
     booking.date = newDate;
     booking.time = newTime;
     booking.status = "rescheduled";
 
-    // Optional: If you want to sync updated location
+    // Sync updated location from user profile
     booking.postalCode = user.postalCode || booking.postalCode;
-    booking.lat = user.lat || booking.lat;
-    booking.long = user.long || booking.long;
+    if (user.location?.latitude && user.location?.longitude) {
+      booking.location = {
+        latitude: user.location.latitude,
+        longitude: user.location.longitude,
+      };
+    }
 
     await booking.save();
 
-    console.log(`✅ Booking ${bookingId} rescheduled for ${from}`);
+    logger.info(`Booking ${bookingId} rescheduled for ${from}`);
     return booking;
   }
 
-  async createBooking(from, bookingData) {
-    const validationErrors = await this.validateBooking(bookingData);
+  async createBooking(from, bookingData, instructor) {
+    const validationErrors = await this.validateBooking(bookingData, instructor);
     if (validationErrors.length > 0) {
       throw new Error(validationErrors.join(". "));
     }
 
     // ✅ Step 1: Fetch user details
-    const user = await require("../models/userModel").findOne({
-      phone: from,
-    });
+    const user = await User.findOne({ phone: from });
 
     if (!user) {
       throw new Error("User not found. Please complete your profile first.");
@@ -240,20 +276,48 @@ class BookingService {
       );
     }
 
-    // ✅ Step 2: Create event in Google Calendar
-    const calendarEvent = await calendarService.createEvent(bookingData);
+    // ✅ Step 2: Geocode pickup & drop-off addresses
+    let pickupLocation = {};
+    let dropoffLocation = {};
 
-    // ✅ Step 3: Generate booking ID
+    if (bookingData.pickupAddress) {
+      try {
+        logger.info(`Geocoding pickup address for ${from}: "${bookingData.pickupAddress}"`);
+        const geo = await getCoordinatesFromPostalCode(bookingData.pickupAddress);
+        pickupLocation = { address: bookingData.pickupAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Pickup geocoded for ${from}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.pickupAddress}`);
+      } catch (err) {
+        logger.warn(`Pickup geocoding failed for "${bookingData.pickupAddress}": ${err.message}`);
+        pickupLocation = { address: bookingData.pickupAddress };
+      }
+    }
+
+    if (bookingData.dropoffAddress) {
+      try {
+        logger.info(`Geocoding drop-off address for ${from}: "${bookingData.dropoffAddress}"`);
+        const geo = await getCoordinatesFromPostalCode(bookingData.dropoffAddress);
+        dropoffLocation = { address: bookingData.dropoffAddress, latitude: geo.lat, longitude: geo.lng };
+        logger.info(`Drop-off geocoded for ${from}: (${geo.lat}, ${geo.lng}) — ${geo.formattedAddress || bookingData.dropoffAddress}`);
+      } catch (err) {
+        logger.warn(`Drop-off geocoding failed for "${bookingData.dropoffAddress}": ${err.message}`);
+        dropoffLocation = { address: bookingData.dropoffAddress };
+      }
+    }
+
+    // ✅ Step 3: Create event in Google Calendar
+    const calendarEvent = await calendarService.createEvent(bookingData, instructor);
+
+    // ✅ Step 4: Generate booking ID
     const nanoid = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4); // no O/0/I/1 confusion
     const bookingId = `DL-${nanoid()}`;
 
-    // ✅ Step 4: Create booking with user location + postal code
+    // ✅ Step 5: Create booking with user location + pickup/drop-off
     const newBooking = await Booking.create({
       bookingId,
       userPhone: bookingData.userPhone,
       date: bookingData.date,
       time: bookingData.time,
-      instructorId: process.env.PHONE_NUMBER_ID,
+      instructorId: instructor.phoneNumberId,
       calendarEventId: calendarEvent.id,
       status: "confirmed",
       postalCode: user.postalCode,
@@ -261,16 +325,16 @@ class BookingService {
         latitude: user.location.latitude,
         longitude: user.location.longitude,
       },
+      pickupLocation,
+      dropoffLocation,
     });
 
-    const instructor = getInstructor(process.env.PHONE_NUMBER_ID);
-
-    // ✅ Step 5: Update Google Sheets
+    // ✅ Step 6: Update Google Sheets
     try {
-      const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
-        process.env.PHONE_NUMBER_ID
+      const spreadsheetId = instructor.spreadsheetId || sheetsService.getInstructorSpreadsheetId(
+        instructor.phoneNumberId
       );
-      const learnerName = await sheetsService.getLearnerName(
+      const learnerName = user.name || await sheetsService.getLearnerName(
         bookingData.userPhone,
         bookingData
       );
@@ -283,20 +347,17 @@ class BookingService {
           location: user.postalCode,
         },
         bookingData,
-        "create"
+        "create",
+        instructor
       );
     } catch (err) {
-      console.error(
-        "Sheets update failed during booking creation:",
-        err.message
-      );
+      logger.error(`Sheets update failed during booking creation: ${err.message}`);
       // Continue even if Sheets update fails
     }
 
     return {
       booking: newBooking,
       calendarEvent,
-      instructor,
       bookingData,
     };
   }
@@ -311,10 +372,12 @@ class BookingService {
 
       // Update Google Sheets
       try {
+        const instructor = await getInstructor(booking.instructorId);
         const spreadsheetId = sheetsService.getInstructorSpreadsheetId(
           booking.instructorId
         );
-        const learnerName = await sheetsService.getLearnerName(
+        const user = await User.findOne({ phone: booking.userPhone });
+        const learnerName = user?.name || await sheetsService.getLearnerName(
           booking.userPhone,
           booking
         );
@@ -327,10 +390,11 @@ class BookingService {
             location: booking.location || "",
           },
           booking,
-          "complete"
+          "complete",
+          instructor
         );
       } catch (err) {
-        console.error("Sheets update failed during completion:", err.message);
+        logger.error(`Sheets update failed during completion: ${err.message}`);
       }
 
       booking.status = "completed";
@@ -338,7 +402,7 @@ class BookingService {
 
       return booking;
     } catch (err) {
-      console.error("Complete booking error:", err);
+      logger.error(`Complete booking error: ${err.message}`);
       throw new Error("Internal server error while completing booking.");
     }
   }

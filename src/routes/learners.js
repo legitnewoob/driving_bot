@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require("../models/userModel");
 const Booking = require("../models/bookingModel");
 const Payment = require("../models/paymentModel");
+const { getCoordinatesFromPostalCode } = require("../services/mapsService");
 const logger = require("../utils/logger-advanced");
 
 // ─── GET /api/learners ────────────────────────────────────────────────────
@@ -69,9 +70,28 @@ router.post("/", async (req, res) => {
       if (name) user.name = name;
       if (age != null) user.age = age;
       if (dob) user.dob = dob;
-      if (postalCode) user.postalCode = postalCode;
+      if (postalCode && postalCode !== user.postalCode) {
+        user.postalCode = postalCode;
+        try {
+          const { lat, lng } = await getCoordinatesFromPostalCode(postalCode);
+          user.location = { latitude: lat, longitude: lng };
+        } catch (err) {
+          logger.warn(`Geocoding failed for "${postalCode}": ${err.message}`);
+        }
+      }
       await user.save();
       return res.json({ success: true, data: user.toObject(), created: false });
+    }
+
+    // Geocode postal code if provided
+    let location = null;
+    if (postalCode) {
+      try {
+        const { lat, lng } = await getCoordinatesFromPostalCode(postalCode);
+        location = { latitude: lat, longitude: lng };
+      } catch (err) {
+        logger.warn(`Geocoding failed for "${postalCode}": ${err.message}`);
+      }
     }
 
     // Create new user
@@ -82,6 +102,7 @@ router.post("/", async (req, res) => {
       age: age || null,
       dob: dob || null,
       postalCode: postalCode || null,
+      location: location || undefined,
       detailsCompleted: Boolean(name && phone),
       currentStep: "start",
     });

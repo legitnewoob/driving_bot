@@ -256,6 +256,64 @@ class CalendarService {
     }
   }
 
+  async createBlockEvent({ date, startTime, endTime, isFullDay, reason }, instructor) {
+    try {
+      this._setCredentials(instructor);
+
+      const summary = reason || "Blocked";
+      let event;
+
+      if (isFullDay) {
+        // All-day event: use date-only start/end (end is exclusive in Google Calendar)
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const endDate = nextDay.toISOString().slice(0, 10);
+
+        event = {
+          summary: `🚫 ${summary}`,
+          description: `Time blocked by instructor via Portal.\nReason: ${summary}`,
+          start: { date },
+          end: { date: endDate },
+        };
+      } else {
+        const { startDateTime, endDateTime } = (() => {
+          const s = timezoneUtils.createDateInTimezone(date, startTime);
+          const e = timezoneUtils.createDateInTimezone(date, endTime);
+          return { startDateTime: s, endDateTime: e };
+        })();
+
+        event = {
+          summary: `🚫 ${summary}`,
+          description: `Time blocked by instructor via Portal.\nReason: ${summary}`,
+          start: {
+            dateTime: timezoneUtils.formatDate(startDateTime, "YYYY-MM-DDTHH:mm:ss"),
+            timeZone: timezoneUtils.timezone,
+          },
+          end: {
+            dateTime: timezoneUtils.formatDate(endDateTime, "YYYY-MM-DDTHH:mm:ss"),
+            timeZone: timezoneUtils.timezone,
+          },
+        };
+      }
+
+      const response = await calendar.events.insert({
+        calendarId: instructor.googleCalendarId,
+        auth: oauth2Client,
+        resource: event,
+      });
+
+      logger.info(`Block event created on ${date}: ${response.data.id}`);
+      return response.data;
+    } catch (error) {
+      if (isInvalidGrant(error)) {
+        logger.error(`invalid_grant for instructor ${instructor.name} in createBlockEvent`);
+        notifyInvalidGrant(instructor, "Calendar", error.message);
+      }
+      logger.error(`Error creating block event: ${error.message}`);
+      throw error;
+    }
+  }
+
   async updateEvent(eventId, bookingData, instructor) {
     try {
       this._setCredentials(instructor);

@@ -4,6 +4,7 @@ const User = require("../models/userModel");
 const Booking = require("../models/bookingModel");
 const Payment = require("../models/paymentModel");
 const { getCoordinatesFromPostalCode } = require("../services/mapsService");
+const calendarService = require("../services/calendarService");
 const logger = require("../utils/logger-advanced");
 
 // ─── GET /api/learners ────────────────────────────────────────────────────
@@ -174,7 +175,8 @@ router.get("/bookings", async (req, res) => {
 
 router.post("/bookings", async (req, res) => {
   try {
-    const instructorId = req.instructor.phoneNumberId;
+    const instructor = req.instructor;
+    const instructorId = instructor.phoneNumberId;
     const { userPhone, date, time, postalCode, pickupLocation, dropoffLocation, notes } = req.body;
 
     if (!userPhone || !date || !time) {
@@ -183,8 +185,31 @@ router.post("/bookings", async (req, res) => {
 
     const normalizedPhone = userPhone.replace(/\s+/g, "");
 
+    // Look up student name
+    const user = await User.findOne({ phone: normalizedPhone }).select("name postalCode location").lean();
+    const studentName = user?.name || normalizedPhone;
+
     // Generate a unique bookingId
     const bookingId = `DL-${Date.now().toString(36).toUpperCase()}`;
+
+    // Create Google Calendar event
+    let calendarEventId = null;
+    try {
+      const calendarEvent = await calendarService.createEvent(
+        {
+          date,
+          time,
+          userPhone: studentName,
+          pickupAddress: pickupLocation || "",
+          dropoffAddress: dropoffLocation || "",
+        },
+        instructor
+      );
+      calendarEventId = calendarEvent.id;
+      logger.info(`Calendar event created for booking ${bookingId}: ${calendarEventId}`);
+    } catch (err) {
+      logger.warn(`Calendar event creation failed for booking ${bookingId}: ${err.message}`);
+    }
 
     const booking = await Booking.create({
       bookingId,
@@ -192,34 +217,71 @@ router.post("/bookings", async (req, res) => {
       instructorId,
       date,
       time,
-      postalCode: postalCode || "",
+      calendarEventId,
+      postalCode: postalCode || user?.postalCode || "",
+      location: user?.location || undefined,
       pickupLocation: pickupLocation ? { address: pickupLocation } : undefined,
       dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,
       progressNotes: notes || "",
       status: "confirmed",
     });
 
-    // Look up student name
-    const user = await User.findOne({ phone: normalizedPhone }).select("name").lean();
-
     res.status(201).json({
       success: true,
       data: {
         bookingId: booking.bookingId,
         userPhone: booking.userPhone,
-        studentName: user?.name || normalizedPhone,
+        studentName,
         date: booking.date,
         time: booking.time,
         status: booking.status,
         postalCode: booking.postalCode,
         pickupLocation: booking.pickupLocation || null,
         dropoffLocation: booking.dropoffLocation || null,
+        calendarEventId: booking.calendarEventId || null,
         createdAt: booking.createdAt,
       },
     });
   } catch (err) {
     logger.error(`POST /api/learners/bookings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to create booking" });
+  }
+});
+
+// ─── POST /api/learners/bookings/block ────────────────────────────────────
+// Creates a blocking event on Google Calendar (no booking record needed).
+
+router.post("/bookings/block", async (req, res) => {
+  try {
+    const instructor = req.instructor;
+    const { date, startTime, endTime, isFullDay, reason } = req.body;
+
+    if (!date) {
+      return res.status(400).json({ success: false, error: "date is required" });
+    }
+    if (!isFullDay && (!startTime || !endTime)) {
+      return res.status(400).json({ success: false, error: "startTime and endTime are required for non-full-day blocks" });
+    }
+
+    const calendarEvent = await calendarService.createBlockEvent(
+      { date, startTime, endTime, isFullDay: Boolean(isFullDay), reason: reason || "Blocked" },
+      instructor
+    );
+
+    res.status(201).json({
+      success: true,
+      data: {
+        calendarEventId: calendarEvent.id,
+        date,
+        startTime: isFullDay ? null : startTime,
+        endTime: isFullDay ? null : endTime,
+        isFullDay: Boolean(isFullDay),
+        reason: reason || "Blocked",
+      },
+    });
+  } catch (err) {
+    logger.error(`POST /api/learners/bookings/block error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to create block event" });
   }
 });
 

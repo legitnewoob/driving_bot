@@ -34,6 +34,14 @@ const bookingSchema = new mongoose.Schema({
     latitude: { type: Number, required: false },
     longitude: { type: Number, required: false },
   },
+
+  // Lesson completion fields (filled in by instructor via Portal)
+  topicsCovered: { type: [String], default: [] },
+  rating: { type: Number, min: 1, max: 5, default: null },
+  progressNotes: { type: String, default: "" },
+  paymentReceived: { type: Boolean, default: false },
+  paymentAmount: { type: Number, default: 0 },
+  completedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Booking", bookingSchema);

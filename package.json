@@ -13,6 +13,8 @@
     "test:coverage": "jest --coverage --collectCoverageFrom=\"src/**/*.js\" --testPathIgnorePatterns=tests/e2e",
     "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --verbose --config jest.config.e2e.js",
     "test:e2e:report": "cross-env NODE_OPTIONS=--experimental-vm-modules EMAIL_REPORT=1 jest --verbose --config jest.config.e2e.js",
+    "db:seed": "node scripts/seedDevData.js",
+    "db:reset": "node scripts/seedDevData.js --force",
     "instructor:add": "node scripts/seedInstructor.js add",
     "instructor:list": "node scripts/seedInstructor.js list",
     "instructor:update": "node scripts/seedInstructor.js update",

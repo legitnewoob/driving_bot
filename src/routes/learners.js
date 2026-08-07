@@ -52,7 +52,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const instructorId = req.instructor.phoneNumberId;
-    const { name, phone } = req.body;
+    const { name, phone, age, dob, postalCode } = req.body;
 
     if (!phone) {
       return res.status(400).json({ success: false, error: "Phone number is required" });
@@ -67,6 +67,9 @@ router.post("/", async (req, res) => {
     if (user) {
       // Update existing
       if (name) user.name = name;
+      if (age != null) user.age = age;
+      if (dob) user.dob = dob;
+      if (postalCode) user.postalCode = postalCode;
       await user.save();
       return res.json({ success: true, data: user.toObject(), created: false });
     }
@@ -76,7 +79,10 @@ router.post("/", async (req, res) => {
       phone: normalizedPhone,
       instructorId,
       name: name || null,
-      detailsCompleted: false,
+      age: age || null,
+      dob: dob || null,
+      postalCode: postalCode || null,
+      detailsCompleted: Boolean(name && phone),
       currentStep: "start",
     });
 
@@ -139,6 +145,60 @@ router.get("/bookings", async (req, res) => {
   } catch (err) {
     logger.error(`GET /api/learners/bookings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to fetch bookings" });
+  }
+});
+
+// ─── POST /api/learners/bookings ──────────────────────────────────────────
+// Creates a new booking from the Portal.
+
+router.post("/bookings", async (req, res) => {
+  try {
+    const instructorId = req.instructor.phoneNumberId;
+    const { userPhone, date, time, postalCode, pickupLocation, dropoffLocation, notes } = req.body;
+
+    if (!userPhone || !date || !time) {
+      return res.status(400).json({ success: false, error: "userPhone, date, and time are required" });
+    }
+
+    const normalizedPhone = userPhone.replace(/\s+/g, "");
+
+    // Generate a unique bookingId
+    const bookingId = `DL-${Date.now().toString(36).toUpperCase()}`;
+
+    const booking = await Booking.create({
+      bookingId,
+      userPhone: normalizedPhone,
+      instructorId,
+      date,
+      time,
+      postalCode: postalCode || "",
+      pickupLocation: pickupLocation ? { address: pickupLocation } : undefined,
+      dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,
+      progressNotes: notes || "",
+      status: "confirmed",
+    });
+
+    // Look up student name
+    const user = await User.findOne({ phone: normalizedPhone }).select("name").lean();
+
+    res.status(201).json({
+      success: true,
+      data: {
+        bookingId: booking.bookingId,
+        userPhone: booking.userPhone,
+        studentName: user?.name || normalizedPhone,
+        date: booking.date,
+        time: booking.time,
+        status: booking.status,
+        postalCode: booking.postalCode,
+        pickupLocation: booking.pickupLocation || null,
+        dropoffLocation: booking.dropoffLocation || null,
+        createdAt: booking.createdAt,
+      },
+    });
+  } catch (err) {
+    logger.error(`POST /api/learners/bookings error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to create booking" });
   }
 });
 

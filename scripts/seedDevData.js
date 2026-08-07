@@ -22,28 +22,13 @@ const Instructor = require("../src/models/instructorSchema");
 
 // ─── Seed Data (functions so instructorId is injected at runtime) ────────────
 
-const USERS = [
-
-  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Aarav Sharma", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
-
-  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "Emily Carter", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
-
-  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Rohan Mehta", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
-
-  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Olivia Johnson", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
-
-  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Priya Patel", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
-
-  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Michael Anderson", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
-
-];
 function getUsers(INSTRUCTOR_ID) { return [
-  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Sarah Mitchell", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
-  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "James Okonkwo", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
-  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Emma Rhodes", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
-  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Tyler Patel", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
-  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Chloe Bennett", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
-  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Marcus Webb", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
+  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Aarav Sharma", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
+  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "Emily Carter", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
+  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Rohan Mehta", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
+  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Olivia Johnson", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
+  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Priya Patel", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
+  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Michael Anderson", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
 ]; }
 
 function futureDate(daysFromNow) {
@@ -58,7 +43,6 @@ function pastDate(daysAgo) {
   return d.toISOString().slice(0, 10);
 }
 
-const BOOKINGS = [
 function getBookings(INSTRUCTOR_ID) { return [
   // Sarah Mitchell — mix of completed + upcoming
   { bookingId: "DL-S001", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(14), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Victoria Station" }, topicsCovered: ["Junctions", "Roundabouts"], rating: 4, progressNotes: "Excellent progress on roundabouts.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 14 * 86400000) },

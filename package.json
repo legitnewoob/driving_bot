@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node server.js",
+    "predev": "node scripts/predev.js",
     "dev": "nodemon server.js",
     "test": "jest --verbose --testPathIgnorePatterns=tests/e2e",
     "test:unit": "jest --verbose tests/unit",
@@ -15,6 +16,7 @@
     "test:e2e:report": "cross-env NODE_OPTIONS=--experimental-vm-modules EMAIL_REPORT=1 jest --verbose --config jest.config.e2e.js",
     "db:seed": "node scripts/seedDevData.js",
     "db:reset": "node scripts/seedDevData.js --force",
+    "db:nuke": "node scripts/dbNuke.js",
     "instructor:add": "node scripts/seedInstructor.js add",
     "instructor:list": "node scripts/seedInstructor.js list",
     "instructor:update": "node scripts/seedInstructor.js update",

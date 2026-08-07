@@ -13,7 +13,7 @@
  *       Use `npm run instructor:add` for that.
  */
 
-require("dotenv").config();
+require("../src/config/env");
 const mongoose = require("mongoose");
 const Booking = require("../src/models/bookingModel");
 const Payment = require("../src/models/paymentModel");

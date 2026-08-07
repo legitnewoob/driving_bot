@@ -13,7 +13,7 @@
  *       Use `npm run instructor:add` for that.
  */
 
-require("dotenv").config();
+require("../src/config/env");
 const mongoose = require("mongoose");
 const Booking = require("../src/models/bookingModel");
 const Payment = require("../src/models/paymentModel");
@@ -26,12 +26,12 @@ const INSTRUCTOR_ID = process.env.PHONE_NUMBER_ID || "REPLACE_WITH_PHONE_NUMBER_
 // ─── Seed Data ───────────────────────────────────────────────────────────────
 
 const USERS = [
-  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Sarah Mitchell",  age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
-  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "James Okonkwo",  age: 19, dob: "2007-06-08", postalCode: "E1 6AN",   detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
-  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Emma Rhodes",    age: 24, dob: "2002-01-20", postalCode: "N1 9GU",   detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
-  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Tyler Patel",    age: 20, dob: "2006-09-15", postalCode: "SE1 7PB",  detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
-  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Chloe Bennett",  age: 17, dob: "2009-04-03", postalCode: "W1D 3AF",  detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
-  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Marcus Webb",    age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
+  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Sarah Mitchell", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
+  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "James Okonkwo", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
+  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Emma Rhodes", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
+  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Tyler Patel", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
+  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Chloe Bennett", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
+  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Marcus Webb", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
 ];
 
 function futureDate(daysFromNow) {
@@ -49,7 +49,7 @@ function pastDate(daysAgo) {
 const BOOKINGS = [
   // Sarah Mitchell — mix of completed + upcoming
   { bookingId: "DL-S001", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(14), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Victoria Station" }, topicsCovered: ["Junctions", "Roundabouts"], rating: 4, progressNotes: "Excellent progress on roundabouts.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 14 * 86400000) },
-  { bookingId: "DL-S002", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(7),  time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Hyde Park Corner" }, topicsCovered: ["Motorway", "Lane discipline"], rating: 4, progressNotes: "First motorway lesson. Handled merging well.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 7 * 86400000) },
+  { bookingId: "DL-S002", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(7), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Hyde Park Corner" }, topicsCovered: ["Motorway", "Lane discipline"], rating: 4, progressNotes: "First motorway lesson. Handled merging well.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 7 * 86400000) },
   { bookingId: "DL-S003", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: futureDate(3), time: "09:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Trafalgar Square" } },
   { bookingId: "DL-S004", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: futureDate(10), time: "14:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Westminster Bridge" } },
 
@@ -78,23 +78,23 @@ const BOOKINGS = [
 
 const PAYMENTS = [
   // Sarah — 2 lesson payments
-  { paymentId: "PAY-DL-S001", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S001", amount: 45, method: "cash",  date: pastDate(14), note: "Received at lesson" },
-  { paymentId: "PAY-DL-S002", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S002", amount: 45, method: "bank",  date: pastDate(7),  note: "Received at lesson" },
-  { paymentId: "PAY-S-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: null,       amount: 120, method: "bank", date: pastDate(20), note: "Block of 4 lessons" },
+  { paymentId: "PAY-DL-S001", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S001", amount: 45, method: "cash", date: pastDate(14), note: "Received at lesson" },
+  { paymentId: "PAY-DL-S002", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S002", amount: 45, method: "bank", date: pastDate(7), note: "Received at lesson" },
+  { paymentId: "PAY-S-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: null, amount: 120, method: "bank", date: pastDate(20), note: "Block of 4 lessons" },
 
   // James — 1 lesson payment
   { paymentId: "PAY-DL-J001", instructorId: INSTRUCTOR_ID, userPhone: "447823456789", bookingId: "DL-J001", amount: 45, method: "cash", date: pastDate(10), note: "Received at lesson" },
 
   // Emma — block payment
   { paymentId: "PAY-DL-E001", instructorId: INSTRUCTOR_ID, userPhone: "447934567890", bookingId: "DL-E001", amount: 48, method: "bank", date: pastDate(21), note: "Received at lesson" },
-  { paymentId: "PAY-E-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447934567890", bookingId: null,       amount: 192, method: "bank", date: pastDate(25), note: "Block payment" },
+  { paymentId: "PAY-E-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447934567890", bookingId: null, amount: 192, method: "bank", date: pastDate(25), note: "Block payment" },
 
   // Chloe — 1 lesson payment
   { paymentId: "PAY-DL-C001", instructorId: INSTRUCTOR_ID, userPhone: "447856789012", bookingId: "DL-C001", amount: 45, method: "cash", date: pastDate(8), note: "Received at lesson" },
 
   // Marcus — 1 lesson + block
   { paymentId: "PAY-DL-M001", instructorId: INSTRUCTOR_ID, userPhone: "447967890123", bookingId: "DL-M001", amount: 48, method: "cash", date: pastDate(12), note: "Received at lesson" },
-  { paymentId: "PAY-M-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447967890123", bookingId: null,       amount: 128, method: "bank", date: pastDate(18), note: "Block payment" },
+  { paymentId: "PAY-M-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447967890123", bookingId: null, amount: 128, method: "bank", date: pastDate(18), note: "Block payment" },
 ];
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -126,6 +126,9 @@ async function run() {
 
   await mongoose.connect(uri, opts);
   console.log("✅ Connected to MongoDB");
+  console.log(`   URI: ${uri.replace(/\/\/.*@/, "//***:***@")}`); // hides credentials if present
+  console.log(`   Database: ${mongoose.connection.name}`);
+  console.log(`   Host: ${mongoose.connection.host}`);
 
   // Drop collections (ignore errors if they don't exist)
   const drops = ["bookings", "payments", "users", "chatlogs"];

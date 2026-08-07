@@ -4,11 +4,15 @@ const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
 const bookingRoutes = require('./src/routes/bookings');
+const dashboardRoutes = require('./src/routes/dashboard');
+const learnerRoutes = require('./src/routes/learners');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
 const rateLimit = require("express-rate-limit");
 const basicAuth = require("express-basic-auth");
+const jwtAuth = require("./src/middleware/jwtAuth");
+const apiKeyAuth = require("./src/middleware/apiKeyAuth");
 
 
 
@@ -39,6 +43,26 @@ const logAuth = basicAuth({
 });
 
 
+// CORS (manual middleware — supports multiple allowed origins)
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL,
+  process.env.PORTAL_URL,
+].filter(Boolean);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Middleware
 app.use(express.json());
 connectDB();
@@ -49,6 +73,8 @@ app.use('/auth' , authRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', logAuth, bookingRoutes);
+app.use('/api/dashboard', jwtAuth, dashboardRoutes);
+app.use('/api/learners', apiKeyAuth, learnerRoutes);
 
 // Mock Route (development only)
 if (process.env.NODE_ENV === 'development') {

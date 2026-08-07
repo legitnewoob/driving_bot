@@ -28,6 +28,7 @@ const instructorSchema = new mongoose.Schema({
   },
   timezone: { type: String, default: "Europe/London" },
   active: { type: Boolean, default: true },
+  apiKey: { type: String, unique: true, sparse: true, index: true },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Instructor", instructorSchema);

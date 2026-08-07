@@ -31,6 +31,7 @@ router.get("/", async (req, res) => {
       detailsCompleted: Boolean(u.detailsCompleted),
       onboardingStarted: Boolean(u.phone), // if the user doc exists, onboarding started
       currentStep: u.currentStep || null,
+      createdAt: u.createdAt || null,
     }));
 
     res.json({

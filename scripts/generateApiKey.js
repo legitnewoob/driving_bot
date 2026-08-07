@@ -12,9 +12,7 @@ const crypto = require("crypto");
 const path = require("path");
 
 // Load env before anything else
-require("dotenv").config({ path: path.resolve(__dirname, "../envs/.env") });
-const loadEnv = require("../src/config/env");
-loadEnv();
+require("../src/config/env");
 
 const connectDB = require("../src/config/database");
 const Instructor = require("../src/models/instructorSchema");

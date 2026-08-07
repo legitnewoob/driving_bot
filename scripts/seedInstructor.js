@@ -8,9 +8,9 @@
  *   node scripts/seedInstructor.js delete    # Delete instructor
  */
 
-require("dotenv").config();
+require("../src/config/env");
 const { Command } = require("commander");
-const inquirer = require("inquirer");
+const inquirer = require("inquirer").default;
 const mongoose = require("mongoose");
 const Instructor = require("../src/models/instructorSchema");
 

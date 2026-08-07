@@ -14,6 +14,6 @@ const userSchema = new mongoose.Schema({
     longitude: { type: Number }
   },
 
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model("User", userSchema);

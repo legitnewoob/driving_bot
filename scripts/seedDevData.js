@@ -23,12 +23,12 @@ const Instructor = require("../src/models/instructorSchema");
 // ─── Seed Data (functions so instructorId is injected at runtime) ────────────
 
 function getUsers(INSTRUCTOR_ID) { return [
-  { phone: "447712345678", instructorId: INSTRUCTOR_ID, name: "Aarav Sharma", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
-  { phone: "447823456789", instructorId: INSTRUCTOR_ID, name: "Emily Carter", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
-  { phone: "447934567890", instructorId: INSTRUCTOR_ID, name: "Rohan Mehta", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
-  { phone: "447745678901", instructorId: INSTRUCTOR_ID, name: "Olivia Johnson", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
-  { phone: "447856789012", instructorId: INSTRUCTOR_ID, name: "Priya Patel", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
-  { phone: "447967890123", instructorId: INSTRUCTOR_ID, name: "Michael Anderson", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
+  { phone: "447411223344", instructorId: INSTRUCTOR_ID, name: "Aarav Sharma", age: 22, dob: "2004-03-12", postalCode: "SW1A 1AA", detailsCompleted: true, location: { latitude: 51.5014, longitude: -0.1419 } },
+  { phone: "447422334455", instructorId: INSTRUCTOR_ID, name: "Emily Carter", age: 19, dob: "2007-06-08", postalCode: "E1 6AN", detailsCompleted: true, location: { latitude: 51.5155, longitude: -0.0722 } },
+  { phone: "447433445566", instructorId: INSTRUCTOR_ID, name: "Rohan Mehta", age: 24, dob: "2002-01-20", postalCode: "N1 9GU", detailsCompleted: true, location: { latitude: 51.5362, longitude: -0.1033 } },
+  { phone: "447444556677", instructorId: INSTRUCTOR_ID, name: "Olivia Johnson", age: 20, dob: "2006-09-15", postalCode: "SE1 7PB", detailsCompleted: true, location: { latitude: 51.5045, longitude: -0.0865 } },
+  { phone: "447455667788", instructorId: INSTRUCTOR_ID, name: "Priya Patel", age: 17, dob: "2009-04-03", postalCode: "W1D 3AF", detailsCompleted: true, location: { latitude: 51.5134, longitude: -0.1312 } },
+  { phone: "447466778899", instructorId: INSTRUCTOR_ID, name: "Michael Anderson", age: 25, dob: "2001-11-28", postalCode: "EC2R 8AH", detailsCompleted: true, location: { latitude: 51.5139, longitude: -0.0831 } },
 ]; }
 
 function futureDate(daysFromNow) {
@@ -45,48 +45,48 @@ function pastDate(daysAgo) {
 
 function getBookings(INSTRUCTOR_ID) { return [
   // Sarah Mitchell — mix of completed + upcoming
-  { bookingId: "DL-S001", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(14), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Victoria Station" }, topicsCovered: ["Junctions", "Roundabouts"], rating: 4, progressNotes: "Excellent progress on roundabouts.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 14 * 86400000) },
-  { bookingId: "DL-S002", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: pastDate(7), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Hyde Park Corner" }, topicsCovered: ["Motorway", "Lane discipline"], rating: 4, progressNotes: "First motorway lesson. Handled merging well.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 7 * 86400000) },
-  { bookingId: "DL-S003", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: futureDate(3), time: "09:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Trafalgar Square" } },
-  { bookingId: "DL-S004", userPhone: "447712345678", instructorId: INSTRUCTOR_ID, date: futureDate(10), time: "14:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Westminster Bridge" } },
+  { bookingId: "DL-S001", userPhone: "447411223344", instructorId: INSTRUCTOR_ID, date: pastDate(14), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Victoria Station" }, topicsCovered: ["Junctions", "Roundabouts"], rating: 4, progressNotes: "Excellent progress on roundabouts.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 14 * 86400000) },
+  { bookingId: "DL-S002", userPhone: "447411223344", instructorId: INSTRUCTOR_ID, date: pastDate(7), time: "09:00", status: "completed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Hyde Park Corner" }, topicsCovered: ["Motorway", "Lane discipline"], rating: 4, progressNotes: "First motorway lesson. Handled merging well.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 7 * 86400000) },
+  { bookingId: "DL-S003", userPhone: "447411223344", instructorId: INSTRUCTOR_ID, date: futureDate(3), time: "09:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Trafalgar Square" } },
+  { bookingId: "DL-S004", userPhone: "447411223344", instructorId: INSTRUCTOR_ID, date: futureDate(10), time: "14:00", status: "confirmed", postalCode: "SW1A 1AA", pickupLocation: { address: "Buckingham Palace Rd" }, dropoffLocation: { address: "Westminster Bridge" } },
 
-  { bookingId: "DL-J001", userPhone: "447823456789", instructorId: INSTRUCTOR_ID, date: pastDate(10), time: "10:00", status: "completed", postalCode: "E1 6AN", pickupLocation: { address: "Whitechapel Rd" }, dropoffLocation: { address: "Mile End Rd" }, topicsCovered: ["Clutch control", "Hill starts"], rating: 3, progressNotes: "Clutch control improving. Hill starts still hesitant.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 10 * 86400000) },
-  { bookingId: "DL-J002", userPhone: "447823456789", instructorId: INSTRUCTOR_ID, date: futureDate(5), time: "10:00", status: "confirmed", postalCode: "E1 6AN", pickupLocation: { address: "Whitechapel Rd" }, dropoffLocation: { address: "Stepney Green" } },
+  { bookingId: "DL-J001", userPhone: "447422334455", instructorId: INSTRUCTOR_ID, date: pastDate(10), time: "10:00", status: "completed", postalCode: "E1 6AN", pickupLocation: { address: "Whitechapel Rd" }, dropoffLocation: { address: "Mile End Rd" }, topicsCovered: ["Clutch control", "Hill starts"], rating: 3, progressNotes: "Clutch control improving. Hill starts still hesitant.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 10 * 86400000) },
+  { bookingId: "DL-J002", userPhone: "447422334455", instructorId: INSTRUCTOR_ID, date: futureDate(5), time: "10:00", status: "confirmed", postalCode: "E1 6AN", pickupLocation: { address: "Whitechapel Rd" }, dropoffLocation: { address: "Stepney Green" } },
 
-  { bookingId: "DL-E001", userPhone: "447934567890", instructorId: INSTRUCTOR_ID, date: pastDate(21), time: "10:00", status: "completed", postalCode: "N1 9GU", pickupLocation: { address: "Upper St" }, dropoffLocation: { address: "Angel Station" }, topicsCovered: ["Test prep", "Manoeuvres"], rating: 5, progressNotes: "All manoeuvres clean. Nearly test-ready.", paymentReceived: true, paymentAmount: 48, completedAt: new Date(Date.now() - 21 * 86400000) },
-  { bookingId: "DL-E002", userPhone: "447934567890", instructorId: INSTRUCTOR_ID, date: futureDate(2), time: "10:00", status: "confirmed", postalCode: "N1 9GU", pickupLocation: { address: "Upper St" }, dropoffLocation: { address: "Highbury Corner" } },
+  { bookingId: "DL-E001", userPhone: "447433445566", instructorId: INSTRUCTOR_ID, date: pastDate(21), time: "10:00", status: "completed", postalCode: "N1 9GU", pickupLocation: { address: "Upper St" }, dropoffLocation: { address: "Angel Station" }, topicsCovered: ["Test prep", "Manoeuvres"], rating: 5, progressNotes: "All manoeuvres clean. Nearly test-ready.", paymentReceived: true, paymentAmount: 48, completedAt: new Date(Date.now() - 21 * 86400000) },
+  { bookingId: "DL-E002", userPhone: "447433445566", instructorId: INSTRUCTOR_ID, date: futureDate(2), time: "10:00", status: "confirmed", postalCode: "N1 9GU", pickupLocation: { address: "Upper St" }, dropoffLocation: { address: "Highbury Corner" } },
 
-  { bookingId: "DL-T001", userPhone: "447745678901", instructorId: INSTRUCTOR_ID, date: pastDate(5), time: "08:30", status: "completed", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "London Bridge" }, topicsCovered: ["Town driving", "Roundabouts"], rating: 3, progressNotes: "Roundabouts improving. Stalled once — nerves.", paymentReceived: false, paymentAmount: 0, completedAt: new Date(Date.now() - 5 * 86400000) },
-  { bookingId: "DL-T002", userPhone: "447745678901", instructorId: INSTRUCTOR_ID, date: futureDate(7), time: "08:30", status: "confirmed", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "Elephant & Castle" } },
-  { bookingId: "DL-T003", userPhone: "447745678901", instructorId: INSTRUCTOR_ID, date: pastDate(3), time: "14:00", status: "cancelled", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "Bermondsey" } },
+  { bookingId: "DL-T001", userPhone: "447444556677", instructorId: INSTRUCTOR_ID, date: pastDate(5), time: "08:30", status: "completed", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "London Bridge" }, topicsCovered: ["Town driving", "Roundabouts"], rating: 3, progressNotes: "Roundabouts improving. Stalled once — nerves.", paymentReceived: false, paymentAmount: 0, completedAt: new Date(Date.now() - 5 * 86400000) },
+  { bookingId: "DL-T002", userPhone: "447444556677", instructorId: INSTRUCTOR_ID, date: futureDate(7), time: "08:30", status: "confirmed", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "Elephant & Castle" } },
+  { bookingId: "DL-T003", userPhone: "447444556677", instructorId: INSTRUCTOR_ID, date: pastDate(3), time: "14:00", status: "cancelled", postalCode: "SE1 7PB", pickupLocation: { address: "Borough High St" }, dropoffLocation: { address: "Bermondsey" } },
 
-  { bookingId: "DL-C001", userPhone: "447856789012", instructorId: INSTRUCTOR_ID, date: pastDate(8), time: "09:00", status: "completed", postalCode: "W1D 3AF", pickupLocation: { address: "Oxford St" }, dropoffLocation: { address: "Regent St" }, topicsCovered: ["Clutch control", "Road positioning"], rating: 3, progressNotes: "Very first lesson. Great attitude.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 8 * 86400000) },
-  { bookingId: "DL-C002", userPhone: "447856789012", instructorId: INSTRUCTOR_ID, date: futureDate(4), time: "09:00", status: "confirmed", postalCode: "W1D 3AF", pickupLocation: { address: "Oxford St" }, dropoffLocation: { address: "Tottenham Court Rd" } },
+  { bookingId: "DL-C001", userPhone: "447455667788", instructorId: INSTRUCTOR_ID, date: pastDate(8), time: "09:00", status: "completed", postalCode: "W1D 3AF", pickupLocation: { address: "Oxford St" }, dropoffLocation: { address: "Regent St" }, topicsCovered: ["Clutch control", "Road positioning"], rating: 3, progressNotes: "Very first lesson. Great attitude.", paymentReceived: true, paymentAmount: 45, completedAt: new Date(Date.now() - 8 * 86400000) },
+  { bookingId: "DL-C002", userPhone: "447455667788", instructorId: INSTRUCTOR_ID, date: futureDate(4), time: "09:00", status: "confirmed", postalCode: "W1D 3AF", pickupLocation: { address: "Oxford St" }, dropoffLocation: { address: "Tottenham Court Rd" } },
 
-  { bookingId: "DL-M001", userPhone: "447967890123", instructorId: INSTRUCTOR_ID, date: pastDate(12), time: "09:00", status: "completed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Old St" }, topicsCovered: ["Parallel parking", "Bay parking"], rating: 3, progressNotes: "Bay parking solid. Parallel needs work.", paymentReceived: true, paymentAmount: 48, completedAt: new Date(Date.now() - 12 * 86400000) },
-  { bookingId: "DL-M002", userPhone: "447967890123", instructorId: INSTRUCTOR_ID, date: futureDate(6), time: "11:30", status: "confirmed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Barbican" } },
-  { bookingId: "DL-M003", userPhone: "447967890123", instructorId: INSTRUCTOR_ID, date: futureDate(13), time: "09:00", status: "confirmed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Liverpool St" } },
+  { bookingId: "DL-M001", userPhone: "447466778899", instructorId: INSTRUCTOR_ID, date: pastDate(12), time: "09:00", status: "completed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Old St" }, topicsCovered: ["Parallel parking", "Bay parking"], rating: 3, progressNotes: "Bay parking solid. Parallel needs work.", paymentReceived: true, paymentAmount: 48, completedAt: new Date(Date.now() - 12 * 86400000) },
+  { bookingId: "DL-M002", userPhone: "447466778899", instructorId: INSTRUCTOR_ID, date: futureDate(6), time: "11:30", status: "confirmed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Barbican" } },
+  { bookingId: "DL-M003", userPhone: "447466778899", instructorId: INSTRUCTOR_ID, date: futureDate(13), time: "09:00", status: "confirmed", postalCode: "EC2R 8AH", pickupLocation: { address: "Moorgate" }, dropoffLocation: { address: "Liverpool St" } },
 ]; }
 
 function getPayments(INSTRUCTOR_ID) { return [
   // Sarah — 2 lesson payments
-  { paymentId: "PAY-DL-S001", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S001", amount: 45, method: "cash", date: pastDate(14), note: "Received at lesson" },
-  { paymentId: "PAY-DL-S002", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: "DL-S002", amount: 45, method: "bank", date: pastDate(7), note: "Received at lesson" },
-  { paymentId: "PAY-S-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447712345678", bookingId: null, amount: 120, method: "bank", date: pastDate(20), note: "Block of 4 lessons" },
+  { paymentId: "PAY-DL-S001", instructorId: INSTRUCTOR_ID, userPhone: "447411223344", bookingId: "DL-S001", amount: 45, method: "cash", date: pastDate(14), note: "Received at lesson" },
+  { paymentId: "PAY-DL-S002", instructorId: INSTRUCTOR_ID, userPhone: "447411223344", bookingId: "DL-S002", amount: 45, method: "bank", date: pastDate(7), note: "Received at lesson" },
+  { paymentId: "PAY-S-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447411223344", bookingId: null, amount: 120, method: "bank", date: pastDate(20), note: "Block of 4 lessons" },
 
   // James — 1 lesson payment
-  { paymentId: "PAY-DL-J001", instructorId: INSTRUCTOR_ID, userPhone: "447823456789", bookingId: "DL-J001", amount: 45, method: "cash", date: pastDate(10), note: "Received at lesson" },
+  { paymentId: "PAY-DL-J001", instructorId: INSTRUCTOR_ID, userPhone: "447422334455", bookingId: "DL-J001", amount: 45, method: "cash", date: pastDate(10), note: "Received at lesson" },
 
   // Emma — block payment
-  { paymentId: "PAY-DL-E001", instructorId: INSTRUCTOR_ID, userPhone: "447934567890", bookingId: "DL-E001", amount: 48, method: "bank", date: pastDate(21), note: "Received at lesson" },
-  { paymentId: "PAY-E-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447934567890", bookingId: null, amount: 192, method: "bank", date: pastDate(25), note: "Block payment" },
+  { paymentId: "PAY-DL-E001", instructorId: INSTRUCTOR_ID, userPhone: "447433445566", bookingId: "DL-E001", amount: 48, method: "bank", date: pastDate(21), note: "Received at lesson" },
+  { paymentId: "PAY-E-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447433445566", bookingId: null, amount: 192, method: "bank", date: pastDate(25), note: "Block payment" },
 
   // Chloe — 1 lesson payment
-  { paymentId: "PAY-DL-C001", instructorId: INSTRUCTOR_ID, userPhone: "447856789012", bookingId: "DL-C001", amount: 45, method: "cash", date: pastDate(8), note: "Received at lesson" },
+  { paymentId: "PAY-DL-C001", instructorId: INSTRUCTOR_ID, userPhone: "447455667788", bookingId: "DL-C001", amount: 45, method: "cash", date: pastDate(8), note: "Received at lesson" },
 
   // Marcus — 1 lesson + block
-  { paymentId: "PAY-DL-M001", instructorId: INSTRUCTOR_ID, userPhone: "447967890123", bookingId: "DL-M001", amount: 48, method: "cash", date: pastDate(12), note: "Received at lesson" },
-  { paymentId: "PAY-M-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447967890123", bookingId: null, amount: 128, method: "bank", date: pastDate(18), note: "Block payment" },
+  { paymentId: "PAY-DL-M001", instructorId: INSTRUCTOR_ID, userPhone: "447466778899", bookingId: "DL-M001", amount: 48, method: "cash", date: pastDate(12), note: "Received at lesson" },
+  { paymentId: "PAY-M-BLOCK", instructorId: INSTRUCTOR_ID, userPhone: "447466778899", bookingId: null, amount: 128, method: "bank", date: pastDate(18), note: "Block payment" },
 ]; }
 
 // ─── Main ────────────────────────────────────────────────────────────────────

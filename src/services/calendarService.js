@@ -1,7 +1,20 @@
 const { oauth2Client, calendar } = require("../config/google");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
-const { notifyInvalidGrant } = require("../utils/emailNotifier");
+const { notifyInvalidGrant, notifyInstructorReauth } = require("../utils/emailNotifier");
+const Instructor = require("../models/instructorSchema");
+
+async function handleCalendarTokenExpiry(instructor, service, errorMessage) {
+  Promise.resolve(notifyInvalidGrant(instructor, service, errorMessage)).catch(() => {});
+  Promise.resolve(notifyInstructorReauth(instructor)).catch(() => {});
+  try {
+    if (instructor?._id) {
+      await Instructor.findByIdAndUpdate(instructor._id, { calendarTokenExpired: true });
+    }
+  } catch (dbErr) {
+    logger.error(`Failed to set calendarTokenExpired flag: ${dbErr.message}`);
+  }
+}
 
 /**
  * Check if an error is an invalid_grant (expired/revoked refresh token).
@@ -98,7 +111,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in getEventsForDate`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       throw error;
     }
@@ -198,7 +211,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in getCalendarContext`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       logger.error(`Error getting calendar context: ${error.message}`);
       return [];
@@ -249,7 +262,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in createEvent`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       logger.error(`Error creating calendar event: ${error.message}`);
       throw error;
@@ -307,7 +320,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in createBlockEvent`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       logger.error(`Error creating block event: ${error.message}`);
       throw error;
@@ -352,7 +365,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in updateEvent`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       logger.error(`Error updating calendar event: ${error.message}`);
       throw error;
@@ -377,7 +390,7 @@ class CalendarService {
     } catch (error) {
       if (isInvalidGrant(error)) {
         logger.error(`invalid_grant for instructor ${instructor.name} in deleteEvent`);
-        notifyInvalidGrant(instructor, "Calendar", error.message);
+        handleCalendarTokenExpiry(instructor, "Calendar", error.message);
       }
       logger.error(`Error deleting calendar event: ${error.message}`);
       throw error;

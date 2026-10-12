@@ -34,18 +34,20 @@ class WebhookController {
   /* ========== HELPER METHOD ========== */
 
   clearUserConversationHistoryAndContext(from) {
-    const session = getUserSession(from);
+    const instructorPhoneId = this._instructor?.phoneNumberId;
+    const session = getUserSession(from, instructorPhoneId);
     if (session.conversationHistory.length > 0) {
       session.conversationHistory = [];
     }
-    updateUserSession(from, session);
+    updateUserSession(from, session, instructorPhoneId);
     aiService.clearPendingContext(from);
   }
 
   clearOnlyUserConversationHistory(from) {
-    const session = getUserSession(from);
+    const instructorPhoneId = this._instructor?.phoneNumberId;
+    const session = getUserSession(from, instructorPhoneId);
     session.conversationHistory = [];
-    updateUserSession(from, session);
+    updateUserSession(from, session, instructorPhoneId);
   }
 
   /* ========== BOOKING ACTIONS ========== */
@@ -66,7 +68,8 @@ class WebhookController {
   }
 
   async showBookings(from) {
-    const bookings = await bookingService.getBookingsByUser(from);
+    const instructorId = this._instructor?.phoneNumberId;
+    const bookings = await bookingService.getBookingsByUser(from, instructorId);
     if (!bookings.length) {
       await this._send(from, "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬");
       this.clearUserConversationHistoryAndContext(from);
@@ -324,7 +327,7 @@ class WebhookController {
       }
 
       // Step 2: AI logic
-      const session = getUserSession(from);
+      const session = getUserSession(from, instructorPhoneId);
       const aiResponse = await aiService.getResponse(
         messageContent,
         session.conversationHistory,
@@ -385,7 +388,7 @@ class WebhookController {
         if (session.conversationHistory.length > conversationHistoryLength) {
           session.conversationHistory = session.conversationHistory.slice(-conversationHistoryLength);
         }
-        updateUserSession(from, session);
+        updateUserSession(from, session, instructorPhoneId);
       }
     } catch (error) {
       logger.error("Error handling message from " + from + ": " + error.message);

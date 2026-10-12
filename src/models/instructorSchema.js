@@ -8,6 +8,7 @@ const instructorSchema = new mongoose.Schema({
   googleId: { type: String, unique: true, sparse: true, index: true },
   googleCalendarId: { type: String },
   googleRefreshToken: { type: String },
+  calendarTokenExpired: { type: Boolean, default: false },
   whatsappToken: { type: String },
   spreadsheetId: { type: String },
   availableTimes: {
@@ -52,6 +53,7 @@ instructorSchema.virtual("onboardingStatus").get(function () {
     phoneAssigned: !!(this.phoneNumberId && !this.phoneNumberId.startsWith("signup_")),
     subscriptionActive: this.plan === "pdi" || ["active", "trialing"].includes(this.subscriptionStatus),
     calendarConnected: !!this.googleRefreshToken,
+    calendarTokenExpired: !!this.calendarTokenExpired,
   };
 });
 

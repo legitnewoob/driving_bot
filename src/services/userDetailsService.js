@@ -11,12 +11,12 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
 
   // Handle data deletion request
   if (messageContent && messageContent.trim().toLowerCase() === "delete my data") {
-    await User.deleteOne({ phone: from });
+    await User.deleteOne({ phone: from, ...(instructorId && { instructorId }) });
     await send(from, "🗑️ Your data has been deleted.");
     return { inProgress: true, deleted: true };
   }
 
-  let user = await User.findOne({ phone: from });
+  let user = await User.findOne({ phone: from, ...(instructorId && { instructorId }) });
 
   // If new user → start flow
   if (!user) {

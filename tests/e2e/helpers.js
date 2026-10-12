@@ -16,7 +16,6 @@
  *
  * What is mocked (set up via jest.mock in each test file using E2E_MOCKS):
  *   - calendarService (can't create real Google Calendar events)
- *   - sheetsService (can't write to real Google Sheets)
  *   - whatsappService (WhatsApp sends captured via mock callback)
  *   - chatLogger (file-based logger — avoid file writes)
  *
@@ -27,7 +26,6 @@
  *   // At the TOP of each e2e test file (before any other require):
  *   const { E2E_MOCKS } = require("./helpers");
  *   jest.mock("../../src/services/calendarService", E2E_MOCKS.calendarService);
- *   jest.mock("../../src/services/sheetsService", E2E_MOCKS.sheetsService);
  *   jest.mock("../../src/services/whatsappService", E2E_MOCKS.whatsappService);
  *   jest.mock("../../src/utils/chatLogger", E2E_MOCKS.chatLogger);
  *
@@ -108,13 +106,6 @@ const E2E_MOCKS = {
       ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"]
     ),
     checkAvailability: jest.fn().mockResolvedValue(true),
-  }),
-
-  sheetsService: () => ({
-    getInstructorSpreadsheetId: jest.fn().mockReturnValue("test-spreadsheet-id"),
-    getLearnerName: jest.fn().mockResolvedValue("E2E Test User"),
-    updateLearnerRecord: jest.fn().mockResolvedValue({}),
-    initializeCredentials: jest.fn(),
   }),
 
   whatsappService: () => ({

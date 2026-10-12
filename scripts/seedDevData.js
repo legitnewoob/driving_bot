@@ -20,6 +20,7 @@ const Payment = require("../src/models/paymentModel");
 const User = require("../src/models/userModel");
 const Instructor = require("../src/models/instructorSchema");
 const PhoneNumber = require("../src/models/phoneNumberModel");
+const LessonType = require("../src/models/lessonTypeModel");
 
 // ─── Seed Data (functions so instructorId is injected at runtime) ────────────
 
@@ -292,7 +293,7 @@ async function run() {
   }
 
   // Drop collections (ignore errors if they don't exist)
-  const drops = ["bookings", "payments", "users", "chatlogs", "phonenumbers"];
+  const drops = ["bookings", "payments", "users", "chatlogs", "phonenumbers", "lessontypes"];
   for (const name of drops) {
     try {
       await mongoose.connection.db.dropCollection(name);
@@ -314,6 +315,20 @@ async function run() {
 
   await PhoneNumber.insertMany(PHONE_NUMBERS);
   console.log(`   ✅ Inserted ${PHONE_NUMBERS.length} phone numbers (${instructors.length} assigned, ${PHONE_NUMBERS.length - instructors.length} available)`);
+
+  // Seed lesson types per instructor
+  const LESSON_TYPES = [];
+  for (const instructor of instructors) {
+    const id = instructor.phoneNumberId;
+    LESSON_TYPES.push(
+      { instructorId: id, name: "Beginner", price: 35, description: "First-time drivers — cockpit drill, moving off, basic controls", sortOrder: 0 },
+      { instructorId: id, name: "Standard", price: 40, description: "Regular lesson — junctions, roundabouts, dual carriageways", sortOrder: 1 },
+      { instructorId: id, name: "Motorway", price: 55, description: "Motorway and high-speed road driving", sortOrder: 2 },
+      { instructorId: id, name: "Test Prep", price: 50, description: "Mock test routes, manoeuvres, show-me tell-me", sortOrder: 3 },
+    );
+  }
+  await LessonType.insertMany(LESSON_TYPES);
+  console.log(`   ✅ Inserted ${LESSON_TYPES.length} lesson types`);
 
   console.log("\n🎉 Dev database seeded successfully!");
   for (const inst of instructors) {

@@ -18,11 +18,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getEventsForDate: jest.fn(),
   checkSlotAgainstEvents: jest.fn(),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
-  getLearnerName: jest.fn().mockResolvedValue("Test User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn(),
   getGoogleMapsLink: jest.fn(),

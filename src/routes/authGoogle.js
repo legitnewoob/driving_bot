@@ -131,6 +131,68 @@ router.post("/google-signup", async (req, res) => {
 });
 
 /**
+ * GET /api/auth/calendar/connect
+ * JWT protected — returns a Google OAuth URL the frontend can redirect to.
+ * State encodes the instructor's email so the callback can look them up.
+ */
+router.get("/calendar/connect", jwtAuth, async (req, res) => {
+  try {
+    if (!req.user?.email) {
+      return res.status(401).json({ success: false, error: "Invalid token" });
+    }
+
+    const instructor = await Instructor.findOne({ email: req.user.email, active: true });
+    if (!instructor) {
+      return res.status(404).json({ success: false, error: "Instructor not found" });
+    }
+
+    const { oauth2Client } = require("../config/google");
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/spreadsheets",
+      ],
+      prompt: "consent",
+      state: `email:${instructor.email}`,
+    });
+
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error("[authGoogle] calendar/connect error:", err);
+    res.status(500).json({ success: false, error: "Failed to generate auth URL" });
+  }
+});
+
+/**
+ * POST /api/auth/calendar/disconnect
+ * JWT protected — removes the stored Google refresh token for this instructor.
+ */
+router.post("/calendar/disconnect", jwtAuth, async (req, res) => {
+  try {
+    if (!req.user?.email) {
+      return res.status(401).json({ success: false, error: "Invalid token" });
+    }
+
+    const instructor = await Instructor.findOne({ email: req.user.email, active: true });
+    if (!instructor) {
+      return res.status(404).json({ success: false, error: "Instructor not found" });
+    }
+
+    instructor.googleRefreshToken = null;
+    await instructor.save();
+
+    const { invalidateInstructorCache } = require("../models/instructorModel");
+    invalidateInstructorCache(instructor.phoneNumberId);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[authGoogle] calendar/disconnect error:", err);
+    res.status(500).json({ success: false, error: "Failed to disconnect calendar" });
+  }
+});
+
+/**
  * POST /api/auth/verify
  * JWT protected — verifies token is still valid.
  */

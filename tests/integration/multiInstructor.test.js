@@ -5,7 +5,7 @@
  *
  *  1. Instructor resolution – correct instructor resolved per phone_number_id
  *  2. Instructor isolation – bookings, credentials, and config stay separate
- *  3. Booking flow – createBooking uses the right instructor's calendar & sheets
+ *  3. Booking flow – createBooking uses the right instructor's calendar
  *  4. Webhook flow – handleIncomingMessage threads the correct instructor
  *  5. User–instructor linking – new users are linked to the instructor they messaged
  *  6. Reschedule flow – internal instructor lookup from booking's stored instructorId
@@ -23,12 +23,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getEventsForDate: jest.fn(),
   checkSlotAgainstEvents: jest.fn(),
   findEarliestAvailableSlot: jest.fn(),
-}));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-fallback"),
-  getLearnerName: jest.fn().mockResolvedValue("Test User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
 }));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
@@ -122,7 +116,6 @@ jest.mock("../../src/models/instructorModel", () => ({
 const Booking = require("../../src/models/bookingModel");
 const User = require("../../src/models/userModel");
 const calendarService = require("../../src/services/calendarService");
-const sheetsService = require("../../src/services/sheetsService");
 const whatsappService = require("../../src/services/whatsappService");
 const bookingService = require("../../src/services/bookingService");
 const webhookController = require("../../src/controllers/webhookController");
@@ -229,15 +222,6 @@ describe("Multi-Instructor – Booking Service Isolation", () => {
     // Booking stored with Instructor A's phoneNumberId
     const createCall = Booking.create.mock.calls[0][0];
     expect(createCall.instructorId).toBe("phone-A-111");
-
-    // Sheets updated with Instructor A's spreadsheet
-    expect(sheetsService.updateLearnerRecord).toHaveBeenCalledWith(
-      "spreadsheet-ALICE",
-      expect.any(Object),
-      expect.any(Object),
-      "create",
-      INSTRUCTOR_A
-    );
   });
 
   it("creates a booking under Instructor B with B's credentials", async () => {
@@ -258,15 +242,6 @@ describe("Multi-Instructor – Booking Service Isolation", () => {
     // Booking stored with Instructor B's phoneNumberId
     const createCall = Booking.create.mock.calls[0][0];
     expect(createCall.instructorId).toBe("phone-B-222");
-
-    // Sheets updated with Instructor B's spreadsheet
-    expect(sheetsService.updateLearnerRecord).toHaveBeenCalledWith(
-      "spreadsheet-BOB",
-      expect.any(Object),
-      expect.any(Object),
-      "create",
-      INSTRUCTOR_B
-    );
   });
 
   it("validates time against the CORRECT instructor's available times", async () => {

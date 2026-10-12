@@ -19,7 +19,7 @@ const axios = require("axios");
 // ─── Config ───────────────────────────────────────────────────────────────────
 const MOCK_PORT        = process.env.MOCK_PORT        || 4000;
 const APP_URL          = process.env.APP_URL          || "http://localhost:3000/mock-webhook";
-const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID  || "886622201206248";
+const DEFAULT_PHONE_ID = process.env.PHONE_NUMBER_ID  || "886622201206248";
 
 const app    = express();
 const server = http.createServer(app);
@@ -28,8 +28,19 @@ const io     = new Server(server, { cors: { origin: "*" } });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+// ─── Proxy endpoint for the UI to fetch instructors from the core app ────────
+app.get("/api/instructors", async (req, res) => {
+  try {
+    const { data } = await axios.get(APP_URL + "/instructors");
+    res.json(data);
+  } catch (err) {
+    console.error("[mock] Could not fetch instructors:", err.message);
+    res.json({ instructors: [] });
+  }
+});
+
 // ─── Mock WhatsApp payload factory ───────────────────────────────────────────
-function buildWhatsAppPayload(text, fromNumber = "917726877146") {
+function buildWhatsAppPayload(text, fromNumber = "917726877146", phoneNumberId = DEFAULT_PHONE_ID) {
   const msgId = "wamid." + Math.random().toString(36).slice(2, 18).toUpperCase();
   const ts    = Math.floor(Date.now() / 1000).toString();
 
@@ -43,7 +54,7 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
           messaging_product: "whatsapp",
           metadata: {
             display_phone_number: "15550001234",
-            phone_number_id: PHONE_NUMBER_ID,
+            phone_number_id: phoneNumberId,
           },
           contacts: [{
             profile: { name: "Dev User" },
@@ -66,10 +77,11 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
 io.on("connection", (socket) => {
   console.log("[mock] Dev UI connected:", socket.id);
 
-  socket.on("user_message", async ({ text, from }) => {
-    console.log(`[mock] → forwarding to app: "${text}" from ${from}`);
+  socket.on("user_message", async ({ text, from, phoneNumberId }) => {
+    const pnid = phoneNumberId || DEFAULT_PHONE_ID;
+    console.log(`[mock] → forwarding to app: "${text}" from ${from} (instructor: ${pnid})`);
 
-    const payload = buildWhatsAppPayload(text, from);
+    const payload = buildWhatsAppPayload(text, from, pnid);
 
     let response, data;
 

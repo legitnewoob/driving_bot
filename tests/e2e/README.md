@@ -8,7 +8,7 @@ End-to-end tests that exercise the **real** application pipeline through
 | Real | Mocked |
 |------|--------|
 | Gemini AI (real API calls) | calendarService |
-| MongoDB (test DB) | sheetsService |
+| MongoDB (test DB) | |
 | Sessions, pending context | whatsappService |
 | Date/time extraction | chatLogger (file writes) |
 | Geocoding (Maps API) | |

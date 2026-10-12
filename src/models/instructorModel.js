@@ -5,19 +5,21 @@ const logger = require("../utils/logger-advanced");
 // ── In-memory session store (per-user conversation state) ─────────────
 const userSessions = {};
 
-function getUserSession(phone) {
-    if (!userSessions[phone]) {
-        userSessions[phone] = {
+function getUserSession(phone, instructorPhoneId) {
+    const key = instructorPhoneId ? `${phone}::${instructorPhoneId}` : phone;
+    if (!userSessions[key]) {
+        userSessions[key] = {
             conversationHistory: [],
             lastActivity: timezoneUtils.getCurrentDate()
         };
     }
-    return userSessions[phone];
+    return userSessions[key];
 }
 
-function updateUserSession(phone, session) {
+function updateUserSession(phone, session, instructorPhoneId) {
+    const key = instructorPhoneId ? `${phone}::${instructorPhoneId}` : phone;
     session.lastActivity = timezoneUtils.getCurrentDate();
-    userSessions[phone] = session;
+    userSessions[key] = session;
 }
 
 // ── Instructor lookup (DB-backed) ─────────────────────────────────────

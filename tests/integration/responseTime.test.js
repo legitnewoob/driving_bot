@@ -22,12 +22,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn().mockResolvedValue(["09:00", "10:00", "11:00"]),
   checkAvailability: jest.fn().mockResolvedValue({ isAvailable: true }),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-perf"),
-  getLearnerName: jest.fn().mockResolvedValue("Perf User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,

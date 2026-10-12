@@ -415,7 +415,7 @@ class AIService {
 
       const result = await model.generateContent(conversationText);
       const text = result.response.text();
-      logger.info(`Gemini response for ${userPhone} (${text.length} chars)`);
+      logger.info(`Gemini response for ${userPhone}: ${text} , (${text.length} chars)`);
 
       return text;
     } catch (error) {

@@ -1,8 +1,8 @@
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-  phone: { type: String, unique: true },
-  instructorId: { type: String, required: true, index: true },
+  phone: { type: String, required: true },
+  instructorId: { type: String, required: true },
   name: String,
   age: Number,
   dob: String,
@@ -13,7 +13,10 @@ const userSchema = new mongoose.Schema({
     latitude: { type: Number },
     longitude: { type: Number }
   },
+  instructorNotes: { type: String, default: "" },
 
 }, { timestamps: true });
+
+userSchema.index({ phone: 1, instructorId: 1 }, { unique: true });
 
 module.exports = mongoose.model("User", userSchema);

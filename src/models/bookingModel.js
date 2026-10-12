@@ -42,6 +42,7 @@ const bookingSchema = new mongoose.Schema({
   paymentReceived: { type: Boolean, default: false },
   paymentAmount: { type: Number, default: 0 },
   completedAt: { type: Date, default: null },
+  lessonTypeId: { type: mongoose.Schema.Types.ObjectId, ref: "LessonType", default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Booking", bookingSchema);

@@ -34,12 +34,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn(),
   checkAvailability: jest.fn(),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
-  getLearnerName: jest.fn().mockResolvedValue("Test User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,
@@ -106,7 +100,6 @@ jest.mock("../../src/models/instructorModel", () => ({
 const Booking = require("../../src/models/bookingModel");
 const User = require("../../src/models/userModel");
 const calendarService = require("../../src/services/calendarService");
-const sheetsService = require("../../src/services/sheetsService");
 const whatsappService = require("../../src/services/whatsappService");
 const bookingService = require("../../src/services/bookingService");
 const webhookController = require("../../src/controllers/webhookController");
@@ -241,9 +234,6 @@ describe("Flow – BOOK Action", () => {
         date: "2025-07-01",
         time: "10:00",
       })
-    );
-    expect(sheetsService.updateLearnerRecord).toHaveBeenCalledWith(
-      "flow-sheet", expect.any(Object), expect.any(Object), "create", MOCK_INSTRUCTOR
     );
   });
 
@@ -597,7 +587,7 @@ describe("Flow – Data Deletion", () => {
 
     const replies = await sendMockMessage("447800000003", "delete my data", "inst-flow");
 
-    expect(User.deleteOne).toHaveBeenCalledWith({ phone: "447800000003" });
+    expect(User.deleteOne).toHaveBeenCalledWith({ phone: "447800000003", instructorId: "inst-flow" });
     expect(replies[0]).toContain("deleted");
   });
 });
@@ -702,19 +692,6 @@ describe("Flow – createBooking Edge Cases", () => {
       }, MOCK_INSTRUCTOR)
     ).rejects.toThrow("location details are incomplete");
   });
-
-  it("continues even if Sheets update fails", async () => {
-    User.findOne.mockResolvedValue(REGISTERED_USER);
-    sheetsService.updateLearnerRecord.mockRejectedValueOnce(new Error("Sheets quota"));
-
-    const result = await bookingService.createBooking(REGISTERED_USER.phone, {
-      date: "2025-07-01", time: "10:00", userPhone: REGISTERED_USER.phone,
-    }, MOCK_INSTRUCTOR);
-
-    // Booking still created despite sheets error
-    expect(result.booking.bookingId).toBe("DL-EDGE");
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Sheets update failed"));
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -747,7 +724,7 @@ describe("Flow – cancelBooking & getBookingsByUser", () => {
 
     expect(result.status).toBe("cancelled");
     expect(mockBooking.save).toHaveBeenCalled();
-    expect(calendarService.deleteEvent).toHaveBeenCalledWith("cal-can1");
+    expect(calendarService.deleteEvent).toHaveBeenCalledWith("cal-can1", expect.any(Object));
   });
 
   it("getBookingsByUser calls Booking.find with correct filters", async () => {

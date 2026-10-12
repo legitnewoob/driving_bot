@@ -6,6 +6,8 @@ const Booking = require("../models/bookingModel");
 const User = require("../models/userModel");
 const ChatLog = require("../models/chatLogModel");
 const Instructor = require("../models/instructorSchema");
+const Payment = require("../models/paymentModel");
+const LessonType = require("../models/lessonTypeModel");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 
@@ -29,8 +31,8 @@ async function resolveInstructor(req) {
     return instructor || null;
   }
 
-  // Dev fallback: no JWT configured, allow an instructorId query parameter.
-  if (req.query.instructorId) {
+  // Dev fallback: allow an instructorId query parameter in development only.
+  if (process.env.NODE_ENV === "development" && req.query.instructorId) {
     return Instructor.findOne({
       $or: [
         { phoneNumberId: req.query.instructorId },
@@ -547,6 +549,250 @@ router.get("/", async (req, res) => {
   } catch (err) {
     logger.error(`Dashboard error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to fetch dashboard data" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Learners
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get("/learners", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const instructorId = instructor.phoneNumberId;
+    const rate = instructor.rates?.basic || DEFAULT_LESSON_RATE;
+    const today = moment.tz(getInstructorTimezone(instructor)).format("YYYY-MM-DD");
+
+    const [users, bookings, payments] = await Promise.all([
+      User.find({ instructorId }).lean(),
+      Booking.find({ instructorId }).lean(),
+      Payment.find({ instructorId }).lean(),
+    ]);
+
+    const learners = users
+      .filter((u) => u.detailsCompleted)
+      .map((u) => {
+        const userBookings = bookings.filter((b) => b.userPhone === u.phone);
+        const userPayments = payments.filter((p) => p.userPhone === u.phone);
+
+        const lessonsCompleted = userBookings.filter((b) => b.status === "completed").length;
+
+        const nextBooking = userBookings
+          .filter((b) => b.date >= today && (b.status === "confirmed" || b.status === "rescheduled"))
+          .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0];
+
+        const totalPaid = userPayments.reduce((sum, p) => sum + p.amount, 0);
+        const totalCharged = lessonsCompleted * rate;
+        const outstanding = Math.max(0, totalCharged - totalPaid);
+
+        let progressLevel = "new";
+        if (lessonsCompleted >= 7) progressLevel = "test-ready";
+        else if (lessonsCompleted > 0) progressLevel = "active";
+
+        return {
+          phone: u.phone,
+          name: u.name || null,
+          age: u.age || null,
+          postalCode: u.postalCode || null,
+          instructorNotes: u.instructorNotes || "",
+          createdAt: u.createdAt || null,
+          lessonsCompleted,
+          nextLesson: nextBooking ? { date: nextBooking.date, time: nextBooking.time } : null,
+          totalPaid,
+          totalCharged,
+          outstanding,
+          paymentStatus: outstanding <= 0 ? "paid" : "owes",
+          progressLevel,
+        };
+      });
+
+    const search = (req.query.search || "").toLowerCase();
+    const filtered = search
+      ? learners.filter((l) => (l.name || "").toLowerCase().includes(search) || l.phone.includes(search))
+      : learners;
+
+    res.json({ success: true, data: filtered });
+  } catch (err) {
+    logger.error(`Dashboard /learners error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to fetch learners" });
+  }
+});
+
+router.get("/learners/:phone", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const instructorId = instructor.phoneNumberId;
+    const rate = instructor.rates?.basic || DEFAULT_LESSON_RATE;
+    const phone = req.params.phone;
+
+    const [user, bookings, payments] = await Promise.all([
+      User.findOne({ phone, instructorId }).lean(),
+      Booking.find({ userPhone: phone, instructorId }).sort({ date: -1, time: -1 }).lean(),
+      Payment.find({ userPhone: phone, instructorId }).sort({ date: -1 }).lean(),
+    ]);
+
+    if (!user) return res.status(404).json({ success: false, error: "Learner not found" });
+
+    const lessonsCompleted = bookings.filter((b) => b.status === "completed").length;
+    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+    const totalCharged = lessonsCompleted * rate;
+
+    res.json({
+      success: true,
+      data: {
+        phone: user.phone,
+        name: user.name || null,
+        age: user.age || null,
+        dob: user.dob || null,
+        postalCode: user.postalCode || null,
+        instructorNotes: user.instructorNotes || "",
+        createdAt: user.createdAt || null,
+        lessonsCompleted,
+        totalPaid,
+        totalCharged,
+        outstanding: Math.max(0, totalCharged - totalPaid),
+        lessons: bookings.map((b) => ({
+          bookingId: b.bookingId,
+          date: b.date,
+          time: b.time,
+          status: b.status,
+          topicsCovered: b.topicsCovered || [],
+          rating: b.rating,
+          progressNotes: b.progressNotes || "",
+          paymentReceived: b.paymentReceived,
+          paymentAmount: b.paymentAmount,
+        })),
+        payments: payments.map((p) => ({
+          paymentId: p.paymentId,
+          amount: p.amount,
+          method: p.method,
+          date: p.date,
+          note: p.note || "",
+        })),
+      },
+    });
+  } catch (err) {
+    logger.error(`Dashboard /learners/:phone error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to fetch learner" });
+  }
+});
+
+router.patch("/learners/:phone/notes", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const { notes } = req.body;
+    if (typeof notes !== "string") return res.status(400).json({ success: false, error: "notes must be a string" });
+
+    const user = await User.findOneAndUpdate(
+      { phone: req.params.phone, instructorId: instructor.phoneNumberId },
+      { instructorNotes: notes },
+      { new: true }
+    );
+
+    if (!user) return res.status(404).json({ success: false, error: "Learner not found" });
+
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`Dashboard /learners/:phone/notes error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to update notes" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Lesson Types
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get("/lesson-types", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const types = await LessonType.find({ instructorId: instructor.phoneNumberId })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean();
+
+    res.json({ success: true, data: types });
+  } catch (err) {
+    logger.error(`Dashboard /lesson-types GET error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to fetch lesson types" });
+  }
+});
+
+router.post("/lesson-types", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const { name, price, description } = req.body;
+    if (!name || price == null) return res.status(400).json({ success: false, error: "name and price are required" });
+
+    const maxSort = await LessonType.findOne({ instructorId: instructor.phoneNumberId })
+      .sort({ sortOrder: -1 })
+      .select("sortOrder")
+      .lean();
+
+    const lessonType = await LessonType.create({
+      instructorId: instructor.phoneNumberId,
+      name,
+      price,
+      description: description || "",
+      sortOrder: (maxSort?.sortOrder ?? -1) + 1,
+    });
+
+    res.status(201).json({ success: true, data: lessonType });
+  } catch (err) {
+    logger.error(`Dashboard /lesson-types POST error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to create lesson type" });
+  }
+});
+
+router.patch("/lesson-types/:id", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const updates = {};
+    for (const key of ["name", "price", "description", "active", "sortOrder"]) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    const lessonType = await LessonType.findOneAndUpdate(
+      { _id: req.params.id, instructorId: instructor.phoneNumberId },
+      updates,
+      { new: true }
+    );
+
+    if (!lessonType) return res.status(404).json({ success: false, error: "Lesson type not found" });
+
+    res.json({ success: true, data: lessonType });
+  } catch (err) {
+    logger.error(`Dashboard /lesson-types PATCH error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to update lesson type" });
+  }
+});
+
+router.delete("/lesson-types/:id", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const lessonType = await LessonType.findOneAndDelete({
+      _id: req.params.id,
+      instructorId: instructor.phoneNumberId,
+    });
+
+    if (!lessonType) return res.status(404).json({ success: false, error: "Lesson type not found" });
+
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`Dashboard /lesson-types DELETE error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to delete lesson type" });
   }
 });
 

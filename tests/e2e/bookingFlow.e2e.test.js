@@ -30,12 +30,6 @@ jest.mock("../../src/services/calendarService", () => ({
   ),
   checkAvailability: jest.fn().mockResolvedValue(true),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("test-spreadsheet-id"),
-  getLearnerName: jest.fn().mockResolvedValue("E2E Test User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/whatsappService", () => ({
   sendTextMessage: jest.fn().mockResolvedValue({}),
   sendMessage: jest.fn().mockResolvedValue({}),

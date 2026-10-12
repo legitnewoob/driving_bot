@@ -34,6 +34,10 @@ jest.mock("../../src/utils/logger-advanced", () => ({
 }));
 jest.mock("../../src/utils/emailNotifier", () => ({
   notifyInvalidGrant: jest.fn(),
+  notifyInstructorReauth: jest.fn(),
+}));
+jest.mock("../../src/models/instructorSchema", () => ({
+  findByIdAndUpdate: jest.fn().mockResolvedValue({}),
 }));
 
 const { oauth2Client, calendar } = require("../../src/config/google");

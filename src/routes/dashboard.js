@@ -29,8 +29,8 @@ async function resolveInstructor(req) {
     return instructor || null;
   }
 
-  // Dev fallback: no JWT configured, allow an instructorId query parameter.
-  if (req.query.instructorId) {
+  // Dev fallback: allow an instructorId query parameter in development only.
+  if (process.env.NODE_ENV === "development" && req.query.instructorId) {
     return Instructor.findOne({
       $or: [
         { phoneNumberId: req.query.instructorId },

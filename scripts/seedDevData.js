@@ -19,6 +19,7 @@ const Booking = require("../src/models/bookingModel");
 const Payment = require("../src/models/paymentModel");
 const User = require("../src/models/userModel");
 const Instructor = require("../src/models/instructorSchema");
+const PhoneNumber = require("../src/models/phoneNumberModel");
 
 // ─── Seed Data (functions so instructorId is injected at runtime) ────────────
 
@@ -220,23 +221,78 @@ async function run() {
   console.log(`   Database: ${mongoose.connection.name}`);
   console.log(`   Host: ${mongoose.connection.host}`);
 
-  // Look up the instructor from DB to get the real phoneNumberId
-  const instructor = await Instructor.findOne({ active: true }).lean();
-  if (!instructor) {
+  // Look up instructors — seed for all active ones
+  const TARGET_EMAILS = ["agrawalraj918@gmail.com", "chessforlife.18@gmail.com"];
+  let instructors = await Instructor.find({ email: { $in: TARGET_EMAILS }, active: true }).lean();
+  if (instructors.length === 0) {
+    instructors = await Instructor.find({ active: true }).lean();
+  }
+  if (instructors.length === 0) {
     console.error("❌ No active instructor found in DB. Run 'npm run instructor:add' first.");
     await mongoose.disconnect();
     process.exit(1);
   }
-  const INSTRUCTOR_ID = instructor.phoneNumberId;
-  console.log(`   Instructor: ${instructor.name} (${INSTRUCTOR_ID})`);
 
-  // Build seed data with the real instructor ID
-  const USERS = getUsers(INSTRUCTOR_ID);
-  const BOOKINGS = getBookings(INSTRUCTOR_ID);
-  const PAYMENTS = getPayments(INSTRUCTOR_ID);
+  // Phone numbers — assign one per instructor
+  const PHONE_NUMBERS = [
+    { phoneNumber: "+447700100001", phoneNumberId: "mock_pnid_001", label: "UK Dev 1", region: "GB", status: "available" },
+    { phoneNumber: "+447700100002", phoneNumberId: "mock_pnid_002", label: "UK Dev 2", region: "GB", status: "available" },
+    { phoneNumber: "+447700100003", phoneNumberId: "mock_pnid_003", label: "UK Dev 3", region: "GB", status: "available" },
+    { phoneNumber: "+447700100004", phoneNumberId: "mock_pnid_004", label: "UK Dev 4", region: "GB", status: "available" },
+    { phoneNumber: "+447700100005", phoneNumberId: "mock_pnid_005", label: "UK Dev 5", region: "GB", status: "available" },
+  ];
+
+  // Clear mock phoneNumberIds from ALL instructors to avoid unique constraint conflicts
+  const allInstructors = await Instructor.find({}).lean();
+  for (const inst of allInstructors) {
+    if (inst.phoneNumberId && (inst.phoneNumberId.startsWith("mock_pnid_") || inst.phoneNumberId.startsWith("temp_seed_"))) {
+      await Instructor.findByIdAndUpdate(inst._id, {
+        $set: { phoneNumberId: `temp_seed_${inst._id}` },
+        $unset: { phone: 1 },
+      });
+    }
+  }
+  // Also clear target instructors regardless
+  for (const inst of instructors) {
+    await Instructor.findByIdAndUpdate(inst._id, {
+      $set: { phoneNumberId: `temp_seed_${inst._id}` },
+      $unset: { phone: 1 },
+    });
+  }
+
+  // Update instructors: subscribed + assigned phone number
+  for (let i = 0; i < instructors.length; i++) {
+    const pn = PHONE_NUMBERS[i];
+    pn.status = "assigned";
+    pn.assignedTo = instructors[i]._id;
+    pn.assignedAt = new Date();
+
+    await Instructor.findByIdAndUpdate(instructors[i]._id, {
+      plan: "adi",
+      subscriptionStatus: "active",
+      phoneNumberId: pn.phoneNumberId,
+      phone: pn.phoneNumber,
+    });
+    console.log(`   ✅ ${instructors[i].email} → plan: adi, active, phone: ${pn.phoneNumber}`);
+  }
+
+  // Re-read instructors to get updated phoneNumberIds for seed data
+  instructors = await Instructor.find({ _id: { $in: instructors.map(i => i._id) } }).lean();
+
+  // Build seed data for each instructor using their assigned phoneNumberId
+  let USERS = [];
+  let BOOKINGS = [];
+  let PAYMENTS = [];
+  for (const instructor of instructors) {
+    const id = instructor.phoneNumberId;
+    console.log(`   Seeding data for: ${instructor.name} <${instructor.email}> (${id})`);
+    USERS = USERS.concat(getUsers(id));
+    BOOKINGS = BOOKINGS.concat(getBookings(id));
+    PAYMENTS = PAYMENTS.concat(getPayments(id));
+  }
 
   // Drop collections (ignore errors if they don't exist)
-  const drops = ["bookings", "payments", "users", "chatlogs"];
+  const drops = ["bookings", "payments", "users", "chatlogs", "phonenumbers"];
   for (const name of drops) {
     try {
       await mongoose.connection.db.dropCollection(name);
@@ -256,9 +312,14 @@ async function run() {
   await Payment.insertMany(PAYMENTS);
   console.log(`   ✅ Inserted ${PAYMENTS.length} payments`);
 
+  await PhoneNumber.insertMany(PHONE_NUMBERS);
+  console.log(`   ✅ Inserted ${PHONE_NUMBERS.length} phone numbers (${instructors.length} assigned, ${PHONE_NUMBERS.length - instructors.length} available)`);
+
   console.log("\n🎉 Dev database seeded successfully!");
-  console.log(`   Instructor: ${instructor.name} (${INSTRUCTOR_ID})`);
-  console.log(`   Users: ${USERS.length} | Bookings: ${BOOKINGS.length} | Payments: ${PAYMENTS.length}`);
+  for (const inst of instructors) {
+    console.log(`   Instructor: ${inst.name} <${inst.email}> (${inst.phoneNumberId})`);
+  }
+  console.log(`   Users: ${USERS.length} | Bookings: ${BOOKINGS.length} | Payments: ${PAYMENTS.length} | PhoneNumbers: ${PHONE_NUMBERS.length}`);
 
   await mongoose.disconnect();
   process.exit(0);

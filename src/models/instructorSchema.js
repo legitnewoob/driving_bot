@@ -1,13 +1,14 @@
 const mongoose = require("mongoose");
 
 const instructorSchema = new mongoose.Schema({
-  phoneNumberId: { type: String, required: true, unique: true, index: true },
+  phoneNumberId: { type: String, unique: true, sparse: true, index: true },
   phone: { type: String, unique: true, sparse: true, index: true },
   name: { type: String, required: true },
-  email: { type: String, required: true },
-  googleCalendarId: { type: String, required: true },
-  googleRefreshToken: { type: String, required: true },
-  whatsappToken: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  googleId: { type: String, unique: true, sparse: true, index: true },
+  googleCalendarId: { type: String },
+  googleRefreshToken: { type: String },
+  whatsappToken: { type: String },
   spreadsheetId: { type: String },
   availableTimes: {
     type: [String],
@@ -18,8 +19,8 @@ const instructorSchema = new mongoose.Schema({
     default: ["Basic driving", "Highway driving", "Parking", "City driving"],
   },
   baseLocation: {
-    latitude: { type: Number, required: true },
-    longitude: { type: Number, required: true },
+    latitude: { type: Number },
+    longitude: { type: Number },
   },
   rates: {
     basic: { type: Number, default: 50 },
@@ -29,6 +30,29 @@ const instructorSchema = new mongoose.Schema({
   timezone: { type: String, default: "Europe/London" },
   active: { type: Boolean, default: true },
   apiKey: { type: String, unique: true, sparse: true, index: true },
-}, { timestamps: true });
+  plan: { type: String, enum: ["pdi", "adi", "driving-school"], default: "pdi" },
+  stripeCustomerId: { type: String, unique: true, sparse: true },
+  subscriptionId: { type: String },
+  subscriptionStatus: {
+    type: String,
+    enum: ["active", "past_due", "canceled", "incomplete", "trialing", null],
+    default: null,
+  },
+}, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
+
+instructorSchema.virtual("onboardingComplete").get(function () {
+  const hasPhone = this.phoneNumberId && !this.phoneNumberId.startsWith("signup_");
+  const hasSub = this.plan === "pdi" || ["active", "trialing"].includes(this.subscriptionStatus);
+  const hasCal = !!this.googleRefreshToken;
+  return hasPhone && hasSub && hasCal;
+});
+
+instructorSchema.virtual("onboardingStatus").get(function () {
+  return {
+    phoneAssigned: !!(this.phoneNumberId && !this.phoneNumberId.startsWith("signup_")),
+    subscriptionActive: this.plan === "pdi" || ["active", "trialing"].includes(this.subscriptionStatus),
+    calendarConnected: !!this.googleRefreshToken,
+  };
+});
 
 module.exports = mongoose.model("Instructor", instructorSchema);

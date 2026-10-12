@@ -1,16 +1,9 @@
 const crypto = require("crypto");
 
-/**
- * Decode a base64url string to an object.
- */
 function base64UrlDecode(str) {
   return JSON.parse(Buffer.from(str, "base64url").toString("utf8"));
 }
 
-/**
- * Verify an HS256/HS384/HS512 JWT using Node's built-in crypto.
- * No jsonwebtoken package required.
- */
 function verifyToken(token, secret) {
   const parts = token.split(".");
   if (parts.length !== 3) {
@@ -24,7 +17,6 @@ function verifyToken(token, secret) {
     throw new Error("Unsupported JWT algorithm");
   }
 
-  // Map HS256 -> sha256, HS384 -> sha384, HS512 -> sha512
   const algorithm = `sha${header.alg.replace("HS", "")}`;
 
   const expectedSignature = crypto
@@ -51,27 +43,25 @@ function verifyToken(token, secret) {
   return payload;
 }
 
-/**
- * Express middleware that verifies a Bearer JWT when JWT_SECRET is configured.
- * If no secret is set, the middleware passes through (useful for local dev
- * with an instructorId query param). Attach decoded payload to req.user.
- */
 function jwtAuth(req, res, next) {
   const authHeader = req.headers.authorization;
 
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.slice(7).trim();
-    const secret = process.env.JWT_SECRET;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, error: "Authentication required" });
+  }
 
-    if (!secret) {
-      console.warn("JWT_SECRET is not set; skipping token verification");
-    } else {
-      try {
-        req.user = verifyToken(token, secret);
-      } catch (err) {
-        return res.status(401).json({ success: false, error: err.message });
-      }
-    }
+  const token = authHeader.slice(7).trim();
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    console.error("JWT_SECRET is not set — rejecting request");
+    return res.status(500).json({ success: false, error: "Server configuration error" });
+  }
+
+  try {
+    req.user = verifyToken(token, secret);
+  } catch (err) {
+    return res.status(401).json({ success: false, error: err.message });
   }
 
   next();

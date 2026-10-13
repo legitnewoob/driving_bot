@@ -211,7 +211,7 @@ Extract the date and time information according to these rules.`;
       currentTime: timezoneUtils.getCurrentTimeString(),
       tomorrowStr: timezoneUtils.getTomorrowDateString(),
       currentDay: timezoneUtils.getCurrentDay(),
-      currentTimezone: process.env.APP_TIMEZONE || "Asia/Kolkata",
+      currentTimezone: process.env.APP_TIMEZONE || "Europe/London",
     };
   }
 

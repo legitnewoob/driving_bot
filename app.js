@@ -148,8 +148,9 @@ const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');
 setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
-// Upload logs to R2 every 5 minutes
-setInterval(uploadLogsFolder, process.env.WAIT_FOR_R2_IN_MINS * 60 * 1000); 
+// Upload logs to R2 (WAIT_FOR_R2_IN_MINS, default 5 minutes)
+const r2Minutes = Number(process.env.WAIT_FOR_R2_IN_MINS) > 0 ? Number(process.env.WAIT_FOR_R2_IN_MINS) : 5;
+setInterval(uploadLogsFolder, r2Minutes * 60 * 1000);
 
 // Graceful shutdown
 const mongoose = require("mongoose");

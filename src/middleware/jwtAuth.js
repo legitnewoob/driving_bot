@@ -68,3 +68,4 @@ function jwtAuth(req, res, next) {
 }
 
 module.exports = jwtAuth;
+module.exports.verifyToken = verifyToken;

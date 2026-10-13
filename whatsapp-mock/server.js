@@ -40,7 +40,21 @@ app.get("/api/instructors", async (req, res) => {
 });
 
 // ─── Mock WhatsApp payload factory ───────────────────────────────────────────
-function buildWhatsAppPayload(text, fromNumber = "917726877146", phoneNumberId = DEFAULT_PHONE_ID) {
+// A typed message, a tapped button/list row, or a shared location.
+function buildMessage({ text, buttonId, buttonKind, location }) {
+  if (location) {
+    return { type: "location", location };
+  }
+  if (buttonId) {
+    const reply = { id: buttonId, title: text };
+    return buttonKind === "list"
+      ? { type: "interactive", interactive: { type: "list_reply", list_reply: reply } }
+      : { type: "interactive", interactive: { type: "button_reply", button_reply: reply } };
+  }
+  return { type: "text", text: { body: text } };
+}
+
+function buildWhatsAppPayload(input, fromNumber = "917726877146", phoneNumberId = DEFAULT_PHONE_ID) {
   const msgId = "wamid." + Math.random().toString(36).slice(2, 18).toUpperCase();
   const ts    = Math.floor(Date.now() / 1000).toString();
 
@@ -64,8 +78,7 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146", phoneNumberId =
             from:      fromNumber,
             id:        msgId,
             timestamp: ts,
-            type:      "text",
-            text:      { body: text },
+            ...buildMessage(input),
           }],
         },
       }],
@@ -77,11 +90,11 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146", phoneNumberId =
 io.on("connection", (socket) => {
   console.log("[mock] Dev UI connected:", socket.id);
 
-  socket.on("user_message", async ({ text, from, phoneNumberId }) => {
+  socket.on("user_message", async ({ text, from, phoneNumberId, buttonId, buttonKind, location }) => {
     const pnid = phoneNumberId || DEFAULT_PHONE_ID;
-    console.log(`[mock] → forwarding to app: "${text}" from ${from} (instructor: ${pnid})`);
+    console.log(`[mock] → forwarding to app: "${text || "(location)"}" from ${from} (instructor: ${pnid})`);
 
-    const payload = buildWhatsAppPayload(text, from, pnid);
+    const payload = buildWhatsAppPayload({ text, buttonId, buttonKind, location }, from, pnid);
 
     let response, data;
 
@@ -103,7 +116,11 @@ io.on("connection", (socket) => {
     const replies = Array.isArray(data.reply) ? data.reply : [data.reply];
 
     for (const reply of replies) {
-      if (reply) {
+      if (!reply) continue;
+      if (typeof reply === "object") {
+        console.log(`[mock] ← app replied (${reply.interactive?.type}): "${reply.text}"`);
+        socket.emit("bot_message", { text: reply.text, interactive: reply.interactive, to: from });
+      } else {
         console.log(`[mock] ← app replied: "${reply}"`);
         socket.emit("bot_message", { text: reply, to: from });
       }

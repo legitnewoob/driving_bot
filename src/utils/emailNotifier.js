@@ -45,7 +45,7 @@ function getTransporter() {
  * @param {string} [dedupeKey] - Optional key to prevent duplicate emails within cooldown
  * @returns {Promise<boolean>} true if sent, false if skipped/failed
  */
-async function sendNotification(subject, html, dedupeKey = null) {
+async function sendNotification(subject, html, dedupeKey = null, toOverride = null) {
   // Dedupe check
   if (dedupeKey) {
     const lastSent = _sentRecently.get(dedupeKey);
@@ -61,7 +61,7 @@ async function sendNotification(subject, html, dedupeKey = null) {
     return false;
   }
 
-  const to = process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
+  const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
 
   try {
     await transporter.sendMail({
@@ -184,7 +184,30 @@ async function notifyInstructorReauth(instructor) {
     </div>
   `;
 
-  return sendNotification(subject, html, `instructor_reauth:${email}`);
+  return sendNotification(subject, html, `instructor_reauth:${email}`, email);
+}
+
+/**
+ * Tell an instructor that a learner they've paused Donna for has messaged.
+ * At most one email per learner per cooldown window.
+ */
+async function notifyInstructorLearnerMessage(instructor, learner, messageText) {
+  const email = instructor?.email;
+  if (!email) return false;
+  const who = learner?.name || learner?.phone || "A learner";
+  const escape = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const subject = `💬 ${who} messaged — Donna is paused for them`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <p>Hi ${escape(instructor.name || "there")},</p>
+      <p><strong>${escape(who)}</strong> (${escape(learner?.phone || "")}) sent a message. You've paused Donna for this learner, so she hasn't replied.</p>
+      <blockquote style="border-left: 3px solid #ddd; margin: 16px 0; padding: 8px 12px; color: #333;">${escape(messageText).slice(0, 1000)}</blockquote>
+      <p style="color: #555; font-size: 14px;">Reply to them on WhatsApp, or turn Donna back on from the Learners page.</p>
+      <p style="color: #999; font-size: 11px;">You'll get at most one of these per learner per hour.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, `paused_learner:${email}:${learner?.phone}`, email);
 }
 
 /**
@@ -205,6 +228,7 @@ module.exports = {
   sendNotification,
   notifyInvalidGrant,
   notifyInstructorReauth,
+  notifyInstructorLearnerMessage,
   clearCooldowns,
   resetTransporter,
 };

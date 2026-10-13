@@ -37,13 +37,15 @@ function cleanUpContexts() {
 
     const now = timezoneUtils.getCurrentDate();
 
-    Object.keys(userSessions).forEach(phone => {
-        const session = userSessions[phone];
+    Object.keys(userSessions).forEach(key => {
+        const session = userSessions[key];
 
         if (!session || !session.lastActivity) return;
 
         if (now - session.lastActivity > timeOutPeriod) {
-            WebhookController.clearUserConversationHistoryAndContext(phone);
+            // Session keys are "phone::instructorId"
+            const [phone, instructorId] = key.split("::");
+            WebhookController.clearUserConversationHistoryAndContext(phone, instructorId);
         }
     });
 }

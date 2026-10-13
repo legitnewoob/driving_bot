@@ -364,7 +364,7 @@ describe("Flow – CANCEL_BOOKING Action", () => {
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Cancel booking");
 
-    expect(replies[1]).toContain("provide a valid booking ID");
+    expect(replies[1]).toContain("tell me the booking ID");
   });
 
   it("handles booking not found", async () => {
@@ -446,8 +446,8 @@ describe("Flow – UPDATE_BOOKING Action", () => {
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Reschedule to 2pm");
 
     expect(replies.length).toBe(2);
-    expect(replies[1]).toContain("Booking updated");
-    expect(replies[1]).toContain("2025-07-02");
+    expect(replies[1]).toContain("Booking DL-UPDT moved to");
+    expect(replies[1]).toContain("Wed 2 Jul");
     expect(replies[1]).toContain("14:00");
   });
 
@@ -461,8 +461,8 @@ describe("Flow – UPDATE_BOOKING Action", () => {
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Reschedule");
 
-    // rescheduleBooking throws "Booking not found" → webhook catches and shows error
-    expect(replies[1]).toContain("trouble");
+    // Unknown or someone else's booking id → same "not found" reply either way
+    expect(replies[1]).toContain("No booking found with ID DL-GONE");
   });
 });
 
@@ -1012,7 +1012,7 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(aiService.getResponse).toHaveBeenCalledWith(
-      "Yes, book it", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR
+      "Yes, book it", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR, expect.objectContaining({ phone: REGISTERED_USER.phone })
     );
   });
 
@@ -1044,7 +1044,7 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(aiService.getResponse).toHaveBeenCalledWith(
-      "10:00 AM", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR
+      "10:00 AM", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR, expect.objectContaining({ phone: REGISTERED_USER.phone })
     );
   });
 
@@ -1058,12 +1058,14 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
     expect(aiService.getResponse).not.toHaveBeenCalled();
   });
 
-  it("returns 500 on unexpected error", async () => {
-    const req = { body: null }; // will cause error
+  it("always acknowledges with 200, even for a malformed body", async () => {
+    // Changed: we acknowledge before processing so Meta never retries.
+    const req = { body: null };
     const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
 
     await webhookController.handleWebhook(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(aiService.getResponse).not.toHaveBeenCalled();
   });
 });

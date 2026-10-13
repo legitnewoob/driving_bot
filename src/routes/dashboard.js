@@ -8,8 +8,15 @@ const ChatLog = require("../models/chatLogModel");
 const Instructor = require("../models/instructorSchema");
 const Payment = require("../models/paymentModel");
 const LessonType = require("../models/lessonTypeModel");
+const Notification = require("../models/notificationModel");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
+const calendarService = require("../services/calendarService");
+const routeOptimizer = require("../services/routeOptimizer");
+const settings = require("../services/instructorSettings");
+const { validateSettingsUpdate, validatePreferencesUpdate } = require("../services/settingsValidation");
+const { getCoordinatesFromPostalCode } = require("../services/mapsService");
+const { invalidateInstructorCache } = require("../models/instructorModel");
 
 const DEFAULT_LESSON_RATE = parseFloat(process.env.DEFAULT_LESSON_RATE) || 50;
 const MONTHLY_REVENUE_TARGET = parseFloat(process.env.MONTHLY_REVENUE_TARGET) || 3000;
@@ -577,15 +584,18 @@ router.get("/learners", async (req, res) => {
         const userBookings = bookings.filter((b) => b.userPhone === u.phone);
         const userPayments = payments.filter((p) => p.userPhone === u.phone);
 
-        const lessonsCompleted = userBookings.filter((b) => b.status === "completed").length;
+        const completed = userBookings.filter((b) => b.status === "completed");
+        const lessonsCompleted = completed.length;
 
         const nextBooking = userBookings
           .filter((b) => b.date >= today && (b.status === "confirmed" || b.status === "rescheduled"))
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0];
 
         const totalPaid = userPayments.reduce((sum, p) => sum + p.amount, 0);
-        const totalCharged = lessonsCompleted * rate;
+        const totalCharged = completed.reduce((sum, b) => sum + (b.price ?? rate), 0);
         const outstanding = Math.max(0, totalCharged - totalPaid);
+        // Paid ahead, e.g. a block of lessons bought upfront
+        const credit = Math.max(0, totalPaid - totalCharged);
 
         let progressLevel = "new";
         if (lessonsCompleted >= 7) progressLevel = "test-ready";
@@ -603,8 +613,11 @@ router.get("/learners", async (req, res) => {
           totalPaid,
           totalCharged,
           outstanding,
+          credit,
           paymentStatus: outstanding <= 0 ? "paid" : "owes",
           progressLevel,
+          priority: !!u.schedulingPrefs?.priority,
+          donnaPaused: !!u.schedulingPrefs?.donnaPaused,
         };
       });
 
@@ -637,9 +650,10 @@ router.get("/learners/:phone", async (req, res) => {
 
     if (!user) return res.status(404).json({ success: false, error: "Learner not found" });
 
-    const lessonsCompleted = bookings.filter((b) => b.status === "completed").length;
+    const completed = bookings.filter((b) => b.status === "completed");
+    const lessonsCompleted = completed.length;
     const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-    const totalCharged = lessonsCompleted * rate;
+    const totalCharged = completed.reduce((sum, b) => sum + (b.price ?? rate), 0);
 
     res.json({
       success: true,
@@ -650,11 +664,13 @@ router.get("/learners/:phone", async (req, res) => {
         dob: user.dob || null,
         postalCode: user.postalCode || null,
         instructorNotes: user.instructorNotes || "",
+        schedulingPrefs: prefsPayload(user.schedulingPrefs),
         createdAt: user.createdAt || null,
         lessonsCompleted,
         totalPaid,
         totalCharged,
         outstanding: Math.max(0, totalCharged - totalPaid),
+        credit: Math.max(0, totalPaid - totalCharged),
         lessons: bookings.map((b) => ({
           bookingId: b.bookingId,
           date: b.date,
@@ -665,6 +681,9 @@ router.get("/learners/:phone", async (req, res) => {
           progressNotes: b.progressNotes || "",
           paymentReceived: b.paymentReceived,
           paymentAmount: b.paymentAmount,
+          lessonTypeName: b.lessonTypeName || "",
+          price: b.price ?? null,
+          lateCancellation: !!b.lateCancellation,
         })),
         payments: payments.map((p) => ({
           paymentId: p.paymentId,
@@ -701,6 +720,300 @@ router.patch("/learners/:phone/notes", async (req, res) => {
   } catch (err) {
     logger.error(`Dashboard /learners/:phone/notes error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to update notes" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Learner scheduling preferences
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PREFS_DEFAULTS = {
+  priority: false,
+  maxAddedDriveMin: null,
+  savedPlaces: [],
+  preferredDays: [],
+  preferredTimes: [],
+  unavailable: [],
+  defaultLessonTypeId: null,
+  maxLessonsPerWeek: null,
+  donnaPaused: false,
+};
+
+function prefsPayload(prefs) {
+  const p = { ...PREFS_DEFAULTS, ...(prefs || {}) };
+  return {
+    ...p,
+    defaultLessonTypeId: p.defaultLessonTypeId ? String(p.defaultLessonTypeId) : null,
+    savedPlaces: (p.savedPlaces || []).map((s) => ({
+      label: s.label,
+      address: s.address,
+      located: typeof s.latitude === "number",
+    })),
+  };
+}
+
+router.patch("/learners/:phone/preferences", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const { errors, value } = validatePreferencesUpdate(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors[0], errors });
+
+    const user = await User.findOne({ phone: req.params.phone, instructorId: instructor.phoneNumberId });
+    if (!user) return res.status(404).json({ success: false, error: "Learner not found" });
+
+    if (value.defaultLessonTypeId) {
+      const owned = await LessonType.exists({ _id: value.defaultLessonTypeId, instructorId: instructor.phoneNumberId });
+      if (!owned) return res.status(400).json({ success: false, error: "That lesson type doesn't exist" });
+    }
+
+    const current = user.schedulingPrefs?.toObject ? user.schedulingPrefs.toObject() : user.schedulingPrefs || {};
+
+    if (value.savedPlaces) {
+      const known = new Map((current.savedPlaces || []).map((p) => [p.address.toLowerCase(), p]));
+      const located = [];
+      for (const place of value.savedPlaces) {
+        const prev = known.get(place.address.toLowerCase());
+        if (prev && typeof prev.latitude === "number") {
+          located.push({ ...place, latitude: prev.latitude, longitude: prev.longitude });
+          continue;
+        }
+        try {
+          const geo = await getCoordinatesFromPostalCode(place.address);
+          located.push({ ...place, latitude: geo.lat, longitude: geo.lng });
+        } catch (err) {
+          const f = geocodeFailure(err, `Couldn't find "${place.address}". Check the address or postcode.`);
+          return res.status(f.status).json({ success: false, error: f.error });
+        }
+      }
+      value.savedPlaces = located;
+    }
+
+    user.schedulingPrefs = { ...current, ...value };
+    await user.save();
+
+    res.json({ success: true, data: prefsPayload(user.schedulingPrefs.toObject ? user.schedulingPrefs.toObject() : user.schedulingPrefs) });
+  } catch (err) {
+    logger.error(`Dashboard /learners/:phone/preferences error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to update preferences" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Donna settings (route & bot behaviour)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Google refusing the request (bad key, billing off, quota) isn't the user's
+// address being wrong, so say so instead of "couldn't find".
+function geocodeFailure(err, notFoundMessage) {
+  const msg = err?.message || "";
+  if (/REQUEST_DENIED|OVER_QUERY_LIMIT|OVER_DAILY_LIMIT/.test(msg)) {
+    logger.error(`Geocoding unavailable: ${msg}`);
+    return { status: 503, error: "Address lookup isn't working right now (Google Maps setup problem). Please try again later." };
+  }
+  return { status: 400, error: notFoundMessage };
+}
+
+function plainObj(v) {
+  if (!v) return {};
+  return typeof v.toObject === "function" ? v.toObject() : v;
+}
+
+function settingsPayload(instructor) {
+  const route = plainObj(instructor.routeSettings);
+  return {
+    baseAddress: instructor.baseAddress || "",
+    hasBaseLocation: !!routeOptimizer.homePoint(instructor),
+    routeSettings: {
+      ...settings.ROUTE_DEFAULTS,
+      ...route,
+      serviceArea: (() => {
+        const area = { ...settings.ROUTE_DEFAULTS.serviceArea, ...(route.serviceArea || {}) };
+        const { radius, unit } = settings.serviceRadius(area);
+        return { radius, unit, postcodeDistricts: area.postcodeDistricts };
+      })(),
+    },
+    botSettings: {
+      ...settings.resolveBotSettings(instructor),
+      workingHours: settings.workingHoursFor(instructor),
+    },
+    presets: settings.ROUTE_PRESETS,
+  };
+}
+
+router.get("/notifications", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const since = req.query.since ? new Date(req.query.since) : new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    if (isNaN(since.getTime())) return res.status(400).json({ success: false, error: "Invalid since" });
+
+    const items = await Notification.find({ instructorId: instructor.phoneNumberId, createdAt: { $gt: since } })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json({
+      success: true,
+      data: items.map((n) => ({
+        id: n.clientId,
+        type: n.type,
+        message: n.message,
+        bookingId: n.bookingId,
+        learnerPhone: n.learnerPhone,
+        createdAt: n.createdAt,
+      })),
+    });
+  } catch (err) {
+    logger.error(`Dashboard /notifications error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to load notifications" });
+  }
+});
+
+router.get("/settings", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    res.json({ success: true, data: settingsPayload(instructor) });
+  } catch (err) {
+    logger.error(`Dashboard /settings error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to load settings" });
+  }
+});
+
+router.patch("/settings", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const { errors, baseAddress, routeSettings, botSettings } = validateSettingsUpdate(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors[0], errors });
+
+    const doc = await Instructor.findById(instructor._id);
+    if (!doc) return res.status(404).json({ success: false, error: "Instructor not found" });
+
+    if (baseAddress !== undefined) {
+      if (!baseAddress) {
+        doc.baseAddress = "";
+        doc.baseLocation = undefined;
+      } else {
+        try {
+          const geo = await getCoordinatesFromPostalCode(baseAddress);
+          doc.baseAddress = geo.formattedAddress || baseAddress;
+          doc.baseLocation = { latitude: geo.lat, longitude: geo.lng };
+        } catch (err) {
+          const f = geocodeFailure(err, "Couldn't find that address. Check it and try again.");
+          return res.status(f.status).json({ success: false, error: f.error });
+        }
+      }
+    }
+
+    if (routeSettings) {
+      const cur = plainObj(doc.routeSettings);
+      doc.routeSettings = {
+        ...cur,
+        ...routeSettings,
+        serviceArea: { ...(cur.serviceArea || {}), ...(routeSettings.serviceArea || {}) },
+      };
+    }
+
+    if (botSettings) {
+      const cur = plainObj(doc.botSettings);
+      const holiday = { ...plainObj(cur.holiday), ...(botSettings.holiday || {}) };
+      if (holiday.enabled && (!holiday.from || !holiday.to)) {
+        return res.status(400).json({ success: false, error: "Holiday mode needs a start and end date" });
+      }
+      const notifications = { ...plainObj(cur.notifications), ...(botSettings.notifications || {}) };
+      doc.botSettings = { ...cur, ...botSettings, holiday, notifications };
+    }
+
+    await doc.save();
+    invalidateInstructorCache(doc.phoneNumberId);
+
+    res.json({ success: true, data: settingsPayload(doc.toObject()) });
+  } catch (err) {
+    logger.error(`Dashboard PATCH /settings error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to save settings" });
+  }
+});
+
+router.post("/route-preview", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const { date, address, routeSettings: draft } = req.body || {};
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ success: false, error: "Pick a date" });
+    }
+    if (typeof address !== "string" || !address.trim()) {
+      return res.status(400).json({ success: false, error: "Enter a postcode or address" });
+    }
+
+    let previewInstructor = instructor;
+    if (draft !== undefined) {
+      const { errors, routeSettings } = validateSettingsUpdate({ routeSettings: draft });
+      if (errors.length) return res.status(400).json({ success: false, error: errors[0], errors });
+      const cur = plainObj(instructor.routeSettings);
+      previewInstructor = {
+        ...instructor,
+        routeSettings: { ...cur, ...routeSettings, serviceArea: { ...(cur.serviceArea || {}), ...(routeSettings.serviceArea || {}) } },
+      };
+    }
+
+    let geo;
+    try {
+      geo = await getCoordinatesFromPostalCode(address.trim());
+    } catch (err) {
+      const f = geocodeFailure(err, "Couldn't find that postcode or address");
+      return res.status(f.status).json({ success: false, error: f.error });
+    }
+    const userLoc = { lat: geo.lat, long: geo.lng };
+
+    const base = {
+      date,
+      location: geo.formattedAddress || address.trim(),
+      hasBaseLocation: !!routeOptimizer.homePoint(previewInstructor),
+      serviceArea: routeOptimizer.checkServiceArea(previewInstructor, userLoc, address.trim()),
+    };
+
+    if (!settings.isWorkingDay(previewInstructor, date)) {
+      return res.json({ success: true, data: { ...base, closedReason: "not_working_day", freeSlots: [], offered: [], slots: [] } });
+    }
+    if (settings.isOnHoliday(previewInstructor, date)) {
+      return res.json({ success: true, data: { ...base, closedReason: "holiday", freeSlots: [], offered: [], slots: [] } });
+    }
+
+    const freeSlots = await calendarService.getAvailableTimeSlotsForDate(date, previewInstructor);
+    const day = await routeOptimizer.planDay({ date, instructor: previewInstructor, availableSlots: freeSlots, userLoc });
+
+    const byTime = (a, b) => routeOptimizer.timeToMinutes(a.slot) - routeOptimizer.timeToMinutes(b.slot);
+    const slots = day.evaluations.length
+      ? day.evaluations.map((e) => ({
+          slot: e.slot,
+          feasible: e.feasible,
+          addedDriveMin: e.addedDrive == null ? null : Math.round(e.addedDrive),
+          reason: e.reason,
+          offered: day.offered.includes(e.slot),
+        }))
+      : freeSlots.map((slot) => ({ slot, feasible: true, addedDriveMin: null, reason: "", offered: day.offered.includes(slot) }));
+
+    res.json({
+      success: true,
+      data: {
+        ...base,
+        closedReason: day.blockedReason || null,
+        freeSlots,
+        offered: day.offered,
+        usedFallback: !!day.usedFallback,
+        slots: slots.sort(byTime),
+      },
+    });
+  } catch (err) {
+    logger.error(`Dashboard /route-preview error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to preview route" });
   }
 });
 

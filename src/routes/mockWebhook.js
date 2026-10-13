@@ -15,6 +15,7 @@
 const express = require("express");
 const router = express.Router();
 const webhookController = require("../controllers/webhookController");
+const { parseIncoming } = require("../controllers/webhookController");
 const Instructor = require("../models/instructorSchema");
 
 // GET /mock-webhook/instructors — list instructors with assigned phone numbers
@@ -51,6 +52,7 @@ router.post("/", async (req, res) => {
   try {
     const body = req.body;
     let from, text, phoneNumberId;
+    let extra = {};
 
     // Simple format — flat fields
     if (body.from && body.text) {
@@ -58,20 +60,22 @@ router.post("/", async (req, res) => {
       text = body.text;
       phoneNumberId = body.phoneNumberId;
     } else {
-      // WhatsApp-shaped format
+      // WhatsApp-shaped format (text, button/list taps, shared locations)
       const value = body?.entry?.[0]?.changes?.[0]?.value;
       const message = value?.messages?.[0];
+      const incoming = message ? parseIncoming(message) : {};
 
-      if (!message || message.type !== "text") {
+      if (!message || (!incoming.text && !incoming.unsupportedType)) {
         return res.status(400).json({ error: "Invalid or unsupported message format" });
       }
 
       from = message.from;
-      text = message.text.body;
+      text = incoming.text || "";
       phoneNumberId = value?.metadata?.phone_number_id;
+      extra = { buttonId: incoming.buttonId, location: incoming.location, unsupportedType: incoming.unsupportedType };
     }
 
-    if (!from || !text) {
+    if (!from || (!text && !extra.unsupportedType)) {
       return res.status(400).json({ error: "Missing required fields: from, text" });
     }
 
@@ -92,9 +96,14 @@ router.post("/", async (req, res) => {
 
     const replies = [];
 
-    await webhookController.handleIncomingMessage(from, text, phoneNumberId, true, (reply) => {
-      replies.push(reply);
-    });
+    await webhookController.handleIncomingMessage(
+      from,
+      text,
+      phoneNumberId,
+      true,
+      (reply, interactive) => replies.push(interactive ? { text: reply, interactive } : reply),
+      extra
+    );
 
     return res.json({
       phoneNumberId,

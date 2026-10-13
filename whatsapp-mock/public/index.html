@@ -328,6 +328,30 @@
       border-bottom-left-radius: 4px;
     }
 
+    .choices {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding-top: 8px;
+    }
+    .choices-label { font-size: 12px; opacity: 0.7; }
+    .choice {
+      background: transparent;
+      border: 1px solid rgba(83, 189, 235, 0.5);
+      color: #53bdeb;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .choice:hover:not(:disabled) { background: rgba(83, 189, 235, 0.12); }
+    .choice:disabled { opacity: 0.45; cursor: default; }
+    .location-btn { font-size: 18px; margin-right: 6px; }
+
     .bubble.error {
       background: #2a1215;
       border: 1px solid var(--error);
@@ -555,6 +579,7 @@
       <div class="input-wrap">
         <textarea id="messageInput" rows="1" placeholder="Type a message..."></textarea>
       </div>
+      <button class="send-btn location-btn" id="locationBtn" title="Share location (type &quot;lat, lng | place&quot; first)">📍</button>
       <button class="send-btn" id="sendBtn" title="Send">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
@@ -596,7 +621,7 @@
       logBody.scrollTop = logBody.scrollHeight;
     }
 
-    function appendMessage(text, side, isError = false) {
+    function appendMessage(text, side, isError = false, interactive = null) {
       emptyState.style.display = 'none';
 
       // Move typing indicator to end (always last)
@@ -607,7 +632,30 @@
 
       const bubble = document.createElement('div');
       bubble.className = 'bubble' + (isError ? ' error' : '');
-      bubble.innerHTML = parseWhatsApp(text);
+      bubble.innerHTML = parseWhatsApp(interactive?.body || text);
+
+      if (interactive) {
+        const options = interactive.type === 'list' ? interactive.rows : interactive.buttons;
+        const wrap = document.createElement('div');
+        wrap.className = 'choices';
+        if (interactive.type === 'list') {
+          const label = document.createElement('div');
+          label.className = 'choices-label';
+          label.textContent = '☰ ' + (interactive.buttonLabel || 'Options');
+          wrap.appendChild(label);
+        }
+        options.forEach((o) => {
+          const btn = document.createElement('button');
+          btn.className = 'choice';
+          btn.textContent = o.title;
+          btn.addEventListener('click', () => {
+            wrap.querySelectorAll('button').forEach((b) => (b.disabled = true));
+            sendPayload({ text: o.title, buttonId: o.id, buttonKind: interactive.type === 'list' ? 'list' : 'button' });
+          });
+          wrap.appendChild(btn);
+        });
+        bubble.appendChild(wrap);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'msg-meta';
@@ -685,9 +733,9 @@
       addLog('Socket disconnected', 'err');
     });
 
-    socket.on('bot_message', ({ text }) => {
+    socket.on('bot_message', ({ text, interactive }) => {
       setTyping(false);
-      appendMessage(text, 'bot');
+      appendMessage(text, 'bot', false, interactive);
       addLog(`← bot: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`, 'out');
     });
 
@@ -698,23 +746,39 @@
     });
 
     // ── Send logic ────────────────────────────────────────────────────────────
-    function sendMessage() {
-      const text = inputEl.value.trim();
-      if (!text) return;
-
+    function sendPayload({ text, buttonId, buttonKind, location }) {
       const from = phoneInput.value.trim() || '2340000000000';
       const phoneNumberId = instructorSelect.value || undefined;
       const selected = instructorsData.find(i => i.phoneNumberId === phoneNumberId);
       const instructorLabel = selected ? selected.name : phoneNumberId || 'default';
+      const shown = location ? `📍 ${location.name || `${location.latitude}, ${location.longitude}`}` : text;
 
-      appendMessage(text, 'user');
-      addLog(`→ user (${from}) → ${instructorLabel}: ${text}`, 'in');
+      appendMessage(shown, 'user');
+      addLog(`→ user (${from}) → ${instructorLabel}: ${shown}${buttonId ? ` [${buttonId}]` : ''}`, 'in');
       setTyping(true);
 
-      socket.emit('user_message', { text, from, phoneNumberId });
+      socket.emit('user_message', { text, from, phoneNumberId, buttonId, buttonKind, location });
+    }
 
+    function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      sendPayload({ text });
       inputEl.value = '';
       inputEl.style.height = 'auto';
+    }
+
+    // Share a map pin: "lat, lng" optionally followed by "| place name"
+    function shareLocation() {
+      const raw = inputEl.value.trim() || '53.0258, -2.1774 | Hanley Bus Station';
+      const [coords, name] = raw.split('|').map((x) => x.trim());
+      const [latitude, longitude] = coords.split(',').map((x) => Number(x.trim()));
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        addLog('Type "lat, lng | place name" in the box, then press 📍', 'err');
+        return;
+      }
+      sendPayload({ location: { latitude, longitude, ...(name ? { name } : {}) } });
+      inputEl.value = '';
     }
 
     function parseWhatsApp(text) {
@@ -738,6 +802,7 @@
     }
 
     sendBtn.addEventListener('click', sendMessage);
+    document.getElementById('locationBtn').addEventListener('click', shareLocation);
 
     inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

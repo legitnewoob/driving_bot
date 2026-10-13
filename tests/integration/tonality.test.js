@@ -166,9 +166,13 @@ describe("System Prompt – Tone & Personality", () => {
     expect(prompt).toContain("24-hour");
   });
 
-  it("specifies available days as Monday–Friday", () => {
-    expect(prompt).toContain("Monday");
-    expect(prompt).toContain("Friday");
+  it("fills available days from the instructor's settings (Monday–Friday by default)", () => {
+    // Days are a template placeholder now; check the rendered prompt.
+    expect(prompt).toContain("{{WORKING_DAYS}}");
+    const aiService = require("../../src/services/gemini/aiService");
+    const rendered = aiService.getSystemPrompt({ name: "Sam", availableTimes: ["09:00"] });
+    expect(rendered).toContain("Available days: Monday–Friday");
+    expect(rendered).not.toContain("{{");
   });
 
   it("requires collection of pickup and dropoff addresses", () => {

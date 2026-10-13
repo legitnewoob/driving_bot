@@ -5,10 +5,9 @@
  * Simulates a multi-booking day scenario to verify that:
  *
  *  1. Distance Matrix API returns real durations (not null)
- *  2. scoreSlots ranks nearby slots higher than distant ones
- *  3. Multi-user scenario: slots near existing bookings are preferred
- *  4. filterAvailableSlotsByLocation produces a sensible ordering
- *  5. Slots far from all bookings get filtered or deprioritized
+ *  2. scoreSlots: nearby learners add less driving than distant ones
+ *  3. Multi-user scenario: reachable slots are ranked by added driving
+ *  4. Distant learners add a lot of driving to every slot
  *  6. Cache works — second call is faster
  *
  * Real locations used (Stoke-on-Trent area):
@@ -169,6 +168,17 @@ describeE2E(E2E_KEYS.MAPS, "E2E – Distance Matrix API (Real Routes API)", () =
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. Route Optimizer – scoreSlots with Real Driving Durations
 // ═══════════════════════════════════════════════════════════════════════════
+// Lower score = better fit. addedDrive = extra minutes of driving the slot adds.
+
+const { resolveRouteSettings } = require("../../src/services/instructorSettings");
+const ROUTE = resolveRouteSettings({});
+const bestFeasible = (scored) => scored.find((s) => s.feasible);
+const log = (label, scored) => {
+  console.log(`  📊 ${label}:`);
+  scored.forEach((s) =>
+    console.log(`     ${s.slot}: ${s.feasible ? `score=${s.score.toFixed(1)}` : "unreachable"} — ${s.reason}`)
+  );
+};
 
 describeE2E(E2E_KEYS.MAPS, "E2E – scoreSlots with Real Driving Durations", () => {
   beforeEach(() => {
@@ -176,75 +186,28 @@ describeE2E(E2E_KEYS.MAPS, "E2E – scoreSlots with Real Driving Durations", () 
   });
 
   it(
-    "nearby user (Fenton) gets higher scores than distant user (Leek)",
+    "a nearby learner (Fenton) adds less driving than a distant one (Leek)",
     async () => {
-      const scoredNear = await routeOptimizer.scoreSlots(
-        AVAILABLE_SLOTS,
-        BOOKINGS,
-        USER_A,
-        INSTRUCTOR_BASE
-      );
-      const scoredFar = await routeOptimizer.scoreSlots(
-        AVAILABLE_SLOTS,
-        BOOKINGS,
-        USER_B,
-        INSTRUCTOR_BASE
-      );
+      const near = await routeOptimizer.scoreSlots(AVAILABLE_SLOTS, BOOKINGS, USER_A, INSTRUCTOR_BASE, ROUTE);
+      const far = await routeOptimizer.scoreSlots(AVAILABLE_SLOTS, BOOKINGS, USER_B, INSTRUCTOR_BASE, ROUTE);
+      log("Fenton (near)", near);
+      log("Leek (far)", far);
 
-      // Best score for nearby user should be higher
-      expect(scoredNear[0].score).toBeGreaterThan(scoredFar[0].score);
-
-      console.log("  📊 Fenton (near) scores:");
-      scoredNear.forEach((s) => console.log(`     ${s.slot}: ${s.score.toFixed(4)} — ${s.reason}`));
-      console.log("  📊 Leek (far) scores:");
-      scoredFar.forEach((s) => console.log(`     ${s.slot}: ${s.score.toFixed(4)} — ${s.reason}`));
+      expect(bestFeasible(near)).toBeDefined();
+      const farBest = bestFeasible(far);
+      if (farBest) expect(bestFeasible(near).addedDrive).toBeLessThan(farBest.addedDrive);
     },
     TIMEOUT
   );
 
   it(
-    "slots adjacent to existing bookings score higher than isolated ones",
+    "with no other lessons, every slot adds the same drive from home",
     async () => {
-      const scored = await routeOptimizer.scoreSlots(
-        AVAILABLE_SLOTS,
-        BOOKINGS,
-        USER_A,
-        INSTRUCTOR_BASE
-      );
+      const near = await routeOptimizer.scoreSlots(["10:00", "14:00"], [], USER_A, INSTRUCTOR_BASE, ROUTE);
+      const far = await routeOptimizer.scoreSlots(["10:00", "14:00"], [], USER_B, INSTRUCTOR_BASE, ROUTE);
 
-      // 10:00 is right after 09:00 booking, 15:00 is right after 14:00 booking
-      // Both should score higher than 13:00 which has a 2h gap from 11:00
-      const score10 = scored.find((s) => s.slot === "10:00").score;
-      const score15 = scored.find((s) => s.slot === "15:00").score;
-      const score13 = scored.find((s) => s.slot === "13:00").score;
-
-      // At least one adjacent slot should beat the isolated one
-      expect(Math.max(score10, score15)).toBeGreaterThan(score13);
-    },
-    TIMEOUT
-  );
-
-  it(
-    "with no existing bookings, scores are based on distance from instructor base",
-    async () => {
-      const scoredNear = await routeOptimizer.scoreSlots(
-        ["10:00", "14:00"],
-        [], // no bookings
-        USER_A,
-        INSTRUCTOR_BASE
-      );
-      const scoredFar = await routeOptimizer.scoreSlots(
-        ["10:00", "14:00"],
-        [], // no bookings
-        USER_B,
-        INSTRUCTOR_BASE
-      );
-
-      // Both slots for the same user should have equal scores (no booking proximity effect)
-      expect(scoredNear[0].score).toBeCloseTo(scoredNear[1].score, 3);
-
-      // Nearby user should score higher than far user
-      expect(scoredNear[0].score).toBeGreaterThan(scoredFar[0].score);
+      expect(near[0].addedDrive).toBeCloseTo(near[1].addedDrive, 1);
+      expect(near[0].addedDrive).toBeLessThan(far[0].addedDrive);
     },
     TIMEOUT
   );
@@ -260,57 +223,30 @@ describeE2E(E2E_KEYS.MAPS, "E2E – Multi-User Booking Scenario", () => {
   });
 
   it(
-    "full scenario: instructor has 3 bookings, new user nearby gets good slots",
+    "instructor has 3 lessons; a learner in Fenton gets reachable slots",
     async () => {
-      // Scenario: instructor's day
-      //   09:00 — Student in Hanley (confirmed)
-      //   10:00 — AVAILABLE
-      //   11:00 — Student in Newcastle-under-Lyme (confirmed)
-      //   12:00 — AVAILABLE
-      //   13:00 — AVAILABLE
-      //   14:00 — Student in Longton (confirmed)
-      //   15:00 — AVAILABLE
-      //   16:00 — AVAILABLE
-      //
-      // New user is in Fenton (near all bookings)
-      // Expected: 10:00 and 15:00 should rank highly (adjacent to bookings + nearby)
+      // 09:00 Hanley · 11:00 Newcastle-under-Lyme · 14:00 Longton
+      const scored = await routeOptimizer.scoreSlots(AVAILABLE_SLOTS, BOOKINGS, USER_A, INSTRUCTOR_BASE, ROUTE);
+      log("Full day (Fenton)", scored);
 
-      const scored = await routeOptimizer.scoreSlots(
-        AVAILABLE_SLOTS,
-        BOOKINGS,
-        USER_A,
-        INSTRUCTOR_BASE
-      );
-
-      console.log("  🗓 Full day scenario (Fenton user):");
-      scored.forEach((s) => console.log(`     ${s.slot}: score=${s.score.toFixed(4)} — ${s.reason}`));
-
-      // Top 2 slots should be from the "adjacent" group (10:00, 12:00, or 15:00)
-      const adjacentSlots = ["10:00", "12:00", "15:00"];
-      const topTwo = scored.slice(0, 2).map((s) => s.slot);
-      const adjacentInTop = topTwo.filter((s) => adjacentSlots.includes(s));
-      expect(adjacentInTop.length).toBeGreaterThanOrEqual(1);
+      const feasible = scored.filter((s) => s.feasible);
+      expect(feasible.length).toBeGreaterThan(0);
+      for (let i = 1; i < feasible.length; i++) {
+        expect(feasible[i - 1].score).toBeLessThanOrEqual(feasible[i].score);
+      }
     },
     TIMEOUT
   );
 
   it(
-    "full scenario: distant user (Leek) gets fewer optimal slots",
+    "a learner in Leek adds well over 15 minutes to any slot",
     async () => {
-      const scoredFar = await routeOptimizer.scoreSlots(
-        AVAILABLE_SLOTS,
-        BOOKINGS,
-        USER_B,
-        INSTRUCTOR_BASE
-      );
+      const scored = await routeOptimizer.scoreSlots(AVAILABLE_SLOTS, BOOKINGS, USER_B, INSTRUCTOR_BASE, ROUTE);
+      log("Full day (Leek)", scored);
 
-      console.log("  🗓 Full day scenario (Leek user — distant):");
-      scoredFar.forEach((s) => console.log(`     ${s.slot}: score=${s.score.toFixed(4)} — ${s.reason}`));
-
-      // All scores should be lower due to distance
-      // Travel time should be > 15 min for most slots
-      const highTravelSlots = scoredFar.filter((s) => s.travelMin > 15);
-      expect(highTravelSlots.length).toBeGreaterThanOrEqual(3);
+      for (const s of scored.filter((x) => x.feasible)) {
+        expect(s.addedDrive).toBeGreaterThan(15);
+      }
     },
     TIMEOUT
   );

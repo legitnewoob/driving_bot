@@ -53,6 +53,22 @@ router.post("/create-checkout-session", async (req, res) => {
       customerId = customer.id;
       instructor.stripeCustomerId = customerId;
       await instructor.save();
+    } else {
+      // Ask Stripe, not just our DB: the DB only learns about a subscription when
+      // the webhook arrives, so a second checkout before then would double-subscribe.
+      const existing = await stripe.subscriptions.list({ customer: customerId, status: "all", limit: 20 });
+      const live = existing.data.find((sub) => ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(sub.status));
+      if (live) {
+        if (instructor.subscriptionId !== live.id || instructor.subscriptionStatus !== live.status) {
+          instructor.subscriptionId = live.id;
+          instructor.subscriptionStatus = live.status;
+          await instructor.save();
+        }
+        return res.status(400).json({
+          success: false,
+          error: "You already have a subscription. Manage it from Account → Manage Subscription.",
+        });
+      }
     }
 
     // Generate fresh JWT and API key

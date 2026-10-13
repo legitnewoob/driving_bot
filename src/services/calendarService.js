@@ -3,6 +3,17 @@ const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 const { notifyInvalidGrant, notifyInstructorReauth } = require("../utils/emailNotifier");
 const Instructor = require("../models/instructorSchema");
+const settings = require("./instructorSettings");
+
+// Connecting a calendar from the dashboard only stores a refresh token for the
+// instructor's own Google account, so their main calendar is "primary".
+function calendarIdFor(instructor) {
+  return instructor.googleCalendarId || "primary";
+}
+
+function lessonMinutes(instructor) {
+  return settings.resolveRouteSettings(instructor).lessonDurationMin;
+}
 
 async function handleCalendarTokenExpiry(instructor, service, errorMessage) {
   Promise.resolve(notifyInvalidGrant(instructor, service, errorMessage)).catch(() => {});
@@ -43,21 +54,11 @@ class CalendarService {
         throw new Error("Instructor object is required");
       }
 
-      const today = timezoneUtils.getCurrentDateString();
-      let dateToCheck = timezoneUtils.addDays(today, 2);
-
-      for (let i = 0; i < 90; i++) {
-        if (i > 0) {
-          dateToCheck = timezoneUtils.addDays(dateToCheck, 1);
-        }
-        if (timezoneUtils.isWeekend(dateToCheck)) {
-          continue;
-        }
-
+      for (const dateToCheck of settings.upcomingBookableDates(instructor, 90)) {
         const events = await this.getEventsForDate(dateToCheck, instructor);
 
-        for (const time of instructor.availableTimes) {
-          const { isAvailable } = this.checkSlotAgainstEvents(dateToCheck, time, events);
+        for (const time of settings.timesForDate(instructor, dateToCheck)) {
+          const { isAvailable } = this.checkSlotAgainstEvents(dateToCheck, time, events, lessonMinutes(instructor));
 
           if (isAvailable) {
             logger.info(`Earliest available slot: ${dateToCheck} at ${time}`);
@@ -66,7 +67,7 @@ class CalendarService {
         }
       }
 
-      logger.warn("No available slots found in the next 90 days");
+      logger.warn("No available slots found in the booking window");
       return null;
     } catch (error) {
       logger.error(`Error finding earliest slot: ${error.message}`);
@@ -77,10 +78,9 @@ class CalendarService {
   /**
    * Build start and end DateTime objects in configured timezone
    */
-  buildDateTimes(date, time) {
+  buildDateTimes(date, time, durationMin = 60) {
     const startDateTime = timezoneUtils.createDateInTimezone(date, time);
-    const endDateTime = timezoneUtils.createDateInTimezone(date, time);
-    endDateTime.setHours(endDateTime.getHours() + 1);
+    const endDateTime = new Date(startDateTime.getTime() + durationMin * 60 * 1000);
 
     return { startDateTime, endDateTime };
   }
@@ -100,7 +100,7 @@ class CalendarService {
 
     try {
       const response = await calendar.events.list({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         timeMin: dayStart.toISOString(),
         timeMax: dayEnd.toISOString(),
         singleEvents: true,
@@ -124,8 +124,8 @@ class CalendarService {
    * @param {object[]} events - pre-fetched calendar events for the day
    * @returns {{isAvailable: boolean, conflictingEvents: object[]}}
    */
-  checkSlotAgainstEvents(date, time, events) {
-    const { startDateTime, endDateTime } = this.buildDateTimes(date, time);
+  checkSlotAgainstEvents(date, time, events, durationMin = 60) {
+    const { startDateTime, endDateTime } = this.buildDateTimes(date, time, durationMin);
 
     if (isNaN(startDateTime.getTime())) {
       return { isAvailable: false, error: "Invalid date/time format" };
@@ -148,7 +148,7 @@ class CalendarService {
       }
 
       const events = await this.getEventsForDate(date, instructor);
-      const result = this.checkSlotAgainstEvents(date, time, events);
+      const result = this.checkSlotAgainstEvents(date, time, events, lessonMinutes(instructor));
 
       return result;
     } catch (error) {
@@ -165,15 +165,15 @@ class CalendarService {
     try {
       const events = await this.getEventsForDate(date, instructor);
 
-      const availableSlots = instructor.availableTimes.filter((time) => {
-        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events);
+      const availableSlots = settings.timesForDate(instructor, date).filter((time) => {
+        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events, lessonMinutes(instructor));
         return isAvailable;
       });
 
       return availableSlots;
     } catch (error) {
       logger.error(`Error getting available time slots: ${error.message}`);
-      return instructor.availableTimes;
+      return settings.timesForDate(instructor, date);
     }
   }
 
@@ -187,7 +187,7 @@ class CalendarService {
       );
 
       const response = await calendar.events.list({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         timeMin: now.toISOString(),
         timeMax: twoWeeksFromNow.toISOString(),
         singleEvents: true,
@@ -224,7 +224,8 @@ class CalendarService {
 
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.date,
-        bookingData.time
+        bookingData.time,
+        lessonMinutes(instructor)
       );
 
       const event = {
@@ -249,11 +250,10 @@ class CalendarService {
           ),
           timeZone: timezoneUtils.timezone,
         },
-        attendees: [{ email: instructor.googleCalendarId }],
       };
 
       const response = await calendar.events.insert({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         auth: oauth2Client,
         resource: event,
       });
@@ -310,7 +310,7 @@ class CalendarService {
       }
 
       const response = await calendar.events.insert({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         auth: oauth2Client,
         resource: event,
       });
@@ -333,7 +333,8 @@ class CalendarService {
 
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.newDate,
-        bookingData.newTime
+        bookingData.newTime,
+        lessonMinutes(instructor)
       );
 
       const event = {
@@ -351,11 +352,10 @@ class CalendarService {
           dateTime: endDateTime.toISOString(),
           timeZone: timezoneUtils.timezone,
         },
-        attendees: [{ email: instructor.googleCalendarId }],
       };
 
       const response = await calendar.events.update({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         eventId,
         resource: event,
       });
@@ -381,7 +381,7 @@ class CalendarService {
       this._setCredentials(instructor);
 
       await calendar.events.delete({
-        calendarId: instructor.googleCalendarId,
+        calendarId: calendarIdFor(instructor),
         eventId,
       });
 

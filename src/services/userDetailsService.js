@@ -6,7 +6,7 @@ const logger = require("../utils/logger-advanced");
 const steps = ["name", "age", "dob", "postalCode"];
 
 // sendFn defaults to real WhatsApp — in mock mode, pass this._send.bind(this)
-async function ensureUserDetails(from, messageContent, sendFn = null, instructorId = null) {
+async function ensureUserDetails(from, messageContent, sendFn = null, instructorId = null, greeting = "") {
   const send = sendFn || ((to, text) => whatsappService.sendTextMessage(to, text));
 
   // Handle data deletion request
@@ -22,7 +22,8 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
   if (!user) {
     user = new User({ phone: from, instructorId: instructorId, currentStep: steps[0] });
     await user.save();
-    await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
+    const intro = greeting?.trim() ? greeting.trim() : "👋 Hi! Let's get started.";
+    await send(from, `${intro}\nPlease tell me your *name*:`);
     return { inProgress: true };
   }
 

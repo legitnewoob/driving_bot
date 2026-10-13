@@ -429,7 +429,8 @@ describe("Multi-Instructor – Webhook Controller (Mock Mode)", () => {
       "Book a lesson",
       expect.any(Array),
       LEARNER_1.phone,
-      INSTRUCTOR_A
+      INSTRUCTOR_A,
+      LEARNER_1
     );
   });
 
@@ -449,7 +450,8 @@ describe("Multi-Instructor – Webhook Controller (Mock Mode)", () => {
       "Book a lesson",
       expect.any(Array),
       LEARNER_2.phone,
-      INSTRUCTOR_B
+      INSTRUCTOR_B,
+      LEARNER_2
     );
   });
 });

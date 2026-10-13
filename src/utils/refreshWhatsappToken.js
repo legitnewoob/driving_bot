@@ -5,6 +5,8 @@
 //
 // One shared token is used for every instructor's WhatsApp Business account.
 // The token is refreshed on server startup and every 7 days thereafter.
+// If the stored token no longer works, WHATSAPP_TOKEN from the env is used instead,
+// so dropping a fresh token into the env and restarting is enough to recover.
 
 const axios = require("axios");
 const logger = require("./logger-advanced");
@@ -37,6 +39,9 @@ async function exchangeForLongLivedToken(currentToken) {
     `&fb_exchange_token=${currentToken}`;
 
   const { data } = await axios.get(url);
+  if (data.expires_in) {
+    logger.info(`WhatsApp token refresh: new token valid for about ${Math.round(data.expires_in / 86400)} days`);
+  }
   return data.access_token;
 }
 
@@ -49,24 +54,41 @@ async function exchangeForLongLivedToken(currentToken) {
  *  3. Update every active instructor's whatsappToken in the database
  *  4. Invalidate the instructor cache so subsequent reads pick up the new token
  */
-async function refreshAndUpdateAll() {
+async function refreshAndUpdateAll({ sourceToken = null, dryRun = false } = {}) {
   // Lazy-require to avoid circular dependency at module load time
   const Instructor = require("../models/instructorSchema");
   const { invalidateInstructorCache } = require("../models/instructorModel");
 
   try {
-    // 1. Get current token from any active instructor
-    const anyInstructor = await Instructor.findOne({ active: true });
-    if (!anyInstructor) {
-      logger.warn("WhatsApp token refresh: no active instructors found — skipping");
-      return;
+    // 1. Use the given token (e.g. a brand-new one from Meta), else the one instructors share
+    let currentToken = sourceToken;
+    if (!currentToken) {
+      const anyInstructor = await Instructor.findOne({ active: true });
+      if (!anyInstructor) {
+        logger.warn("WhatsApp token refresh: no active instructors found — skipping");
+        return;
+      }
+      currentToken = anyInstructor.whatsappToken;
     }
 
-    const currentToken = anyInstructor.whatsappToken;
-
-    // 2. Exchange for a new long-lived token
+    // 2. Exchange for a new long-lived token. If the stored token has expired or
+    // belongs to another app, fall back to a fresh WHATSAPP_TOKEN from the env.
     logger.info("WhatsApp token refresh: exchanging current token for a new long-lived token...");
-    const newToken = await exchangeForLongLivedToken(currentToken);
+    let newToken;
+    try {
+      newToken = await exchangeForLongLivedToken(currentToken);
+    } catch (err) {
+      const envToken = process.env.WHATSAPP_TOKEN;
+      if (sourceToken || !envToken || envToken === currentToken) throw err;
+      const reason = err.response?.data?.error?.message || err.message;
+      logger.warn(`WhatsApp token refresh: stored token was rejected (${reason}); trying WHATSAPP_TOKEN from the env`);
+      newToken = await exchangeForLongLivedToken(envToken);
+    }
+
+    if (dryRun) {
+      logger.info("WhatsApp token refresh: dry run — exchange worked, nothing saved");
+      return newToken;
+    }
 
     // 3. Update all active instructors
     const result = await Instructor.updateMany(
@@ -85,6 +107,7 @@ async function refreshAndUpdateAll() {
     }
 
     logger.info("WhatsApp token refresh: complete");
+    return newToken;
   } catch (err) {
     const errDetail = err.response?.data
       ? JSON.stringify(err.response.data)
@@ -125,15 +148,25 @@ function stopTokenRefreshSchedule() {
   }
 }
 
-// If script is run directly from CLI (legacy support)
+// CLI:
+//   node src/utils/refreshWhatsappToken.js                 refresh the token instructors already share
+//   node src/utils/refreshWhatsappToken.js --new           exchange WHATSAPP_TOKEN from the env (e.g. a new
+//                                                          token from Meta) and save it on all active instructors
+//   add --dry-run to only test the exchange (nothing saved)
 if (require.main === module) {
   require("../config/env");
   const mongoose = require("mongoose");
+  const args = process.argv.slice(2);
+  const useNew = args.includes("--new");
+  const dryRun = args.includes("--dry-run");
   (async () => {
+    if (useNew && !process.env.WHATSAPP_TOKEN) throw new Error("--new needs WHATSAPP_TOKEN in the env");
     await mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI);
-    await refreshAndUpdateAll();
+    console.log(`Database: ${mongoose.connection.name}${dryRun ? " (dry run, nothing will be saved)" : ""}`);
+    const token = await refreshAndUpdateAll({ sourceToken: useNew ? process.env.WHATSAPP_TOKEN : null, dryRun });
+    console.log(token ? "Done. New token saved." + (dryRun ? " (not saved: dry run)" : "") : "Failed — see the log above.");
     await mongoose.disconnect();
-    process.exit(0);
+    process.exit(token ? 0 : 1);
   })().catch((err) => {
     console.error("Error:", err.message);
     process.exit(1);

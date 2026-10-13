@@ -36,6 +36,8 @@ app.listen(PORT, async () => {
     console.log();
 
     // Refresh WhatsApp token on startup and every 7 days.
-    // Disabled on UAT (ad228c8); re-enable with care, production only.
-    //startTokenRefreshSchedule();
+    // Set WHATSAPP_TOKEN_REFRESH=false to turn it off for an environment.
+    if (process.env.WHATSAPP_TOKEN_REFRESH !== "false") {
+      startTokenRefreshSchedule();
+    }
 });

@@ -228,6 +228,11 @@ async function run() {
   if (instructors.length === 0) {
     instructors = await Instructor.find({ active: true }).lean();
   }
+  // Keep TARGET_EMAILS order so the first one gets the real WhatsApp number below
+  instructors.sort((a, b) => {
+    const rank = (e) => (TARGET_EMAILS.indexOf(e) === -1 ? TARGET_EMAILS.length : TARGET_EMAILS.indexOf(e));
+    return rank(a.email) - rank(b.email);
+  });
   if (instructors.length === 0) {
     console.error("❌ No active instructor found in DB. Run 'npm run instructor:add' first.");
     await mongoose.disconnect();
@@ -243,10 +248,28 @@ async function run() {
     { phoneNumber: "+447700100005", phoneNumberId: "mock_pnid_005", label: "UK Dev 5", region: "GB", status: "available" },
   ];
 
+  // A real WhatsApp number (PHONE_NUMBER_ID + INSTRUCTOR_PHONE in the env) goes first,
+  // so the first instructor can send real messages; the rest get mock numbers.
+  const realNumberId = (process.env.PHONE_NUMBER_ID || "").trim();
+  const realPhoneDigits = (process.env.INSTRUCTOR_PHONE || "").replace(/\D/g, "");
+  const realPhone = realPhoneDigits ? `+${realPhoneDigits}` : null;
+  if (realNumberId && realPhone) {
+    PHONE_NUMBERS.unshift({
+      phoneNumber: realPhone,
+      phoneNumberId: realNumberId,
+      label: "WhatsApp (real)",
+      region: realPhoneDigits.startsWith("44") ? "GB" : realPhoneDigits.startsWith("1") ? "US" : "OTHER",
+      status: "available",
+      real: true,
+    });
+    console.log(`   📱 Real WhatsApp number from env: ${realPhone} (${realNumberId})`);
+  }
+
   // Clear mock phoneNumberIds from ALL instructors to avoid unique constraint conflicts
   const allInstructors = await Instructor.find({}).lean();
   for (const inst of allInstructors) {
-    if (inst.phoneNumberId && (inst.phoneNumberId.startsWith("mock_pnid_") || inst.phoneNumberId.startsWith("temp_seed_"))) {
+    const holdsRealNumber = realNumberId && (inst.phoneNumberId === realNumberId || inst.phone === realPhone);
+    if (holdsRealNumber || (inst.phoneNumberId && (inst.phoneNumberId.startsWith("mock_pnid_") || inst.phoneNumberId.startsWith("temp_seed_")))) {
       await Instructor.findByIdAndUpdate(inst._id, {
         $set: { phoneNumberId: `temp_seed_${inst._id}` },
         $unset: { phone: 1 },
@@ -268,13 +291,15 @@ async function run() {
     pn.assignedTo = instructors[i]._id;
     pn.assignedAt = new Date();
 
-    await Instructor.findByIdAndUpdate(instructors[i]._id, {
+    const update = {
       plan: "adi",
       subscriptionStatus: "active",
       phoneNumberId: pn.phoneNumberId,
       phone: pn.phoneNumber,
-    });
-    console.log(`   ✅ ${instructors[i].email} → plan: adi, active, phone: ${pn.phoneNumber}`);
+    };
+    if (pn.real && process.env.WHATSAPP_TOKEN) update.whatsappToken = process.env.WHATSAPP_TOKEN;
+    await Instructor.findByIdAndUpdate(instructors[i]._id, update);
+    console.log(`   ✅ ${instructors[i].email} → plan: adi, active, phone: ${pn.phoneNumber}${pn.real ? " (real WhatsApp)" : ""}`);
   }
 
   // Re-read instructors to get updated phoneNumberIds for seed data
@@ -313,7 +338,7 @@ async function run() {
   await Payment.insertMany(PAYMENTS);
   console.log(`   ✅ Inserted ${PAYMENTS.length} payments`);
 
-  await PhoneNumber.insertMany(PHONE_NUMBERS);
+  await PhoneNumber.insertMany(PHONE_NUMBERS.map(({ real, ...pn }) => pn));
   console.log(`   ✅ Inserted ${PHONE_NUMBERS.length} phone numbers (${instructors.length} assigned, ${PHONE_NUMBERS.length - instructors.length} available)`);
 
   // Seed lesson types per instructor

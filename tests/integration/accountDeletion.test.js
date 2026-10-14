@@ -51,6 +51,8 @@ describe("deleting an account", () => {
     const [filter, update] = Instructor.updateOne.mock.calls[0];
     expect(filter).toEqual({ _id: "sam-1" });
     expect(update.$set).toMatchObject({ active: false, email: "deleted+sam-1@deleted.donnadrive.invalid", subscriptionStatus: "canceled" });
+    // Kept for admins only: who the account belonged to
+    expect(update.$set.deletedIdentity).toEqual({ email: "chessforlife.18@gmail.com", name: "Sam", googleId: "g-1" });
     expect(update.$set.deletedAt).toBeInstanceOf(Date);
     expect(update.$unset).toMatchObject({ googleId: 1, apiKey: 1, googleRefreshToken: 1 });
   });
@@ -79,6 +81,26 @@ describe("signing in again after deleting", () => {
   beforeEach(() => {
     mockVerify.mockResolvedValue({ getPayload: () => ({ sub: "g-1", email: "chessforlife.18@gmail.com", name: "Sam" }) });
     Instructor.create.mockImplementation(async (doc) => ({ _id: "new-1", ...doc }));
+    Instructor.find.mockReturnValue({ lean: async () => [] });
+  });
+
+  it("the new account is linked to the deleted one(s), so admins can see they came back", async () => {
+    Instructor.findOne.mockResolvedValue(null);
+    Instructor.find.mockReturnValue({ lean: async () => [{ _id: "sam-1" }] });
+    const res = await signIn();
+    expect(Instructor.find).toHaveBeenCalledWith(
+      { deletedAt: { $ne: null }, $or: [{ "deletedIdentity.email": "chessforlife.18@gmail.com" }, { "deletedIdentity.googleId": "g-1" }] },
+      { _id: 1 }
+    );
+    expect(Instructor.create).toHaveBeenCalledWith(expect.objectContaining({ previousAccountIds: ["sam-1"], planSelected: false }));
+    // For them it's a normal new account
+    expect(res).toMatchObject({ isNew: true, needsPlan: true });
+  });
+
+  it("first-time sign-ups aren't marked as returning", async () => {
+    Instructor.findOne.mockResolvedValue(null);
+    await signIn();
+    expect(Instructor.create.mock.calls[0][0].previousAccountIds).toBeUndefined();
   });
 
   const signIn = () => fetch(`${base}/google-signup`, {

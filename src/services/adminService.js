@@ -45,7 +45,7 @@ async function overview() {
 
   const [
     total, byPlanRaw, paying, trialing, pastDue, comped, canceled30, signups30Raw,
-    withNumber, withCalendar, donnaOff, suspended, plans, schools, seatAgg, numbersRaw,
+    withNumber, withCalendar, donnaOff, suspended, returning, deleted30, plans, schools, seatAgg, numbersRaw,
     lessonsNext7, lessons30, learners, recent, trialsEnding,
   ] = await Promise.all([
     Instructor.countDocuments({ ...notOwners(), active: true }),
@@ -63,6 +63,8 @@ async function overview() {
     Instructor.countDocuments({ ...notOwners(), active: true, googleRefreshToken: { $nin: [null, ""] } }),
     Instructor.countDocuments({ ...notOwners(), active: true, "botSettings.donnaEnabled": false }),
     Instructor.countDocuments({ ...notOwners(), suspended: true }),
+    Instructor.countDocuments({ ...notOwners(), active: true, "previousAccountIds.0": { $exists: true } }),
+    Instructor.countDocuments({ ...notOwners(), deletedAt: { $gte: since30 } }),
     pricing.getPlans(),
     School.countDocuments({}),
     School.aggregate([{ $group: { _id: null, limit: { $sum: "$seatLimit" }, extra: { $sum: "$extraSeats" } } }]),
@@ -97,7 +99,7 @@ async function overview() {
   const membersInSchools = await Instructor.countDocuments({ ...notOwners(), active: true, schoolRole: { $in: SCHOOL_SEATS } });
 
   return {
-    instructors: { total, byPlan, suspended },
+    instructors: { total, byPlan, suspended, returning, deletedLast30: deleted30 },
     revenue: {
       mrr,
       arr: mrr * 12,
@@ -136,10 +138,15 @@ function statusOf(i) {
 }
 
 function row(i) {
+  const deleted = !!i.deletedAt;
   return {
     id: String(i._id),
-    name: i.name,
-    email: i.email,
+    // Deleted accounts show who they belonged to (admin-only record)
+    name: deleted ? i.deletedIdentity?.name || "Deleted account" : i.name,
+    email: deleted ? i.deletedIdentity?.email || i.email : i.email,
+    deletedAt: i.deletedAt || null,
+    // Signed up again after deleting an earlier account
+    returning: !!i.previousAccountIds?.length,
     plan: i.plan || "pdi",
     status: statusOf(i),
     subscriptionStatus: i.subscriptionStatus || null,
@@ -167,7 +174,7 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
   const and = [];
   if (search.trim()) {
     const re = new RegExp(escapeRegex(search.trim()), "i");
-    and.push({ $or: [{ name: re }, { email: re }, { phone: re }] });
+    and.push({ $or: [{ name: re }, { email: re }, { phone: re }, { "deletedIdentity.email": re }, { "deletedIdentity.name": re }] });
   }
   if (plan) q.plan = plan;
   // Super admins only show up when looking at staff
@@ -183,6 +190,7 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
     case "school": q.schoolRole = { $in: SCHOOL_SEATS }; break;
     case "suspended": q.suspended = true; break;
     case "deleted": q.deletedAt = { $ne: null }; break;
+    case "returning": q["previousAccountIds.0"] = { $exists: true }; break;
     default: break;
   }
   if (and.length) q.$and = and;
@@ -213,9 +221,26 @@ async function customerDetail(id) {
     Booking.findOne({ instructorId: i.phoneNumberId, status: { $in: ["confirmed", "rescheduled", "completed"] }, date: { $lte: today } })
       .sort({ date: -1, time: -1 }).lean(),
     i.schoolId ? School.findById(i.schoolId).lean() : null,
-    AuditLog.find({ target: { $in: [String(i._id), i.email] } }).sort({ createdAt: -1 }).limit(20).lean(),
+    AuditLog.find({ target: { $in: [String(i._id), i.email, i.deletedIdentity?.email].filter(Boolean) } }).sort({ createdAt: -1 }).limit(20).lean(),
     PhoneNumber.findOne({ assignedTo: i._id }).lean(),
   ]);
+  // Earlier accounts they deleted, and (for a deleted account) the account they came back as
+  const previous = i.previousAccountIds?.length
+    ? await Instructor.find({ _id: { $in: i.previousAccountIds } }).sort({ createdAt: -1 }).lean()
+    : [];
+  const rejoinedAs = i.deletedAt
+    ? await Instructor.findOne({ previousAccountIds: i._id, deletedAt: null }, { name: 1, email: 1, createdAt: 1 }).lean()
+    : null;
+  const previousAccounts = await Promise.all(
+    previous.map(async (p) => ({
+      id: String(p._id),
+      plan: p.plan || "pdi",
+      createdAt: p.createdAt,
+      deletedAt: p.deletedAt,
+      lessons: await Booking.countDocuments({ instructorId: p.phoneNumberId, status: { $in: ["confirmed", "rescheduled", "completed"] } }),
+    }))
+  );
+
   const stripeBase = process.env.STRIPE_SECRET_KEY?.startsWith("sk_live") ? "https://dashboard.stripe.com" : "https://dashboard.stripe.com/test";
   return {
     ...row(i),
@@ -228,6 +253,8 @@ async function customerDetail(id) {
       ? { customerId: i.stripeCustomerId, subscriptionId: i.subscriptionId || null, url: `${stripeBase}/customers/${i.stripeCustomerId}` }
       : null,
     history,
+    previousAccounts,
+    rejoinedAs: rejoinedAs ? { id: String(rejoinedAs._id), name: rejoinedAs.name, email: rejoinedAs.email, createdAt: rejoinedAs.createdAt } : null,
   };
 }
 

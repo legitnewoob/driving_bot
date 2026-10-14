@@ -39,14 +39,18 @@ async function stripeWebhookHandler(req, res) {
 
         if (instructorId) {
           let subStatus = "active";
+          let trialEnd = null;
           if (session.subscription) {
             const sub = await stripe.subscriptions.retrieve(session.subscription);
             subStatus = sub.status;
+            trialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
           }
           const instructor = await Instructor.findById(instructorId);
           if (instructor) {
             instructor.subscriptionId = session.subscription;
             instructor.subscriptionStatus = subStatus;
+            instructor.trialEndsAt = trialEnd;
+            instructor.canceledAt = null;
             instructor.stripeCustomerId = session.customer;
             if (plan) instructor.plan = plan;
             await instructor.save();
@@ -65,6 +69,7 @@ async function stripeWebhookHandler(req, res) {
         if (instructor) {
           instructor.subscriptionStatus = subscription.status;
           instructor.subscriptionId = subscription.id;
+          instructor.trialEndsAt = subscription.trial_end ? new Date(subscription.trial_end * 1000) : null;
           await instructor.save();
           await syncMembersSubscription(instructor);
           await syncSeatsFromSubscription(instructor, subscription);
@@ -80,6 +85,7 @@ async function stripeWebhookHandler(req, res) {
         const instructor = await Instructor.findOne({ stripeCustomerId: customerId });
         if (instructor) {
           instructor.subscriptionStatus = "canceled";
+          instructor.canceledAt = new Date();
           await instructor.save();
           await syncMembersSubscription(instructor);
           console.log(`[stripeWebhook] Subscription canceled for ${instructor.email}`);

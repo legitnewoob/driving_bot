@@ -1,4 +1,5 @@
 const calendarService = require("./calendarService");
+const { to12h } = require("../utils/timeFormat");
 const {
   getAvailableDates,
   getInstructor,
@@ -29,7 +30,7 @@ function isDuplicateKey(err, field) {
 
 function slotTakenError(date, time) {
   return userFacingError(
-    `Sorry, ${time} on ${date} was just booked by someone else. Please pick another time.`,
+    `Sorry, ${to12h(time)} on ${date} was just booked by someone else. Please pick another time.`,
     { code: "SLOT_TAKEN" }
   );
 }
@@ -179,7 +180,7 @@ class BookingService {
 
       if (!availability.isAvailable) {
         errors.push(
-          `The time slot ${bookingData.time} on ${bookingData.date} is already booked.`
+          `The time slot ${to12h(bookingData.time)} on ${bookingData.date} is already booked.`
         );
 
         const availableSlots = dayTimes.filter((time) => {

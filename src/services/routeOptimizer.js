@@ -246,6 +246,18 @@ class RouteOptimizer {
     return [...slots].sort((a, b) => this.timeToMinutes(a) - this.timeToMinutes(b));
   }
 
+  // Slots whose lesson would overlap a lesson already booked in the database.
+  // Calendar checks alone miss lessons that have no calendar event.
+  _bookedSlots(slots, bookings, lessonMin) {
+    return slots.filter((slot) => {
+      const start = this.timeToMinutes(slot);
+      return bookings.some((b) => {
+        const other = this.timeToMinutes(b.time);
+        return start < other + lessonMin && other < start + lessonMin;
+      });
+    });
+  }
+
   _applyLearnerTimeRules(slots, date, prefs) {
     const unavailable = prefs?.unavailable || [];
     if (!unavailable.length) return slots;
@@ -312,12 +324,13 @@ class RouteOptimizer {
       return { ...empty, blockedReason: "weekly_limit" };
     }
 
-    const slots = this._applyLearnerTimeRules(availableSlots, date, prefs);
+    const booked = this._bookedSlots(availableSlots, bookings, route.lessonDurationMin);
+    const slots = this._applyLearnerTimeRules(availableSlots, date, prefs).filter((s) => !booked.includes(s));
     const userPt = this._toPoint(userLoc);
 
     if (!route.enabled || !userPt || !slots.length) {
       const offered = this._chronological(slots);
-      return { offered, evaluations: [], preferred: this._preferredSlots(offered, date, prefs) };
+      return { offered, evaluations: [], preferred: this._preferredSlots(offered, date, prefs), booked };
     }
 
     const homePt = this.homePoint(instructor);
@@ -354,6 +367,7 @@ class RouteOptimizer {
       evaluations,
       preferred: this._preferredSlots(offered, date, prefs),
       usedFallback: !within.length && feasible.length > 0,
+      booked,
     };
   }
 

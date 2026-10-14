@@ -141,7 +141,7 @@ class AIService {
       prompt +=
         `\n\n## LESSON TYPES\n` +
         lessonTypes.map((t) => `- ${t.name}: £${t.price}${t.description ? ` — ${t.description}` : ""}`).join("\n") +
-        `\nIf it isn't clear which lesson the learner wants, ask (listing these with prices) before booking. ` +
+        `\nIf it isn't clear which lesson the learner wants, ask before booking and add "offerLessonTypes": true so they can tap one. ` +
         `Put the chosen name in the BOOK JSON as "lessonType". Quote prices exactly as listed.`;
     }
 
@@ -527,12 +527,16 @@ class AIService {
       const requestedEval = timeRequested
         ? day.evaluations.find((e) => e.slot === timeRequested)
         : null;
+      const requestedIsBooked = !!timeRequested && (day.booked || []).includes(timeRequested);
       const requestedSlotAvailable = timeRequested
         ? availableSlotsForDate.includes(timeRequested) &&
+          !requestedIsBooked &&
           !day.blockedReason &&
           (!requestedEval || requestedEval.feasible)
         : null;
-      const requestedSlotReason = requestedEval && !requestedEval.feasible ? requestedEval.reason : null;
+      const requestedSlotReason = requestedIsBooked
+        ? "another lesson is already booked then"
+        : requestedEval && !requestedEval.feasible ? requestedEval.reason : null;
       const alternatives = timeRequested && !requestedSlotAvailable && optimizedSlots.length
         ? this._closestTimes(timeRequested, optimizedSlots)
         : [];

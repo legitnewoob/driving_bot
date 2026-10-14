@@ -2,6 +2,7 @@
 // cancelled, the best-fitting few (by route) are offered it. First to tap
 // "Book it" gets it — the booking's unique slot index settles any race.
 const WaitlistEntry = require("../models/waitlistEntryModel");
+const { to12h } = require("../utils/timeFormat");
 const Booking = require("../models/bookingModel");
 const whatsappService = require("./whatsappService");
 const routeOptimizer = require("./routeOptimizer");
@@ -89,7 +90,7 @@ async function sendOffer(instructor, phone, date, time) {
   if (await sessionStore.inServiceWindow(phone, instructor.phoneNumberId)) {
     await whatsappService.sendButtons(
       phone,
-      `Good news! A lesson with ${instructor.name} just opened up: ${formatDay(date)} at ${time}. Would you like it? First to reply gets it.`,
+      `Good news! A lesson with ${instructor.name} just opened up: ${formatDay(date)} at ${to12h(time)}. Would you like it? First to reply gets it.`,
       [
         { id: take, title: "Book it" },
         { id: skip, title: "No thanks" },
@@ -104,7 +105,7 @@ async function sendOffer(instructor, phone, date, time) {
     phone,
     template,
     process.env.WHATSAPP_TEMPLATE_LANG || "en_GB",
-    [instructor.name, formatDay(date), time],
+    [instructor.name, formatDay(date), to12h(time)],
     [take, skip],
     instructor
   );

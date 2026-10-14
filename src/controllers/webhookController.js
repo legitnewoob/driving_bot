@@ -22,6 +22,7 @@ const Booking = require("../models/bookingModel");
 const ProcessedMessage = require("../models/processedMessageModel");
 const { notifyInstructorLearnerMessage } = require("../utils/emailNotifier");
 const { runExclusive } = require("../utils/keyedQueue");
+const { to12h } = require("../utils/timeFormat");
 const { isDbReady } = require("../utils/db");
 
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
@@ -118,6 +119,15 @@ class WebhookController {
     updateUserSession(from, session, instructorId);
   }
 
+  // Instructor may have switched off cancelling/moving through Donna
+  async _allowed(ctx, action) {
+    const ok = action === "move" ? ctx.bot.allowReschedule : ctx.bot.allowCancel;
+    if (!ok) {
+      await ctx.send(`To ${action === "move" ? "move" : "cancel"} a lesson, please contact ${ctx.instructor.name} directly.`);
+    }
+    return ok;
+  }
+
   _remember(ctx, userText, assistantText) {
     const session = getUserSession(ctx.from, ctx.instructorId);
     session.conversationHistory.push(
@@ -146,7 +156,7 @@ class WebhookController {
       aiService.updatePendingContext(ctx.from, earliestSlot);
       this.clearOnlyUserConversationHistory(ctx.from, ctx.instructorId);
       await ctx.sendButtons(
-        `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`,
+        `The next available appointment is on ${formatDay(earliestSlot.date)} at ${to12h(earliestSlot.time)}. Would you like to book it?`,
         [
           { id: "confirm:yes", title: "Yes, book it" },
           { id: "confirm:no", title: "Another time" },
@@ -155,6 +165,68 @@ class WebhookController {
     } else {
       await ctx.send("Sorry, no appointments are available in the near future. Please check back later.");
     }
+  }
+
+  /* ========== LESSON PICKERS (tap instead of typing a booking ID) ========== */
+
+  async _upcomingBookings(ctx) {
+    const today = timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), "YYYY-MM-DD");
+    const bookings = await bookingService.getBookingsByUser(ctx.from, ctx.instructorId);
+    return bookings.filter((b) => b.date >= today).slice(0, 10);
+  }
+
+  _bookingRow(b, prefix) {
+    const where = b.pickupLocation?.address;
+    const description = [b.lessonTypeName, where].filter(Boolean).join(" · ");
+    return { id: `${prefix}:${b.bookingId}`, title: `${formatDay(b.date)}, ${to12h(b.time)}`, ...(description ? { description } : {}) };
+  }
+
+  // purpose: "cancel" or "move"
+  async pickBooking(ctx, purpose) {
+    const bookings = await this._upcomingBookings(ctx);
+    if (!bookings.length) {
+      await ctx.send("You don't have any upcoming lessons. Would you like to book one?");
+      return;
+    }
+    if (bookings.length === 1) {
+      return purpose === "cancel" ? this.confirmCancel(ctx, bookings[0]) : this.startMove(ctx, bookings[0]);
+    }
+    await ctx.sendList(
+      purpose === "cancel" ? "Which lesson would you like to cancel?" : "Which lesson would you like to move?",
+      "Choose a lesson",
+      bookings.map((b) => this._bookingRow(b, purpose === "cancel" ? "cancelpick" : "movepick"))
+    );
+  }
+
+  async _ownActiveBooking(ctx, bookingId) {
+    const b = await Booking.findOne({ bookingId, userPhone: ctx.from, instructorId: ctx.instructorId });
+    return b && (b.status === "confirmed" || b.status === "rescheduled") ? b : null;
+  }
+
+  // Ask before cancelling. Late cancellations go straight to the fee warning, which is its own confirmation.
+  async confirmCancel(ctx, booking) {
+    if (bookingService.isLateCancellation(booking, ctx.instructor)) {
+      return this.cancelBooking(ctx, { bookingId: booking.bookingId });
+    }
+    const question = `Cancel your lesson on ${formatDay(booking.date)} at ${to12h(booking.time)}?`;
+    await ctx.sendButtons(question, [
+      { id: `cancelyes:${booking.bookingId}`, title: "Yes, cancel it" },
+      { id: "cancelno", title: "Keep it" },
+    ]);
+    this._remember(ctx, `I want to cancel ${booking.bookingId}`, `${question}\n[ACTION:NULL]\n{}`);
+  }
+
+  // Remember which lesson is moving, then let Donna find the new time as usual.
+  async startMove(ctx, booking) {
+    const question =
+      `Moving your lesson on ${formatDay(booking.date)} at ${to12h(booking.time)} (${booking.bookingId}). ` +
+      `What day and time would suit you instead?`;
+    await ctx.send(question);
+    this._remember(
+      ctx,
+      `I want to move my lesson ${booking.bookingId} on ${booking.date} at ${booking.time}`,
+      `${question}\n[ACTION:NULL]\n{"bookingId": "${booking.bookingId}"}`
+    );
   }
 
   async showBookings(ctx) {
@@ -213,7 +285,7 @@ class WebhookController {
       message += `${statusIcon} *Booking #${index + 1}*\n`;
       message += `🆔 ${booking.bookingId}\n`;
       message += `${dateDisplay}\n`;
-      message += `⏰ ${booking.time}\n`;
+      message += `⏰ ${to12h(booking.time)}\n`;
 
       if (booking.lessonTypeName) message += `🎯 Lesson: *${booking.lessonTypeName}*\n`;
       if (booking.pickupLocation?.address) message += `📍 Pickup: ${booking.pickupLocation.address}\n`;
@@ -233,24 +305,37 @@ class WebhookController {
     ).length;
 
     if (upcomingCount > 0) {
-      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""}_ ⏰\n`;
-      message += "_Need to reschedule? Just let me know!_ 💬";
+      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""}_ ⏰`;
     } else {
       message += "_All bookings completed! Ready to schedule your next appointment?_ 🚀";
     }
 
     await ctx.send(message);
     this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+
+    if (upcomingCount > 0) {
+      const buttons = [
+        ...(ctx.bot.allowReschedule ? [{ id: "menu:move", title: "Move a lesson" }] : []),
+        ...(ctx.bot.allowCancel ? [{ id: "menu:cancel", title: "Cancel a lesson" }] : []),
+        { id: "menu:book", title: "Book another" },
+      ];
+      await ctx.sendButtons("What would you like to do?", buttons);
+    }
   }
 
   async updateBooking(ctx, bookingData) {
+    if (!bookingData?.bookingId) return this.pickBooking(ctx, "move");
+    if (!bookingData.newDate || !bookingData.newTime) {
+      const booking = await this._ownActiveBooking(ctx, bookingData.bookingId);
+      return booking ? this.startMove(ctx, booking) : this.pickBooking(ctx, "move");
+    }
     try {
       const updated = await bookingService.rescheduleBooking(ctx.from, bookingData, ctx.instructorId);
       if (!updated) {
         await ctx.send(`⚠️ No booking found with ID ${bookingData?.bookingId || "(none given)"}. Say "show my bookings" to see your lessons.`);
         return;
       }
-      await ctx.send(`✅ Booking ${updated.bookingId} moved to ${formatDay(bookingData.newDate)} at ${bookingData.newTime}`);
+      await ctx.send(`✅ Booking ${updated.bookingId} moved to ${formatDay(bookingData.newDate)} at ${to12h(bookingData.newTime)}`);
       this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
     } catch (err) {
       logger.error(`Reschedule error for ${ctx.from}: ${err.message}`);
@@ -264,9 +349,7 @@ class WebhookController {
 
   async cancelBooking(ctx, bookingData) {
     const bookingId = bookingData?.bookingId || "";
-    if (!bookingId) {
-      return ctx.send("⚠️ Please tell me the booking ID you'd like to cancel (it starts with DL-).");
-    }
+    if (!bookingId) return this.pickBooking(ctx, "cancel");
     try {
       const existing = await Booking.findOne({ bookingId, userPhone: ctx.from, instructorId: ctx.instructorId });
       if (!existing || existing.status === "cancelled" || existing.status === "completed") {
@@ -277,7 +360,7 @@ class WebhookController {
         const hours = ctx.bot.cancellationNoticeHours;
         const fee = ctx.bot.lateCancellationFee;
         const warning =
-          `⚠️ Your lesson on ${formatDay(existing.date)} at ${existing.time} is less than ${hours} hours away. ` +
+          `⚠️ Your lesson on ${formatDay(existing.date)} at ${to12h(existing.time)} is less than ${hours} hours away. ` +
           (fee ? `Cancelling now may be charged £${fee}. ` : `${ctx.instructor.name} may still charge for it. `) +
           `Do you still want to cancel ${bookingId}?`;
         await ctx.sendButtons(warning, [
@@ -324,7 +407,7 @@ class WebhookController {
           timezoneUtils.createDateInTimezone(bookingData.date, "12:00"),
           "dddd, MMMM D, YYYY"
         )}`,
-        `🕐 Time: ${bookingData.time}`,
+        `🕐 Time: ${to12h(bookingData.time)}`,
       ];
       if (result.lessonType) {
         lines.push(`🎯 Lesson: ${result.lessonType.name} (£${result.lessonType.price})`);
@@ -397,6 +480,42 @@ class WebhookController {
       if (DATE.test(date) && TIME.test(time)) {
         return { handled: false, rewrite: `I'd like ${time} on ${date}` };
       }
+    }
+
+    if (kind === "lt" && rest[0]) {
+      const LessonType = require("../models/lessonTypeModel");
+      const type = await LessonType.findOne({ _id: rest[0], instructorId: ctx.instructorId, active: true }).lean().catch(() => null);
+      if (type) return { handled: false, rewrite: `I'd like the ${type.name} lesson` };
+      return { handled: false };
+    }
+
+    if (kind === "menu") {
+      if (rest[0] === "book") return { handled: false, rewrite: "I'd like to book another lesson" };
+      if (rest[0] === "move" || rest[0] === "cancel") {
+        if (!(await this._allowed(ctx, rest[0]))) return { handled: true };
+        await this.pickBooking(ctx, rest[0]);
+        return { handled: true };
+      }
+    }
+
+    if ((kind === "cancelpick" || kind === "movepick" || kind === "cancelyes") && rest[0]) {
+      const action = kind === "movepick" ? "move" : "cancel";
+      if (!(await this._allowed(ctx, action))) return { handled: true };
+      const booking = await this._ownActiveBooking(ctx, rest[0]);
+      if (!booking) {
+        await ctx.send("That lesson isn't booked any more. Say \"my bookings\" to see what's coming up.");
+        return { handled: true };
+      }
+      if (kind === "cancelpick") await this.confirmCancel(ctx, booking);
+      else if (kind === "movepick") await this.startMove(ctx, booking);
+      else await this.cancelBooking(ctx, { bookingId: booking.bookingId });
+      return { handled: true };
+    }
+
+    if (kind === "cancelno") {
+      await ctx.send("No problem, your lesson is still booked. 👍");
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+      return { handled: true };
     }
 
     if (kind === "latecancel") {
@@ -680,8 +799,22 @@ class WebhookController {
       return ctx.sendList(
         responseText,
         "Choose a time",
-        times.map((t) => ({ id: `slot:${date}:${t}`, title: `${formatDay(date)}, ${t}` }))
+        times.map((t) => ({ id: `slot:${date}:${t}`, title: `${formatDay(date)}, ${to12h(t)}` }))
       );
+    }
+    if (data?.offerLessonTypes === true) {
+      const types = (await aiService._lessonTypesFor(ctx.instructor)).slice(0, 10);
+      if (types.length >= 2) {
+        return ctx.sendList(
+          responseText,
+          "Choose a lesson",
+          types.map((t) => ({
+            id: `lt:${t._id}`,
+            title: t.name,
+            description: [`£${t.price}`, t.description].filter(Boolean).join(" · "),
+          }))
+        );
+      }
     }
     if (data?.askConfirm === true) {
       return ctx.sendButtons(responseText, [

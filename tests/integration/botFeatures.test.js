@@ -293,7 +293,7 @@ describe("2.3 instructor notifications", () => {
       instructorId: "inst-1",
       type: "booked",
       clientId: "notif-DL-N00001",
-      message: expect.stringContaining("New booking: Jane — Mon 1 Jul at 10:00 (Standard)"),
+      message: expect.stringContaining("New booking: Jane — Mon 1 Jul at 10:00 am (Standard)"),
     }));
     expect(sendNotification).toHaveBeenCalledWith(expect.stringContaining("New booking"), expect.any(String), null, "sam@x.com");
   });
@@ -302,7 +302,7 @@ describe("2.3 instructor notifications", () => {
     await notificationService.bookingChanged(mockInstructor, "rescheduled", booking, { date: "2030-06-30", time: "09:00" });
     await notificationService.bookingChanged(mockInstructor, "cancelled", { ...booking, lateCancellation: true });
     const messages = Notification.create.mock.calls.map(([n]) => n.message);
-    expect(messages[0]).toContain("moved their lesson from Sun 30 Jun at 09:00 to Mon 1 Jul at 10:00");
+    expect(messages[0]).toContain("moved their lesson from Sun 30 Jun at 9:00 am to Mon 1 Jul at 10:00 am");
     expect(messages[1]).toContain("late cancellation");
   });
 
@@ -500,8 +500,8 @@ describe("2.7 tappable options", () => {
     expect(reply.interactive.type).toBe("list");
     expect(reply.interactive.body).toBe("Here are the times for Monday:");
     expect(reply.interactive.rows).toEqual([
-      { id: "slot:2030-07-01:09:00", title: "Mon 1 Jul, 09:00" },
-      { id: "slot:2030-07-01:10:00", title: "Mon 1 Jul, 10:00" },
+      { id: "slot:2030-07-01:09:00", title: "Mon 1 Jul, 9:00 am" },
+      { id: "slot:2030-07-01:10:00", title: "Mon 1 Jul, 10:00 am" },
     ]);
   });
 
@@ -523,6 +523,110 @@ describe("2.7 tappable options", () => {
     expect(whatsappService.sendList).toHaveBeenCalledWith(
       "4471", "Pick one:", "Choose a time", expect.arrayContaining([expect.objectContaining({ id: "slot:2030-07-01:09:00" })]), mockInstructor
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("2.8 menus for lesson types, moving and cancelling", () => {
+  const lesson = (id, days, time = "10:00", extra = {}) => ({
+    bookingId: id, userPhone: "4471", instructorId: "inst-1", status: "confirmed",
+    date: inHours(days * 24).date, time, lessonTypeName: "Standard", pickupLocation: { address: "ST5 1AB" },
+    save: jest.fn(), ...extra,
+  });
+  const bookingsAre = (list) => Booking.find.mockReturnValue({ sort: () => Promise.resolve(list) });
+
+  it("shows lesson types as a tappable list with prices", async () => {
+    db.isDbReady.mockReturnValue(true);
+    LessonType.find.mockReturnValue({ sort: () => ({ lean: () => Promise.resolve([
+      { _id: "lt-std", name: "Standard", price: 40, description: "" },
+      { _id: "lt-mwy", name: "Motorway", price: 55, description: "Dual carriageways too" },
+    ]) }) });
+    aiSays('Which lesson would you like?\n[ACTION:NULL]\n{"offerLessonTypes":true}');
+
+    const [reply] = await chat("book a lesson");
+
+    expect(reply.interactive.type).toBe("list");
+    expect(reply.interactive.rows).toEqual([
+      { id: "lt:lt-std", title: "Standard", description: "£40" },
+      { id: "lt:lt-mwy", title: "Motorway", description: "£55 · Dual carriageways too" },
+    ]);
+  });
+
+  it("a tapped lesson type reaches Donna as the learner's choice", async () => {
+    LessonType.findOne.mockReturnValue({ lean: () => ({ catch: () => Promise.resolve({ _id: "lt-mwy", name: "Motorway" }) }) });
+    const spy = aiSays("Great\n[ACTION:NULL]\n{}");
+    await chat("Motorway", { buttonId: "lt:lt-mwy" });
+    expect(spy.mock.calls[0][0]).toBe("I'd like the Motorway lesson");
+  });
+
+  it("cancel without saying which lesson lists their lessons to tap", async () => {
+    bookingsAre([lesson("DL-AAA001", 5), lesson("DL-BBB002", 8, "14:00")]);
+    aiSays("Sure\n[ACTION:CANCEL_BOOKING]\n{}");
+
+    const replies = await chat("cancel my lesson");
+
+    const list = replies[1];
+    expect(list.text).toMatch(/^Which lesson would you like to cancel\?/);
+    expect(list.interactive.rows.map((r) => r.id)).toEqual(["cancelpick:DL-AAA001", "cancelpick:DL-BBB002"]);
+    expect(list.interactive.rows[0].description).toBe("Standard · ST5 1AB");
+  });
+
+  it("tapping a lesson asks to confirm, and only Yes cancels it", async () => {
+    const b = lesson("DL-AAA001", 5);
+    Booking.findOne.mockResolvedValue(b);
+
+    const [ask] = await chat("Thu, 10:00", { buttonId: "cancelpick:DL-AAA001" });
+    expect(ask.interactive.buttons.map((x) => x.id)).toEqual(["cancelyes:DL-AAA001", "cancelno"]);
+    expect(b.status).toBe("confirmed");
+
+    const [done] = await chat("Yes, cancel it", { buttonId: "cancelyes:DL-AAA001" });
+    expect(b.status).toBe("cancelled");
+    expect(done).toContain("cancelled successfully");
+  });
+
+  it("a late lesson goes straight to the fee warning instead of a second question", async () => {
+    mockInstructor.botSettings = { cancellationNoticeHours: 48, lateCancellationFee: 35 };
+    Booking.findOne.mockResolvedValue(lesson("DL-LATE02", 0.4));
+    const [reply] = await chat("pick", { buttonId: "cancelpick:DL-LATE02" });
+    expect(reply.text).toContain("may be charged £35");
+    expect(reply.interactive.buttons[0].id).toBe("latecancel:yes:DL-LATE02");
+  });
+
+  it("with one lesson, skips the list and asks to confirm", async () => {
+    bookingsAre([lesson("DL-ONE001", 5)]);
+    aiSays("Sure\n[ACTION:CANCEL_BOOKING]\n{}");
+    const replies = await chat("cancel my lesson");
+    expect(replies[1].interactive.buttons.map((x) => x.id)).toEqual(["cancelyes:DL-ONE001", "cancelno"]);
+  });
+
+  it("move without saying which lesson lists them, then asks for the new time", async () => {
+    bookingsAre([lesson("DL-AAA001", 5), lesson("DL-BBB002", 8, "14:00")]);
+    aiSays("Sure\n[ACTION:UPDATE_BOOKING]\n{}");
+    const replies = await chat("move my lesson");
+    expect(replies[1].interactive.rows.map((r) => r.id)).toEqual(["movepick:DL-AAA001", "movepick:DL-BBB002"]);
+
+    Booking.findOne.mockResolvedValue(lesson("DL-BBB002", 8, "14:00"));
+    const [ask] = await chat("pick", { buttonId: "movepick:DL-BBB002" });
+    expect(ask).toContain("Moving your lesson");
+    expect(ask).toContain("What day and time");
+    // Donna knows which lesson is moving
+    const history = userSessions["4471::inst-1"].conversationHistory;
+    expect(history[history.length - 2].content).toContain("DL-BBB002");
+  });
+
+  it("my bookings ends with Move / Cancel / Book buttons, hiding ones the instructor turned off", async () => {
+    mockInstructor.botSettings = { allowCancel: false };
+    bookingsAre([lesson("DL-AAA001", 5)]);
+    aiSays("Here you go\n[ACTION:SHOW_BOOKINGS]");
+    const replies = await chat("my bookings");
+    const last = replies[replies.length - 1];
+    expect(last.interactive.buttons.map((x) => x.id)).toEqual(["menu:move", "menu:book"]);
+  });
+
+  it("respects the instructor's settings on taps too", async () => {
+    mockInstructor.botSettings = { allowCancel: false };
+    const [reply] = await chat("pick", { buttonId: "cancelpick:DL-AAA001" });
+    expect(reply).toContain("please contact Sam directly");
   });
 });
 

@@ -197,7 +197,7 @@ describe("Next available slot", () => {
   it("uses the route-aware earliest slot", async () => {
     routeOptimizer.findEarliestOfferedSlot.mockResolvedValue({ date: "2025-07-02", time: "14:00" });
     const replies = await send("asap please");
-    expect(replies[1]).toContain("2025-07-02 at 14:00");
+    expect(replies[1]).toContain("Wed 2 Jul at 2:00 pm");
     expect(calendarService.findEarliestAvailableSlot).not.toHaveBeenCalled();
   });
 
@@ -205,7 +205,7 @@ describe("Next available slot", () => {
     routeOptimizer.findEarliestOfferedSlot.mockRejectedValue(new Error("boom"));
     calendarService.findEarliestAvailableSlot.mockResolvedValue({ date: "2025-07-03", time: "09:00" });
     const replies = await send("asap please");
-    expect(replies[1]).toContain("2025-07-03 at 09:00");
+    expect(replies[1]).toContain("Thu 3 Jul at 9:00 am");
   });
 });
 

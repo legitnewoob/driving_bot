@@ -305,10 +305,11 @@ describe("Flow – SHOW_BOOKINGS Action", () => {
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Show my bookings");
 
-    expect(replies.length).toBe(2);
+    expect(replies.length).toBe(3);
     expect(replies[0]).toBe("Here are your bookings");
     expect(replies[1]).toContain("DL-AAAA");
     expect(replies[1]).toContain("10:00");
+    expect(replies[2]).toBe("What would you like to do?\n[Move a lesson] [Cancel a lesson] [Book another]");
   });
 
   it("shows empty bookings message when no bookings exist", async () => {
@@ -358,13 +359,14 @@ describe("Flow – CANCEL_BOOKING Action", () => {
     expect(replies[1]).toContain("DL-XXXX");
   });
 
-  it("handles missing bookingId gracefully", async () => {
+  it("handles missing bookingId by offering their lessons (none here)", async () => {
     mockAiResponse('Cancel!\n[ACTION:CANCEL_BOOKING]\n{}');
     mockAiAction("cancel_booking", {}, "Cancel!");
+    Booking.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([]) });
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Cancel booking");
 
-    expect(replies[1]).toContain("tell me the booking ID");
+    expect(replies[1]).toContain("don't have any upcoming lessons");
   });
 
   it("handles booking not found", async () => {
@@ -448,7 +450,7 @@ describe("Flow – UPDATE_BOOKING Action", () => {
     expect(replies.length).toBe(2);
     expect(replies[1]).toContain("Booking DL-UPDT moved to");
     expect(replies[1]).toContain("Wed 2 Jul");
-    expect(replies[1]).toContain("14:00");
+    expect(replies[1]).toContain("2:00 pm");
   });
 
   it("shows error when booking not found for update", async () => {
@@ -488,8 +490,7 @@ describe("Flow – NEXT_AVAILABLE_SLOT Action", () => {
     const replies = await sendMockMessage(REGISTERED_USER.phone, "When's the next slot?");
 
     expect(replies.length).toBe(2);
-    expect(replies[1]).toContain("2025-07-01");
-    expect(replies[1]).toContain("09:00");
+    expect(replies[1]).toContain("Tue 1 Jul at 9:00 am");
   });
 
   it("handles no slots available", async () => {

@@ -9,6 +9,7 @@
 //   WHATSAPP_TEMPLATE_LANG            defaults to en_GB
 // See docs/whatsapp-templates.md for the wording to submit.
 const Booking = require("../models/bookingModel");
+const { to12h } = require("../utils/timeFormat");
 const { getInstructor } = require("../models/instructorModel");
 const whatsappService = require("../services/whatsappService");
 const settings = require("../services/instructorSettings");
@@ -39,7 +40,7 @@ async function sendReminder(booking, instructor, kind) {
     if (inWindow) {
       await whatsappService.sendButtons(
         booking.userPhone,
-        `👋 Reminder: your driving lesson with ${name} is on ${day} at ${booking.time}` +
+        `👋 Reminder: your driving lesson with ${name} is on ${day} at ${to12h(booking.time)}` +
           `${pickup ? `, pickup at ${pickup}` : ""}. Can you still make it?`,
         [
           { id: `rem:confirm:${id}`, title: "I'll be there" },
@@ -56,7 +57,7 @@ async function sendReminder(booking, instructor, kind) {
       booking.userPhone,
       template,
       lang,
-      [name, day, booking.time, pickup || "your usual pickup"],
+      [name, day, to12h(booking.time), pickup || "your usual pickup"],
       [`rem:confirm:${id}`, `rem:move:${id}`, `rem:cancel:${id}`],
       instructor
     );
@@ -66,7 +67,7 @@ async function sendReminder(booking, instructor, kind) {
   if (inWindow) {
     await whatsappService.sendTextMessage(
       booking.userPhone,
-      `🚗 See you soon! Your lesson with ${name} starts at ${booking.time}${pickup ? `, pickup at ${pickup}` : ""}.`,
+      `🚗 See you soon! Your lesson with ${name} starts at ${to12h(booking.time)}${pickup ? `, pickup at ${pickup}` : ""}.`,
       instructor
     );
     return true;
@@ -77,7 +78,7 @@ async function sendReminder(booking, instructor, kind) {
     booking.userPhone,
     template,
     lang,
-    [name, booking.time, pickup || "your usual pickup"],
+    [name, to12h(booking.time), pickup || "your usual pickup"],
     [],
     instructor
   );
@@ -152,7 +153,7 @@ async function handleReply(ctx, action, bookingId, controller) {
   if (action === "confirm") {
     booking.learnerConfirmedAt = new Date();
     await booking.save();
-    await ctx.send(`Great, see you on ${formatDay(booking.date)} at ${booking.time}! 👍`);
+    await ctx.send(`Great, see you on ${formatDay(booking.date)} at ${to12h(booking.time)}! 👍`);
     return;
   }
 

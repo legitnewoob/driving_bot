@@ -454,6 +454,21 @@ describe("filterAvailableSlotsByLocation", () => {
 });
 
 describe("planDay – instructor settings", () => {
+  it("never offers a time that clashes with a lesson already in the database", async () => {
+    // e.g. a lesson with no Google Calendar event, so the calendar thinks 11:00 is free
+    Booking.find.mockResolvedValue([{ time: "11:00", date: "2030-10-21", status: "confirmed" }]);
+    const free = ["09:00", "10:00", "11:00", "14:00"];
+
+    const unknownLocation = await routeOptimizer.planDay({ date: "2030-10-21", instructor: INST, availableSlots: free });
+    expect(unknownLocation.offered).toEqual(["09:00", "10:00", "14:00"]); // 10:00–11:00 is back-to-back, fine
+    expect(unknownLocation.booked).toEqual(["11:00"]);
+
+    const routingOff = await routeOptimizer.planDay({
+      date: "2030-10-21", instructor: { ...INST, routeSettings: { preset: "off" } }, availableSlots: free, userLoc: { lat: 53.2, long: -2.45 },
+    });
+    expect(routingOff.offered).not.toContain("11:00");
+  });
+
   it("offers every free slot unscored when routing is off", async () => {
     Booking.find.mockResolvedValue([]);
     const inst = { ...INST, routeSettings: { preset: "off" } };

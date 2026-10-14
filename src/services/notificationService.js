@@ -1,6 +1,7 @@
 // Tells instructors about bookings Donna makes or changes: a portal
 // notification (polled by the bell) and, if they want it, an email.
 const Notification = require("../models/notificationModel");
+const { to12h } = require("../utils/timeFormat");
 const User = require("../models/userModel");
 const settings = require("./instructorSettings");
 const timezoneUtils = require("../utils/timezoneUtils");
@@ -59,7 +60,7 @@ async function bookingChanged(instructor, kind, booking, previous = null) {
   if (!prefs[kind]) return;
 
   const name = await learnerName(instructor.phoneNumberId, booking.userPhone);
-  const when = `${fmtDate(booking.date)} at ${booking.time}`;
+  const when = `${fmtDate(booking.date)} at ${to12h(booking.time)}`;
   let message;
   let clientId;
   if (kind === "booked") {
@@ -69,7 +70,7 @@ async function bookingChanged(instructor, kind, booking, previous = null) {
     message = `${name} cancelled their lesson on ${when}${booking.lateCancellation ? " — late cancellation" : ""}`;
     clientId = `notif-cancel-${booking.bookingId}`;
   } else {
-    message = `${name} moved their lesson from ${previous ? `${fmtDate(previous.date)} at ${previous.time}` : "its old time"} to ${when}`;
+    message = `${name} moved their lesson from ${previous ? `${fmtDate(previous.date)} at ${to12h(previous.time)}` : "its old time"} to ${when}`;
     clientId = `notif-move-${booking.bookingId}-${booking.date}-${booking.time}`;
   }
 

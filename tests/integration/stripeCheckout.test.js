@@ -101,4 +101,29 @@ describe("create-checkout-session", () => {
     expect(mockStripe.subscriptions.list).not.toHaveBeenCalled();
     expect(instructor.stripeCustomerId).toBe("cus_new");
   });
+
+  it("embedded checkout (shown in the dashboard's modal) returns a client secret and comes back to the dashboard", async () => {
+    mockStripe.subscriptions.list.mockResolvedValue({ data: [] });
+    mockStripe.checkout.sessions.create.mockResolvedValue({ client_secret: "cs_secret_1", url: null });
+    const res = await fetch(`${baseUrl}/create-checkout-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: "adi", embedded: true }),
+    }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+    expect(res.body).toMatchObject({ success: true, clientSecret: "cs_secret_1" });
+    const params = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(params.ui_mode).toBe("embedded_page");
+    expect(params.return_url).toMatch(/\/get-onboard\?auth_code=[a-f0-9]+&session_id=\{CHECKOUT_SESSION_ID\}$/);
+    expect(params.success_url).toBeUndefined();
+    expect(params.cancel_url).toBeUndefined();
+  });
+
+  it("hosted checkout sends people back to the (locked) dashboard if they back out", async () => {
+    mockStripe.subscriptions.list.mockResolvedValue({ data: [] });
+    await checkout();
+    const params = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(params.cancel_url).toMatch(/\/get-onboard$/);
+    expect(params.success_url).toContain("session_id={CHECKOUT_SESSION_ID}");
+  });
 });

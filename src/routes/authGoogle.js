@@ -8,6 +8,14 @@ const jwtAuth = require("../middleware/jwtAuth");
 
 const router = express.Router();
 
+// Donna Drive staff role and every permission, for the dashboard to show/hide things
+function accessInfo(instructor) {
+  const { staffRoleOf, permissionsOf, isSuperAdmin } = require("../services/permissions");
+  return { staffRole: staffRoleOf(instructor), superAdmin: isSuperAdmin(instructor), permissions: permissionsOf(instructor) };
+}
+
+const { needsPlan } = require("../services/permissions");
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /**
@@ -77,6 +85,7 @@ router.post("/google-signup", async (req, res) => {
         name: name || email.split("@")[0],
         phoneNumberId: `signup_${new mongoose.Types.ObjectId()}`,
         plan: validatedPlan,
+        planSelected: false,
         apiKey: hashedKey,
         active: true,
       });
@@ -123,6 +132,9 @@ router.post("/google-signup", async (req, res) => {
         plan: instructor.plan || "pdi",
         subscriptionStatus: instructor.subscriptionStatus,
       },
+      // Staff land on the admin panel instead of the instructor dashboard
+      access: accessInfo(instructor),
+      needsPlan: needsPlan(instructor),
       isNew,
     });
   } catch (err) {
@@ -217,11 +229,31 @@ async function schoolInfo(instructor) {
   return { role, name: school.name };
 }
 
-// Donna Drive staff role and every permission, for the dashboard to show/hide things
-function accessInfo(instructor) {
-  const { staffRoleOf, permissionsOf, isSuperAdmin } = require("../services/permissions");
-  return { staffRole: staffRoleOf(instructor), superAdmin: isSuperAdmin(instructor), permissions: permissionsOf(instructor) };
-}
+
+
+/**
+ * POST /api/auth/choose-plan
+ * JWT protected — picks the free plan. Paid plans are chosen by finishing Stripe checkout.
+ */
+router.post("/choose-plan", jwtAuth, async (req, res) => {
+  try {
+    if (req.body?.plan !== "pdi") {
+      return res.status(400).json({ success: false, error: "Paid plans are chosen at checkout" });
+    }
+    const instructor = await Instructor.findOne({ email: req.user?.email, active: true });
+    if (!instructor) return res.status(404).json({ success: false, error: "Instructor not found" });
+    // A paying or school account keeps its plan; this only completes a new sign-up
+    if (instructor.planSelected === false) {
+      instructor.plan = "pdi";
+      instructor.planSelected = true;
+      await instructor.save();
+    }
+    res.json({ success: true, plan: instructor.plan });
+  } catch (err) {
+    console.error("[authGoogle] choose-plan error:", err);
+    res.status(500).json({ success: false, error: "Failed to choose plan" });
+  }
+});
 
 router.get("/me", jwtAuth, async (req, res) => {
   try {
@@ -251,6 +283,9 @@ router.get("/me", jwtAuth, async (req, res) => {
         createdAt: instructor.createdAt,
         school: await schoolInfo(instructor),
         access: accessInfo(instructor),
+        needsPlan: needsPlan(instructor),
+        // Picked a paid plan but didn't finish paying: offer to resume it
+        pendingPlan: needsPlan(instructor) && ["adi", "driving-school"].includes(instructor.plan) ? instructor.plan : null,
         comp: instructor.comp?.plan ? { plan: instructor.comp.plan, until: instructor.comp.until } : null,
       },
     });
@@ -356,7 +391,7 @@ router.post("/delete-account", jwtAuth, async (req, res) => {
  */
 router.post("/exchange-code", async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code, sessionId } = req.body;
     if (!code) {
       return res.status(400).json({ success: false, error: "Missing auth code" });
     }
@@ -376,6 +411,20 @@ router.post("/exchange-code", async (req, res) => {
     await authCode.save();
 
     const instructor = await Instructor.findById(authCode.instructorId);
+    // Back from checkout: unlock straight away if Stripe says it finished (the
+    // webhook does the same, but may land after they're back on the dashboard)
+    if (instructor && instructor.planSelected === false && sessionId) {
+      try {
+        const stripe = new (require("stripe"))(process.env.STRIPE_SECRET_KEY);
+        const session = await stripe.checkout.sessions.retrieve(String(sessionId));
+        if (session.status === "complete" && session.client_reference_id === String(instructor._id)) {
+          instructor.planSelected = true;
+          await instructor.save();
+        }
+      } catch (err) {
+        console.warn("[authGoogle] exchange-code: couldn't check the checkout session:", err.message);
+      }
+    }
 
     res.json({
       success: true,

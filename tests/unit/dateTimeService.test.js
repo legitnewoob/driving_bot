@@ -31,6 +31,13 @@ jest.mock("../../src/utils/timezoneUtils", () => ({
   getCurrentTimeString: jest.fn(() => "10:00"),
   getTomorrowDateString: jest.fn(() => "2025-07-16"),
   getCurrentDay: jest.fn(() => 15),
+  // 2025-07-15 is a Tuesday (weekday number 2)
+  formatDate: jest.fn((d, fmt) => (fmt === "d" ? "2" : "")),
+  addDays: jest.fn((dateStr, n) => {
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }),
   timezone: "Europe/London",
 }));
 
@@ -559,9 +566,37 @@ describe("generateDateHint", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("fallbackExtraction", () => {
-  it("returns default result for any input (current implementation)", () => {
-    const result = DateTimeService.fallbackExtraction("book tomorrow at 10am");
-    expect(result).toEqual(DateTimeService.getDefaultResult());
+  // Today in these tests is Tuesday 2025-07-15
+  it.each([
+    ["book tomorrow at 10am", "2025-07-16", "10:00"],
+    ["today", "2025-07-15", null],
+    ["day after tomorrow please", "2025-07-17", null],
+    ["Friday", "2025-07-18", null],
+    ["this friday at 2:30pm", "2025-07-18", "14:30"],
+    ["on Monday", "2025-07-21", null],
+    ["21st October", "2025-10-21", null],
+    ["Oct 21 at 9am", "2025-10-21", "09:00"],
+    ["3rd of March", "2026-03-03", null], // already passed this year
+    ["I'd like 10:00 on 2026-10-21", "2026-10-21", "10:00"],
+    ["12pm", null, "12:00"],
+    ["12am", null, "00:00"],
+    ["at midday", null, "12:00"],
+    ["14:00", null, "14:00"],
+  ])("reads %j locally", (message, date, time) => {
+    const r = DateTimeService.fallbackExtraction(message);
+    expect(r).toMatchObject({ hasDateTime: true, date, time, confidence: "high" });
+  });
+
+  it.each([
+    "next Friday",            // ambiguous in the UK
+    "Tuesday",                // today's weekday name: today or next week?
+    "Friday afternoon",       // vague time
+    "sometime next week",
+    "the 21st",               // no month
+    "at 10",                  // am or pm?
+    "hello",
+  ])("leaves %j to the AI", (message) => {
+    expect(DateTimeService.fallbackExtraction(message)).toEqual(DateTimeService.getDefaultResult());
   });
 
   it("returns default result for invalid input", () => {
@@ -590,9 +625,23 @@ describe("extractDateTimeFromMessage", () => {
     expect(result.hasDateTime).toBe(false);
   });
 
-  it("falls back gracefully when Gemini model is null", async () => {
-    // Model is mocked as null, so it should use fallback
+  it("reads simple dates locally without the AI", async () => {
     const result = await DateTimeService.extractDateTimeFromMessage("book tomorrow at 10am");
+    expect(result).toMatchObject({ date: "2025-07-16", time: "10:00" });
+  });
+
+  it("skips extraction entirely when a message has no date or time words", async () => {
+    const spy = jest.spyOn(DateTimeService, "extractWithGemini");
+    for (const msg of ["Hi", "Yeah", "show my bookings", "Beginner", "ST9 9DX", "this is fine"]) {
+      expect(await DateTimeService.extractDateTimeFromMessage(msg)).toEqual(DateTimeService.getDefaultResult());
+    }
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("falls back gracefully when the AI model is unavailable", async () => {
+    // Needs the AI ("next Friday"), but no model is configured in tests
+    const result = await DateTimeService.extractDateTimeFromMessage("next Friday");
     expect(result).toEqual(DateTimeService.getDefaultResult());
   });
 });

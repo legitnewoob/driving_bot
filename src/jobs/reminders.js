@@ -104,8 +104,10 @@ async function runOnce(now = Date.now()) {
   for (const booking of bookings) {
     const instructor = await getInstructor(booking.instructorId);
     if (!instructor) continue;
-    const mode = settings.resolveBotSettings(instructor).reminders;
-    if (mode === "off") continue;
+    const bot = settings.resolveBotSettings(instructor);
+    const mode = bot.reminders;
+    // Donna switched off (e.g. an emergency): hold reminders; they go out if she's back on in time
+    if (mode === "off" || !bot.donnaEnabled) continue;
 
     const hours = hoursUntil(booking, now);
     let kind = null;

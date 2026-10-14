@@ -28,6 +28,10 @@ const { isDbReady } = require("../utils/db");
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
 const HISTORY_LENGTH = 10;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const NO_INSTRUCTOR_MESSAGE =
+  "Sorry, this number isn't linked to a Donna Drive instructor, so I can't help with lessons here. " +
+  "Please contact your driving instructor directly.";
+const NO_INSTRUCTOR_REPLY_GAP_MS = 60 * 60 * 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SILENT_TYPES = new Set(["reaction", "system", "ephemeral", "unknown"]);
 
@@ -73,6 +77,11 @@ function parseIncoming(message) {
 }
 
 class WebhookController {
+  // learner::number → when we last said "this number isn't linked"
+  _noInstructorReplies = new Map();
+  // learner::instructor → when we last said "Donna is switched off"
+  _donnaOffReplies = new Map();
+
   /* ========== PER-MESSAGE CONTEXT ========== */
 
   // Everything a single message needs. Nothing is stored on the controller,
@@ -117,6 +126,63 @@ class WebhookController {
     const session = getUserSession(from, instructorId);
     session.conversationHistory = [];
     updateUserSession(from, session, instructorId);
+  }
+
+  // The number the learner messaged isn't linked to any instructor (e.g. it's in the
+  // pool but nobody has been assigned it yet). Say so instead of going silent, at most
+  // once an hour per learner. There's no instructor token, so use the number's own
+  // token from the pool, or WHATSAPP_TOKEN as a fallback.
+  async _replyNoInstructor(from, phoneNumberId, isMock, mockReplyCallback) {
+    const key = `${from}::${phoneNumberId}`;
+    const last = this._noInstructorReplies.get(key);
+    if (last && Date.now() - last < NO_INSTRUCTOR_REPLY_GAP_MS) return;
+    this._noInstructorReplies.set(key, Date.now());
+
+    const text = NO_INSTRUCTOR_MESSAGE;
+    try {
+      if (isMock) {
+        if (mockReplyCallback) mockReplyCallback(text);
+        return;
+      }
+      let token = process.env.WHATSAPP_TOKEN || null;
+      if (isDbReady()) {
+        const PhoneNumber = require("../models/phoneNumberModel");
+        const pooled = await PhoneNumber.findOne({ phoneNumberId }).lean();
+        if (pooled?.whatsappToken) token = pooled.whatsappToken;
+      }
+      if (!token) {
+        logger.warn(`Can't tell ${from} this number isn't linked: no WhatsApp token for ${phoneNumberId}`);
+        return;
+      }
+      await whatsappService.sendTextMessage(from, text, { phoneNumberId, whatsappToken: token });
+    } catch (err) {
+      logger.warn(`Couldn't send the not-linked reply to ${from}: ${err.message}`);
+    }
+  }
+
+  async _donnaOff(ctx, messageContent, extra = {}) {
+    const { from, instructor } = ctx;
+    const key = `${from}::${ctx.instructorId}`;
+    const last = this._donnaOffReplies.get(key);
+    if (!last || Date.now() - last >= NO_INSTRUCTOR_REPLY_GAP_MS) {
+      this._donnaOffReplies.set(key, Date.now());
+      await ctx.send(
+        `Sorry, ${instructor.name || "your instructor"} isn't taking bookings through Donna right now. ` +
+        `Please contact them directly.`
+      );
+    }
+
+    if (ctx.isMock) return;
+    const user = isDbReady() ? await User.findOne({ phone: from, instructorId: ctx.instructorId }).catch(() => null) : null;
+    notifyInstructorLearnerMessage(instructor, user || { phone: from }, messageContent, { reason: "off" }).catch(() => {});
+    notifications
+      .notify(instructor, {
+        type: "paused_message",
+        message: `${user?.name || from}: "${String(messageContent).slice(0, 120)}" (Donna is switched off)`,
+        clientId: `notif-off-${from}-${extra.messageId || Date.now()}`,
+        learnerPhone: from,
+      })
+      .catch(() => {});
   }
 
   // Instructor may have switched off cancelling/moving through Donna
@@ -640,6 +706,7 @@ class WebhookController {
     const instructor = await getInstructor(instructorPhoneId);
     if (!instructor) {
       logger.error(`No instructor found for phoneNumberId: ${instructorPhoneId}`);
+      await this._replyNoInstructor(from, instructorPhoneId, isMock, mockReplyCallback);
       return;
     }
 
@@ -652,6 +719,13 @@ class WebhookController {
     await sessionStore.load(from, ctx.instructorId);
 
     try {
+      // Instructor has switched Donna off (e.g. an emergency): tell the learner to
+      // contact them directly, and pass the message on to the instructor.
+      if (!ctx.bot.donnaEnabled) {
+        await this._donnaOff(ctx, messageContent, extra);
+        return;
+      }
+
       if (extra.unsupportedType) {
         await ctx.send("Sorry, I can only read text messages and shared locations for now. Could you type that for me? 🙂");
         return;

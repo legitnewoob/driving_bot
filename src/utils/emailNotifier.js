@@ -191,23 +191,31 @@ async function notifyInstructorReauth(instructor) {
  * Tell an instructor that a learner they've paused Donna for has messaged.
  * At most one email per learner per cooldown window.
  */
-async function notifyInstructorLearnerMessage(instructor, learner, messageText) {
+// reason: "paused" (Donna paused for this learner) or "off" (Donna switched off for everyone)
+async function notifyInstructorLearnerMessage(instructor, learner, messageText, { reason = "paused" } = {}) {
   const email = instructor?.email;
   if (!email) return false;
   const who = learner?.name || learner?.phone || "A learner";
   const escape = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  const subject = `💬 ${who} messaged — Donna is paused for them`;
+  const off = reason === "off";
+  const subject = off ? `💬 ${who} messaged — Donna is switched off` : `💬 ${who} messaged — Donna is paused for them`;
+  const why = off
+    ? "Donna is switched off, so she told them to contact you directly."
+    : "You've paused Donna for this learner, so she hasn't replied.";
+  const next = off
+    ? "Reply to them on WhatsApp, or switch Donna back on from your dashboard or the Portal."
+    : "Reply to them on WhatsApp, or turn Donna back on from the Learners page.";
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <p>Hi ${escape(instructor.name || "there")},</p>
-      <p><strong>${escape(who)}</strong> (${escape(learner?.phone || "")}) sent a message. You've paused Donna for this learner, so she hasn't replied.</p>
+      <p><strong>${escape(who)}</strong> (${escape(learner?.phone || "")}) sent a message. ${why}</p>
       <blockquote style="border-left: 3px solid #ddd; margin: 16px 0; padding: 8px 12px; color: #333;">${escape(messageText).slice(0, 1000)}</blockquote>
-      <p style="color: #555; font-size: 14px;">Reply to them on WhatsApp, or turn Donna back on from the Learners page.</p>
+      <p style="color: #555; font-size: 14px;">${next}</p>
       <p style="color: #999; font-size: 11px;">You'll get at most one of these per learner per hour.</p>
     </div>
   `;
-  return sendNotification(subject, html, `paused_learner:${email}:${learner?.phone}`, email);
+  return sendNotification(subject, html, `${off ? "donna_off" : "paused_learner"}:${email}:${learner?.phone}`, email);
 }
 
 /**

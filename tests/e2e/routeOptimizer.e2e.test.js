@@ -279,3 +279,99 @@ describeE2E(E2E_KEYS.MAPS, "E2E – Multi-User Booking Scenario", () => {
     TIMEOUT
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Full day plan from real addresses (real Geocoding + Routes APIs)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describeE2E(E2E_KEYS.MAPS, "E2E – Day plan from real addresses", () => {
+  const Booking = require("../../src/models/bookingModel");
+  const { getCoordinatesFromPostalCode } = require("../../src/services/mapsService");
+  const timezoneUtils = require("../../src/utils/timezoneUtils");
+
+  const INSTRUCTOR = {
+    phoneNumberId: "e2e-route-instructor",
+    baseLocation: { latitude: INSTRUCTOR_BASE.lat, longitude: INSTRUCTOR_BASE.long },
+  };
+  // A weekday a week from now, so traffic-aware routing gets a future departure time
+  const DAY = timezoneUtils.addDays(timezoneUtils.getCurrentDateString(), 7);
+  const toLoc = (g) => ({ lat: g.lat, long: g.lng });
+
+  let fenton;
+  let leek;
+
+  beforeAll(async () => {
+    fenton = await getCoordinatesFromPostalCode("Fenton, Stoke-on-Trent");
+    leek = await getCoordinatesFromPostalCode("Leek, Staffordshire");
+  }, TIMEOUT);
+
+  beforeEach(() => {
+    clearCache();
+    // Lessons already booked that day; only the database is faked
+    jest.spyOn(Booking, "find").mockResolvedValue(BOOKINGS.map((b) => ({ ...b, date: DAY })));
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it(
+    "geocodes real places in the right area",
+    async () => {
+      for (const place of [fenton, leek]) {
+        expect(place.lat).toBeGreaterThan(52.9);
+        expect(place.lat).toBeLessThan(53.2);
+      }
+      expect(leek.lat).toBeGreaterThan(fenton.lat); // Leek is north
+    },
+    TIMEOUT
+  );
+
+  it(
+    "a nearby learner gets more, closer options than a far one",
+    async () => {
+      const slots = ["10:00", "12:00", "13:00", "15:00", "16:00"];
+      const near = await routeOptimizer.planDay({ date: DAY, instructor: INSTRUCTOR, availableSlots: slots, userLoc: toLoc(fenton) });
+      const far = await routeOptimizer.planDay({ date: DAY, instructor: INSTRUCTOR, availableSlots: slots, userLoc: toLoc(leek) });
+
+      log("Fenton", near.evaluations);
+      log("Leek", far.evaluations);
+
+      expect(near.offered.length).toBeGreaterThanOrEqual(far.offered.length);
+      const best = (day) => Math.min(...day.evaluations.filter((e) => e.feasible).map((e) => e.addedDrive));
+      expect(best(near)).toBeLessThan(best(far));
+      // Never offers something the instructor can't reach, and keeps time order
+      for (const day of [near, far]) {
+        const infeasible = day.evaluations.filter((e) => !e.feasible).map((e) => e.slot);
+        expect(day.offered.some((s) => infeasible.includes(s))).toBe(false);
+        expect([...day.offered]).toEqual([...day.offered].sort());
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    "a far learner only gets the few best slots when nothing is within the drive limit",
+    async () => {
+      const slots = ["10:00", "12:00", "13:00", "15:00", "16:00"];
+      const day = await routeOptimizer.planDay({
+        date: DAY,
+        instructor: { ...INSTRUCTOR, routeSettings: { preset: "tight" } },
+        availableSlots: slots,
+        userLoc: toLoc(leek),
+      });
+      if (day.usedFallback) expect(day.offered.length).toBeLessThanOrEqual(3);
+      expect(day.offered.length).toBeLessThan(slots.length);
+    },
+    TIMEOUT
+  );
+
+  it(
+    "service area: Fenton is inside 5 miles of Stoke centre, Leek isn't",
+    async () => {
+      const area = { ...INSTRUCTOR, routeSettings: { serviceArea: { radius: 5, unit: "miles" } } };
+      expect(routeOptimizer.checkServiceArea(area, toLoc(fenton)).inside).toBe(true);
+      const out = routeOptimizer.checkServiceArea(area, toLoc(leek));
+      expect(out.inside).toBe(false);
+      expect(out.reason).toMatch(/miles away/);
+    },
+    TIMEOUT
+  );
+});

@@ -118,8 +118,21 @@ const E2E_MOCKS = {
 
 // ── 5. Database helpers ──────────────────────────────────────────────────
 
+// E2E tests drop every collection when they finish, so they must never touch a
+// real database. Only database names containing "test" are allowed.
+function assertTestDatabase() {
+  const name = process.env.DB_NAME || "";
+  if (!/test/i.test(name)) {
+    throw new Error(
+      `Refusing to use database "${name || "(none)"}" for e2e tests: they delete everything in it. ` +
+      `Set DB_NAME to a test database (e.g. driving_school_test) in envs/.env.test.`
+    );
+  }
+}
+
 async function connectTestDB() {
   if (mongoose.connection.readyState === 1) return;
+  assertTestDatabase();
 
   const uri = process.env.MONGO_URI;
   if (!uri) throw new Error("MONGO_URI not set — check envs/.env.test");
@@ -133,6 +146,10 @@ async function connectTestDB() {
 
 async function cleanupTestDB() {
   if (mongoose.connection.readyState !== 1) return;
+  assertTestDatabase();
+  if (!/test/i.test(mongoose.connection.name)) {
+    throw new Error(`Refusing to clean "${mongoose.connection.name}": not a test database`);
+  }
 
   const collections = await mongoose.connection.db.listCollections().toArray();
   for (const col of collections) {
@@ -199,6 +216,8 @@ function clearTestSession() {
   const { userSessions } = require("../../src/models/instructorModel");
   const aiService = require("../../src/services/gemini/aiService");
 
+  // Sessions are keyed per learner and instructor
+  delete userSessions[`${TEST_PHONE}::${TEST_INSTRUCTOR_PHONE_ID}`];
   delete userSessions[TEST_PHONE];
   aiService.clearPendingContext(TEST_PHONE);
 }
@@ -208,7 +227,7 @@ function clearTestSession() {
  */
 function getTestSession() {
   const { getUserSession } = require("../../src/models/instructorModel");
-  return getUserSession(TEST_PHONE);
+  return getUserSession(TEST_PHONE, TEST_INSTRUCTOR_PHONE_ID);
 }
 
 /**

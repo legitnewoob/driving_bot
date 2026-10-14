@@ -73,10 +73,25 @@ const logAuth = basicAuth({
 
 
 // CORS (manual middleware — supports multiple allowed origins)
+// FRONTEND_URL / PORTAL_URL, each with and without "www.", plus any extra origins
+// in CORS_ORIGINS (comma-separated). Origins must match exactly, so normalise them.
+const withAndWithoutWww = (url) => {
+  try {
+    const u = new URL(url);
+    const bare = u.hostname.replace(/^www\./, "");
+    return [`${u.protocol}//${bare}${u.port ? `:${u.port}` : ""}`, `${u.protocol}//www.${bare}${u.port ? `:${u.port}` : ""}`];
+  } catch {
+    return [];
+  }
+};
 const ALLOWED_ORIGINS = [
-  process.env.FRONTEND_URL,
-  process.env.PORTAL_URL,
-].filter(Boolean);
+  ...new Set(
+    [process.env.FRONTEND_URL, process.env.PORTAL_URL, ...(process.env.CORS_ORIGINS || "").split(",")]
+      .map((o) => (o || "").trim())
+      .filter(Boolean)
+      .flatMap(withAndWithoutWww)
+  ),
+];
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;

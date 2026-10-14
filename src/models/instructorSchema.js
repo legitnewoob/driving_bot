@@ -43,6 +43,8 @@ const instructorSchema = new mongoose.Schema({
     lookAheadDays: { type: Number, default: 10 },
   },
   botSettings: {
+    // Master switch: when false Donna stops replying and booking (e.g. an emergency)
+    donnaEnabled: { type: Boolean, default: true },
     workingHours: {
       type: new mongoose.Schema({
         mon: [String], tue: [String], wed: [String], thu: [String],

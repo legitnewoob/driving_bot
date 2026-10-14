@@ -249,9 +249,10 @@ class RouteOptimizer {
   // Slots whose lesson would overlap a lesson already booked in the database.
   // Calendar checks alone miss lessons that have no calendar event.
   _bookedSlots(slots, bookings, lessonMin) {
+    const timed = bookings.filter((b) => typeof b.time === "string" && /^\d{1,2}:\d{2}$/.test(b.time));
     return slots.filter((slot) => {
       const start = this.timeToMinutes(slot);
-      return bookings.some((b) => {
+      return timed.some((b) => {
         const other = this.timeToMinutes(b.time);
         return start < other + lessonMin && other < start + lessonMin;
       });

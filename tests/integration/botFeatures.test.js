@@ -663,3 +663,85 @@ describe("Handover to the instructor", () => {
     expect(replies[1]).toContain("reach Sam directly");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("Messages to a number with no instructor", () => {
+  it("tells the learner the number isn't linked, instead of going silent", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValueOnce(null);
+    const replies = [];
+    await webhookController.handleIncomingMessage("4479", "hi", "unassigned-number", true, (r) => replies.push(r));
+    expect(replies).toEqual([expect.stringContaining("isn't linked to a Donna Drive instructor")]);
+  });
+
+  it("says it at most once an hour to the same learner", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValue(null);
+    const replies = [];
+    await webhookController.handleIncomingMessage("4478", "hi", "unassigned-2", true, (r) => replies.push(r));
+    await webhookController.handleIncomingMessage("4478", "hello?", "unassigned-2", true, (r) => replies.push(r));
+    expect(replies).toHaveLength(1);
+    getInstructor.mockImplementation(async () => mockInstructor);
+  });
+
+  it("uses the number's own token from the pool for real WhatsApp replies", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValueOnce(null);
+    db.isDbReady.mockReturnValue(true);
+    const PhoneNumber = require("../../src/models/phoneNumberModel");
+    jest.spyOn(PhoneNumber, "findOne").mockReturnValue({ lean: async () => ({ phoneNumberId: "pool-1", whatsappToken: "pool-token" }) });
+
+    await webhookController.handleIncomingMessage("4477", "hi", "pool-1");
+
+    expect(whatsappService.sendTextMessage).toHaveBeenCalledWith(
+      "4477",
+      expect.stringContaining("isn't linked to a Donna Drive instructor"),
+      { phoneNumberId: "pool-1", whatsappToken: "pool-token" }
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("Donna switched off by the instructor", () => {
+  beforeEach(() => {
+    mockInstructor.botSettings = { donnaEnabled: false };
+  });
+
+  it("tells the learner to contact the instructor and doesn't run the AI", async () => {
+    const ai = jest.spyOn(aiService, "getResponse");
+    const replies = await chat("can I book friday?");
+    expect(replies).toEqual(["Sorry, Sam isn't taking bookings through Donna right now. Please contact them directly."]);
+    expect(ai).not.toHaveBeenCalled();
+  });
+
+  it("says it at most once an hour, but keeps passing messages on", async () => {
+    await chat("hello?");
+    const second = await chat("anyone there?");
+    expect(second).toEqual([]);
+  });
+
+  it("forwards real messages to the instructor (portal bell + email)", async () => {
+    const { notifyInstructorLearnerMessage } = require("../../src/utils/emailNotifier");
+    const notify = jest.spyOn(notificationService, "notify").mockResolvedValue();
+    await webhookController.handleIncomingMessage("4471", "I'm running late", "inst-1", false, null, { messageId: "wamid.off1" });
+    expect(notifyInstructorLearnerMessage).toHaveBeenCalledWith(mockInstructor, expect.anything(), "I'm running late", { reason: "off" });
+    expect(notify).toHaveBeenCalledWith(mockInstructor, expect.objectContaining({ type: "paused_message", message: expect.stringContaining("Donna is switched off") }));
+  });
+
+  it("holds reminders while she's off", async () => {
+    db.isDbReady.mockReturnValue(true);
+    const soon = inHours(22);
+    Booking.find.mockReturnValue({ lean: async () => [{ _id: "b1", bookingId: "DL-OFF001", userPhone: "4471", instructorId: "inst-1", status: "confirmed", ...soon, reminderSentAt: null, shortReminderSentAt: null }] });
+    Booking.findOneAndUpdate = jest.fn();
+    await reminders.runOnce();
+    expect(Booking.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it("doesn't offer freed slots to the waiting list while she's off", async () => {
+    db.isDbReady.mockReturnValue(true);
+    WaitlistEntry.find.mockReturnValue({ lean: async () => [{ phone: "4472", status: "waiting" }] });
+    const offered = await waitlistService.offerSlot(mockInstructor, inHours(100).date, "10:00");
+    expect(offered).toEqual([]);
+    expect(WaitlistEntry.find).not.toHaveBeenCalled();
+  });
+});

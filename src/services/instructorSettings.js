@@ -69,6 +69,7 @@ function resolveRouteSettings(instructor) {
 // ── Bot behaviour settings ──────────────────────────────────────────────
 
 const BOT_DEFAULTS = {
+  donnaEnabled: true,
   workingHours: null,
   breaks: [],
   maxLessonsPerDay: null,

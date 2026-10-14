@@ -100,6 +100,10 @@ async function refreshAndUpdateAll({ sourceToken = null, dryRun = false } = {}) 
       `WhatsApp token refresh: updated ${result.modifiedCount} instructor(s) with new token`
     );
 
+    // Keep the phone-number pool's copy fresh too, so newly assigned numbers get a working token
+    const PhoneNumber = require("../models/phoneNumberModel");
+    await PhoneNumber.updateMany({ whatsappToken: { $ne: null } }, { $set: { whatsappToken: newToken } });
+
     // 4. Invalidate cache for every updated instructor
     const instructors = await Instructor.find({ active: true }).select("phoneNumberId").lean();
     for (const inst of instructors) {

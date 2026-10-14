@@ -88,6 +88,7 @@ const ROUTE_SPEC = {
 };
 
 const BOT_SPEC = {
+  donnaEnabled: bool(),
   workingHours: (v, label, errors) => {
     if (v === null) return { value: null };
     const days = check(v, Object.fromEntries(DAY_KEYS.map((d) => [d, timeList(24)])), label, errors);

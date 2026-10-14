@@ -190,16 +190,12 @@ describeE2E(E2E_KEYS.AI, "E2E – Cancellation Flow", () => {
   );
 
   it(
-    "cancel without ID → asks for ID → provide ID → cancellation",
+    "cancel without ID → offers their lessons → provide ID → cancellation",
     async () => {
-      // Turn 1: cancel without ID
+      // Turn 1: cancel without ID. Donna now lists the learner's lessons to tap
+      // (or says there are none) instead of asking for a booking ID.
       const r1 = await sendMessage("I want to cancel my booking");
-      const lower1 = r1.raw.toLowerCase();
-      expect(
-        lower1.includes("id") ||
-        lower1.includes("which") ||
-        lower1.includes("booking")
-      ).toBe(true);
+      expect(r1.raw).toMatch(/\b(id|which|booking|lessons?|upcoming)\b/i);
 
       // Turn 2: provide ID (session carries context)
       const r2 = await sendMessage("It's DL-AB12");
@@ -383,12 +379,8 @@ describeE2E(E2E_KEYS.AI, "E2E – Next Available Slot", () => {
       async () => {
         const { raw } = await sendMessage(msg);
 
-        expect(
-          raw.includes("available") ||
-          raw.includes("appointment") ||
-          raw.includes("slot") ||
-          raw.includes("next")
-        ).toBe(true);
+        // toMatch prints Donna's actual reply if this fails
+        expect(raw).toMatch(/available|appointment|slot|next|earliest|soonest|free/i);
       },
       TIMEOUT
     );

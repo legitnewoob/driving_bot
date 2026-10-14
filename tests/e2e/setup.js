@@ -15,3 +15,8 @@ process.env.LOAD_ENV = "test";
 
 // Loading src/config/env reads envs/.env.test and populates process.env
 require("../../src/config/env");
+
+// envs/.env.test may set NODE_ENV/LOAD_ENV itself (e.g. copied from development);
+// e2e always runs as "test".
+process.env.NODE_ENV = "test";
+process.env.LOAD_ENV = "test";

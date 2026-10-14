@@ -15,6 +15,7 @@ jest.mock("../../src/utils/logger-advanced", () => ({
   error: jest.fn(),
 }));
 jest.mock("../../src/models/instructorSchema");
+jest.mock("../../src/models/phoneNumberModel", () => ({ updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 }) }));
 jest.mock("../../src/models/instructorModel", () => ({
   invalidateInstructorCache: jest.fn(),
 }));
@@ -188,7 +189,13 @@ describe("refreshAndUpdateAll", () => {
       { $set: { whatsappToken: "fresh-long-lived-token" } }
     );
 
-    // 4. Invalidated cache for each instructor
+    // 4. Refreshed the token stored in the phone-number pool too
+    expect(require("../../src/models/phoneNumberModel").updateMany).toHaveBeenCalledWith(
+      { whatsappToken: { $ne: null } },
+      { $set: { whatsappToken: "fresh-long-lived-token" } }
+    );
+
+    // 5. Invalidated cache for each instructor
     expect(invalidateInstructorCache).toHaveBeenCalledTimes(2);
     expect(invalidateInstructorCache).toHaveBeenCalledWith("inst-1");
     expect(invalidateInstructorCache).toHaveBeenCalledWith("inst-2");

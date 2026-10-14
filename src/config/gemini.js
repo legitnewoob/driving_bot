@@ -29,7 +29,7 @@ const model = genAI.getGenerativeModel({
 // Small structured jobs (reading dates/times out of a message) where speed matters
 // more than depth. Override with GEMINI_FAST_MODEL.
 const fastModel = genAI.getGenerativeModel({
-  model: process.env.GEMINI_FAST_MODEL || "gemini-2.5-flash-lite",
+  model: process.env.GEMINI_FAST_MODEL || "gemini-3.5-flash-lite",
 });
 
 module.exports = { model, fastModel, genAI };

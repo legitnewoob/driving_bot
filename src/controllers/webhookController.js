@@ -724,6 +724,19 @@ class WebhookController {
 
       const { hasAction, actionType, bookingData, responseText } = aiService.extractActions(aiResponse);
 
+      // Remember a date/time Donna worked out herself (e.g. "next Wed" → 2026-10-21),
+      // so the next turn checks real availability for it.
+      if (actionType === "null" && DATE.test(bookingData?.date || "")) {
+        const today = timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), "YYYY-MM-DD");
+        const pending = aiService.pendingContext[from] || {};
+        if (bookingData.date >= today && bookingData.date !== pending.date) {
+          aiService.updatePendingContext(from, {
+            date: bookingData.date,
+            time: TIME.test(bookingData.time || "") ? bookingData.time : null,
+          });
+        }
+      }
+
       // Remember pickup/drop-off from any action JSON so slot scoring can use them
       if (bookingData?.pickupAddress || bookingData?.dropoffAddress) {
         aiService.updatePendingPickupDropoff(from, {

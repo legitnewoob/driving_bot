@@ -623,6 +623,18 @@ describe("2.8 menus for lesson types, moving and cancelling", () => {
     expect(last.interactive.buttons.map((x) => x.id)).toEqual(["menu:move", "menu:book"]);
   });
 
+  it("remembers a date Donna worked out, so the next turn checks real availability", async () => {
+    aiSays('That would be Wednesday 21st.\n[ACTION:NULL]\n{"date":"2030-10-21"}');
+    await chat("how about next wed");
+    expect(aiService.pendingContext["4471"]).toMatchObject({ date: "2030-10-21" });
+  });
+
+  it("ignores past dates in Donna's JSON", async () => {
+    aiSays('Okay.\n[ACTION:NULL]\n{"date":"2001-01-01"}');
+    await chat("hmm");
+    expect(aiService.pendingContext["4471"]?.date).toBeUndefined();
+  });
+
   it("respects the instructor's settings on taps too", async () => {
     mockInstructor.botSettings = { allowCancel: false };
     const [reply] = await chat("pick", { buttonId: "cancelpick:DL-AAA001" });

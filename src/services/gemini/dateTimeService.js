@@ -1,4 +1,8 @@
-const { fastModel: model } = require("../../config/gemini");
+const { fastModel, model: mainModel } = require("../../config/gemini");
+
+// Use the fast model unless Google has retired it, then fall back to the main one
+let model = fastModel || mainModel;
+const isRetiredModel = (err) => /\b404\b|not found|no longer available/i.test(err?.message || "");
 const timezoneUtils = require("../../utils/timezoneUtils");
 const logger = require("../../utils/logger-advanced");
 
@@ -168,6 +172,12 @@ class DateTimeService {
       
     } catch (error) {
       logger.error(`DateTime Gemini extraction error: ${error.message}`);
+
+      if (isRetiredModel(error) && mainModel && model !== mainModel) {
+        logger.warn("DateTime: fast model unavailable; using the main model from now on (set GEMINI_FAST_MODEL to fix)");
+        model = mainModel;
+        return this.extractWithGemini(message, retryCount);
+      }
       
       if (retryCount < MAX_RETRIES) {
         await this.delay(200);

@@ -3,6 +3,7 @@ const PhoneNumber = require("../models/phoneNumberModel");
 const phoneNumberService = require("./phoneNumberService");
 const { invalidateInstructorCache } = require("../models/instructorModel");
 const logger = require("../utils/logger-advanced");
+const { audit } = require("./auditLog");
 
 /**
  * Delete an instructor's account. The record is kept (bookings and payments
@@ -32,6 +33,11 @@ async function deleteAccount(instructor) {
       active: false,
       deletedAt: new Date(),
       email: `deleted+${id}@deleted.donnadrive.invalid`,
+      deletedIdentity: {
+        email: String(instructor.email || "").toLowerCase() || null,
+        name: instructor.name || null,
+        googleId: instructor.googleId || null,
+      },
       name: "Deleted account",
       subscriptionStatus: instructor.subscriptionId ? "canceled" : instructor.subscriptionStatus || null,
       // Leaving a school frees their seat
@@ -43,7 +49,18 @@ async function deleteAccount(instructor) {
   };
   await Instructor.updateOne({ _id: instructor._id }, update);
   invalidateInstructorCache(instructor.phoneNumberId);
+  await audit(instructor.email, "account.delete", instructor.email, { accountId: id, plan: instructor.plan });
   logger.info(`Account ${id} deleted`);
 }
 
-module.exports = { deleteAccount };
+/** Earlier accounts this person deleted (matched by email or Google account). */
+async function previousAccounts({ email, googleId }) {
+  const or = [];
+  if (email) or.push({ "deletedIdentity.email": String(email).toLowerCase() });
+  if (googleId) or.push({ "deletedIdentity.googleId": googleId });
+  if (!or.length) return [];
+  const docs = await Instructor.find({ deletedAt: { $ne: null }, $or: or }, { _id: 1 }).lean();
+  return docs.map((d) => d._id);
+}
+
+module.exports = { deleteAccount, previousAccounts };

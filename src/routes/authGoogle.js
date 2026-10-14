@@ -90,6 +90,11 @@ router.post("/google-signup", async (req, res) => {
       plaintextApiKey = apiKey;
       const hashedKey = crypto.createHash("sha256").update(apiKey).digest("hex");
 
+      // Signing up again after deleting: a fresh account for them, linked to the
+      // old one(s) so admins can see they've come back
+      const { previousAccounts } = require("../services/accountDeletion");
+      const previous = await previousAccounts({ email, googleId });
+
       instructor = await Instructor.create({
         googleId,
         email,
@@ -99,7 +104,11 @@ router.post("/google-signup", async (req, res) => {
         planSelected: false,
         apiKey: hashedKey,
         active: true,
+        ...(previous.length && { previousAccountIds: previous }),
       });
+      if (previous.length) {
+        await require("../services/auditLog").audit(email, "account.rejoined", email, { previousAccountIds: previous.map(String) });
+      }
     } else {
       // Existing instructor — update googleId if missing
       if (!instructor.googleId) {

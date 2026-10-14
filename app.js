@@ -12,6 +12,7 @@ const stripeRoutes = require('./src/routes/stripe');
 const stripeWebhookHandler = require('./src/routes/stripeWebhook');
 const phoneNumberRoutes = require('./src/routes/phoneNumbers');
 const adminRoutes = require('./src/routes/admin');
+const pricingRoutes = require('./src/routes/pricing');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
@@ -124,7 +125,8 @@ app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', adminAuth, bookingRoutes);
 app.use('/api/dashboard', jwtAuth, dashboardRoutes);
-app.use('/api/school', schoolRoutes); // public invite lookup inside; everything else needs JWT
+app.use('/api/school', schoolRoutes);
+app.use('/api/pricing', pricingRoutes); // public: plans and the active sale for the website // public invite lookup inside; everything else needs JWT
 app.use('/api/learners', apiKeyAuth, learnerRoutes);
 app.use('/api/phone-numbers', jwtAuth, phoneNumberRoutes);
 app.use('/api/admin', adminAuth, adminRoutes);

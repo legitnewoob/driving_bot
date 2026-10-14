@@ -91,7 +91,20 @@ const instructorSchema = new mongoose.Schema({
   plan: { type: String, enum: ["pdi", "adi", "driving-school"], default: "pdi" },
   // Driving schools: the owner manages; members are the school's instructors
   schoolId: { type: mongoose.Schema.Types.ObjectId, ref: "School", default: null, index: true },
-  schoolRole: { type: String, enum: ["owner", "member", null], default: null },
+  // member = instructor; manager = instructor who can also invite/remove instructors
+  schoolRole: { type: String, enum: ["owner", "manager", "member", null], default: null },
+  // Donna Drive staff (admin panel). Super admins come from SUPER_ADMIN_EMAILS.
+  staffRole: { type: String, enum: ["admin", "support", null], default: null },
+  // A plan given free by an admin; counts as an active subscription until `until` (null = no end)
+  comp: {
+    plan: { type: String, enum: ["adi", "driving-school", null], default: null },
+    until: { type: Date, default: null },
+    note: { type: String, default: "" },
+  },
+  // Admin suspension: blocks sign-in (signing in again doesn't reactivate)
+  suspended: { type: Boolean, default: false },
+  trialEndsAt: { type: Date, default: null },
+  canceledAt: { type: Date, default: null },
   stripeCustomerId: { type: String, unique: true, sparse: true },
   subscriptionId: { type: String },
   subscriptionStatus: {
@@ -101,9 +114,16 @@ const instructorSchema = new mongoose.Schema({
   },
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
+// Paid plan access: a live Stripe subscription, or a comp from an admin
+instructorSchema.methods.hasActivePlan = function () {
+  if (this.plan === "pdi") return true;
+  if (["active", "trialing"].includes(this.subscriptionStatus)) return true;
+  return !!(this.comp?.plan && (!this.comp.until || this.comp.until > new Date()));
+};
+
 instructorSchema.virtual("onboardingComplete").get(function () {
   const hasPhone = this.phoneNumberId && !this.phoneNumberId.startsWith("signup_");
-  const hasSub = this.plan === "pdi" || ["active", "trialing"].includes(this.subscriptionStatus);
+  const hasSub = this.hasActivePlan();
   const hasCal = !!this.googleRefreshToken;
   return hasPhone && hasSub && hasCal;
 });
@@ -111,7 +131,7 @@ instructorSchema.virtual("onboardingComplete").get(function () {
 instructorSchema.virtual("onboardingStatus").get(function () {
   return {
     phoneAssigned: !!(this.phoneNumberId && !this.phoneNumberId.startsWith("signup_")),
-    subscriptionActive: this.plan === "pdi" || ["active", "trialing"].includes(this.subscriptionStatus),
+    subscriptionActive: this.hasActivePlan(),
     calendarConnected: !!this.googleRefreshToken,
     calendarTokenExpired: !!this.calendarTokenExpired,
   };

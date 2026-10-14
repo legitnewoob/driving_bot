@@ -86,6 +86,10 @@ router.post("/google-signup", async (req, res) => {
         instructor.googleId = googleId;
       }
 
+      if (instructor.suspended) {
+        return res.status(403).json({ success: false, error: "This account has been suspended. Contact support@donnadrive.co.uk." });
+      }
+
       // Reactivate if previously soft-deleted
       if (!instructor.active) {
         instructor.active = true;
@@ -206,9 +210,17 @@ router.post("/verify", jwtAuth, (req, res) => {
  */
 // Which school (if any) this instructor owns or belongs to, for the dashboard nav
 async function schoolInfo(instructor) {
-  const school = await require("../services/schoolService").schoolFor(instructor, { create: false });
-  if (!school) return instructor.plan === "driving-school" && instructor.schoolRole !== "member" ? { role: "owner", name: null } : null;
-  return { role: String(school.ownerId) === String(instructor._id) ? "owner" : "member", name: school.name };
+  const { SEAT_ROLES, schoolFor } = require("../services/schoolService");
+  const school = await schoolFor(instructor, { create: false });
+  if (!school) return instructor.plan === "driving-school" && !SEAT_ROLES.includes(instructor.schoolRole) ? { role: "owner", name: null } : null;
+  const role = String(school.ownerId) === String(instructor._id) ? "owner" : instructor.schoolRole === "manager" ? "manager" : "member";
+  return { role, name: school.name };
+}
+
+// Donna Drive staff role and every permission, for the dashboard to show/hide things
+function accessInfo(instructor) {
+  const { staffRoleOf, permissionsOf, isSuperAdmin } = require("../services/permissions");
+  return { staffRole: staffRoleOf(instructor), superAdmin: isSuperAdmin(instructor), permissions: permissionsOf(instructor) };
 }
 
 router.get("/me", jwtAuth, async (req, res) => {
@@ -238,6 +250,8 @@ router.get("/me", jwtAuth, async (req, res) => {
         onboardingStatus: instructor.onboardingStatus,
         createdAt: instructor.createdAt,
         school: await schoolInfo(instructor),
+        access: accessInfo(instructor),
+        comp: instructor.comp?.plan ? { plan: instructor.comp.plan, until: instructor.comp.until } : null,
       },
     });
   } catch (err) {

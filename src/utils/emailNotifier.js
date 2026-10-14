@@ -240,6 +240,23 @@ async function sendSchoolInvite({ to, schoolName, ownerName, link }) {
 }
 
 /** Tell ops the WhatsApp number pool ran out while an instructor was waiting for one. */
+async function sendPriceChangeNotice({ to, name, planName, what, fromAmount, toAmount, effectiveAt }) {
+  const gbp = (p) => `£${(p / 100).toFixed(p % 100 ? 2 : 0)}`;
+  const when = new Date(effectiveAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const subject = `Your Donna Drive ${planName} price is changing`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <p>Hi ${escapeHtml((name || "").split(" ")[0] || "there")},</p>
+      <p>From <strong>${when}</strong>, the ${escapeHtml(what)} on the ${escapeHtml(planName)} plan is changing from
+      <strong>${gbp(fromAmount)}</strong> to <strong>${gbp(toAmount)}</strong> a month.</p>
+      <p>You'll pay the new price from your first renewal after that date. Nothing changes before then, and you
+      can cancel any time from Account → Manage Subscription.</p>
+      <p>Thanks for using Donna Drive.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, null, to);
+}
+
 async function notifyNumberPoolEmpty(instructor) {
   const subject = "⚠️ Donna Drive: no WhatsApp numbers left in the pool";
   const html = `
@@ -266,6 +283,7 @@ function resetTransporter() {
 }
 
 module.exports = {
+  sendPriceChangeNotice,
   sendNotification,
   notifyInvalidGrant,
   notifyInstructorReauth,

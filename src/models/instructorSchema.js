@@ -110,6 +110,15 @@ const instructorSchema = new mongoose.Schema({
   trialEndsAt: { type: Date, default: null },
   // Set when the instructor deletes their account (identity removed, see accountDeletion)
   deletedAt: { type: Date, default: null },
+  // Who a deleted account belonged to: admin-only, never used to sign in. Lets
+  // admins see when someone signs up again after deleting.
+  deletedIdentity: {
+    email: { type: String, default: null, lowercase: true, index: true },
+    name: { type: String, default: null },
+    googleId: { type: String, default: null, index: true },
+  },
+  // On a new account: earlier accounts by the same person that they deleted
+  previousAccountIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
   canceledAt: { type: Date, default: null },
   stripeCustomerId: { type: String, unique: true, sparse: true },
   subscriptionId: { type: String },

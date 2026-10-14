@@ -663,3 +663,40 @@ describe("Handover to the instructor", () => {
     expect(replies[1]).toContain("reach Sam directly");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("Messages to a number with no instructor", () => {
+  it("tells the learner the number isn't linked, instead of going silent", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValueOnce(null);
+    const replies = [];
+    await webhookController.handleIncomingMessage("4479", "hi", "unassigned-number", true, (r) => replies.push(r));
+    expect(replies).toEqual([expect.stringContaining("isn't linked to a Donna Drive instructor")]);
+  });
+
+  it("says it at most once an hour to the same learner", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValue(null);
+    const replies = [];
+    await webhookController.handleIncomingMessage("4478", "hi", "unassigned-2", true, (r) => replies.push(r));
+    await webhookController.handleIncomingMessage("4478", "hello?", "unassigned-2", true, (r) => replies.push(r));
+    expect(replies).toHaveLength(1);
+    getInstructor.mockImplementation(async () => mockInstructor);
+  });
+
+  it("uses the number's own token from the pool for real WhatsApp replies", async () => {
+    const getInstructor = require("../../src/models/instructorModel").getInstructor;
+    getInstructor.mockResolvedValueOnce(null);
+    db.isDbReady.mockReturnValue(true);
+    const PhoneNumber = require("../../src/models/phoneNumberModel");
+    jest.spyOn(PhoneNumber, "findOne").mockReturnValue({ lean: async () => ({ phoneNumberId: "pool-1", whatsappToken: "pool-token" }) });
+
+    await webhookController.handleIncomingMessage("4477", "hi", "pool-1");
+
+    expect(whatsappService.sendTextMessage).toHaveBeenCalledWith(
+      "4477",
+      expect.stringContaining("isn't linked to a Donna Drive instructor"),
+      { phoneNumberId: "pool-1", whatsappToken: "pool-token" }
+    );
+  });
+});

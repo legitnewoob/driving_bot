@@ -513,10 +513,10 @@ describe("Flow – Unknown Instructor", () => {
   beforeEach(() => jest.clearAllMocks());
   afterEach(() => jest.restoreAllMocks());
 
-  it("silently returns when instructor not found", async () => {
+  it("tells the learner the number isn't linked when no instructor is found", async () => {
     const replies = await sendMockMessage("447999999999", "Hello", "unknown-inst");
 
-    expect(replies.length).toBe(0);
+    expect(replies).toEqual([expect.stringContaining("isn't linked to a Donna Drive instructor")]);
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("No instructor found")
     );

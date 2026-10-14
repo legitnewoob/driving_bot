@@ -393,7 +393,7 @@ describe("Multi-Instructor – Webhook Controller (Mock Mode)", () => {
     expect(replies.length).toBeGreaterThan(0);
   });
 
-  it("silently returns for unknown instructor (no crash)", async () => {
+  it("replies that the number isn't linked for an unknown instructor (no crash)", async () => {
     const replies = [];
 
     await webhookController.handleIncomingMessage(
@@ -405,8 +405,7 @@ describe("Multi-Instructor – Webhook Controller (Mock Mode)", () => {
     );
 
     expect(getInstructor).toHaveBeenCalledWith("phone-UNKNOWN-999");
-    // No reply sent — instructor not found
-    expect(replies.length).toBe(0);
+    expect(replies).toEqual([expect.stringContaining("isn't linked to a Donna Drive instructor")]);
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("No instructor found")
     );

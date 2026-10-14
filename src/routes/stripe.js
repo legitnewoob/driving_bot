@@ -4,6 +4,7 @@ const Stripe = require("stripe");
 const Instructor = require("../models/instructorSchema");
 const AuthCode = require("../models/authCodeModel");
 const { signToken } = require("../utils/jwtSign");
+const pricing = require("../services/pricingService");
 
 const router = express.Router();
 
@@ -11,10 +12,7 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
-const PRICE_MAP = {
-  adi: () => process.env.STRIPE_PRICE_ADI,
-  "driving-school": () => process.env.STRIPE_PRICE_SCHOOL,
-};
+const PAID_PLANS = ["adi", "driving-school"];
 
 /**
  * POST /api/stripe/create-checkout-session
@@ -24,7 +22,7 @@ router.post("/create-checkout-session", async (req, res) => {
   try {
     const { plan } = req.body;
 
-    if (!plan || !PRICE_MAP[plan]) {
+    if (!plan || !PAID_PLANS.includes(plan)) {
       return res.status(400).json({ success: false, error: "Invalid plan. Must be 'adi' or 'driving-school'" });
     }
 
@@ -38,8 +36,17 @@ router.post("/create-checkout-session", async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
-    if (instructor.schoolRole === "member") {
+    if (["member", "manager"].includes(instructor.schoolRole)) {
       return res.status(400).json({ success: false, error: "Your driving school covers your subscription, so there's nothing to pay." });
+    }
+
+    if (instructor.comp?.plan && (!instructor.comp.until || instructor.comp.until > new Date())) {
+      return res.status(400).json({ success: false, error: "You have free access from Donna Drive, so there's nothing to pay." });
+    }
+
+    const planConfig = await pricing.getPlan(plan);
+    if (!planConfig?.stripePriceId) {
+      return res.status(503).json({ success: false, error: "This plan isn't available to buy right now" });
     }
 
     if (instructor.subscriptionId && ["active", "trialing"].includes(instructor.subscriptionStatus)) {
@@ -105,13 +112,13 @@ router.post("/create-checkout-session", async (req, res) => {
       customer: customerId,
       line_items: [
         {
-          price: PRICE_MAP[plan](),
+          price: planConfig.stripePriceId,
           quantity: 1,
         },
       ],
-      subscription_data: {
-        trial_period_days: 30,
-      },
+      // An active sale's coupon, or a box for promo codes (Stripe allows one or the other)
+      ...(await pricing.checkoutDiscount(plan)),
+      subscription_data: planConfig.trialDays > 0 ? { trial_period_days: planConfig.trialDays } : {},
       success_url: successUrl,
       cancel_url: `${frontendUrl}/#pricing`,
       client_reference_id: instructor._id.toString(),

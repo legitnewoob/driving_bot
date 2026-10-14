@@ -180,7 +180,7 @@ describe("owner viewing an instructor", () => {
     const member = { _id: "sam-1", schoolId: SCHOOL_ID, schoolRole: "member" };
     Instructor.findOne.mockReturnValue({ lean: async () => member });
     expect(await schoolService.viewableInstructor(owner(), "sam-1")).toBe(member);
-    expect(Instructor.findOne).toHaveBeenCalledWith({ _id: "sam-1", schoolId: SCHOOL_ID, schoolRole: "member", active: true });
+    expect(Instructor.findOne).toHaveBeenCalledWith({ _id: "sam-1", schoolId: SCHOOL_ID, schoolRole: { $in: ["member", "manager"] }, active: true });
   });
 
   it("members can't view each other", async () => {
@@ -198,7 +198,7 @@ describe("subscription follows the owner", () => {
   it("copies the owner's subscription status to every member", async () => {
     await schoolService.syncMembersSubscription(owner({ subscriptionStatus: "past_due" }));
     expect(Instructor.updateMany).toHaveBeenCalledWith(
-      { schoolId: SCHOOL_ID, schoolRole: "member" },
+      { schoolId: SCHOOL_ID, schoolRole: { $in: ["member", "manager"] } },
       { $set: { subscriptionStatus: "past_due" } }
     );
   });
@@ -311,5 +311,89 @@ describe("paying for extra instructor seats (£10/month each)", () => {
   it("the seat limit follows the subscription when it's changed in Stripe", async () => {
     await schoolService.syncSeatsFromSubscription(owner(), sub([{ id: "si_extra", price: { id: EXTRA }, quantity: 3 }]));
     expect(School.findByIdAndUpdate).toHaveBeenCalledWith(SCHOOL_ID, { extraSeats: 3, seatLimit: 6 });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("school roles: owner, manager, instructor", () => {
+  const manager = (extra = {}) => ({
+    _id: "mgr-1", name: "Mo", email: "mo@school.test", plan: "driving-school",
+    schoolId: SCHOOL_ID, schoolRole: "manager", subscriptionStatus: "active", ...extra,
+  });
+  const instructor = () => manager({ _id: "sam-1", email: "sam@school.test", schoolRole: "member" });
+
+  beforeEach(() => {
+    Instructor.findById.mockReturnValue({ lean: async () => owner() });
+  });
+
+  it("a manager can invite instructors", async () => {
+    await expect(schoolService.invite(manager(), "new@example.com")).resolves.toMatchObject({ link: expect.stringContaining("/join/") });
+  });
+
+  it("a manager can't invite the owner", async () => {
+    await expect(schoolService.invite(manager(), "priya@school.test")).rejects.toThrow("That's the school owner");
+  });
+
+  it("an instructor can't invite", async () => {
+    await expect(schoolService.invite(instructor(), "new@example.com")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("a manager can remove an instructor", async () => {
+    Instructor.findOne.mockResolvedValue({ _id: "sam-1", name: "Sam", email: "sam@school.test", schoolRole: "member", phoneNumberId: "real-1" });
+    PhoneNumber.findOne.mockResolvedValue(null);
+    await expect(schoolService.removeMember(manager(), "sam-1")).resolves.toMatchObject({ id: "sam-1" });
+  });
+
+  it("a manager can't remove another manager", async () => {
+    Instructor.findOne.mockResolvedValue({ _id: "mgr-2", name: "Ali", schoolRole: "manager" });
+    await expect(schoolService.removeMember(manager(), "mgr-2")).rejects.toThrow("Only the school owner can remove a manager");
+  });
+
+  it("nobody can remove themselves", async () => {
+    Instructor.findOne.mockResolvedValue({ _id: "mgr-1", name: "Mo", schoolRole: "manager" });
+    await expect(schoolService.removeMember(manager(), "mgr-1")).rejects.toThrow("can't remove yourself");
+  });
+
+  it("a manager can't change seats or roles", async () => {
+    await expect(schoolService.setExtraSeats(manager({ subscriptionId: "sub_1" }), 1)).rejects.toMatchObject({ status: 403 });
+    await expect(schoolService.setMemberRole(manager(), "sam-1", "manager")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("the owner can make an instructor a manager and back", async () => {
+    Instructor.findOne.mockResolvedValue({ _id: "sam-1", name: "Sam", email: "sam@school.test", schoolRole: "member" });
+    await expect(schoolService.setMemberRole(owner(), "sam-1", "manager")).resolves.toMatchObject({ role: "manager", roleLabel: "Manager" });
+    expect(Instructor.findByIdAndUpdate).toHaveBeenCalledWith("sam-1", { schoolRole: "manager" });
+    await schoolService.setMemberRole(owner(), "sam-1", "instructor");
+    expect(Instructor.findByIdAndUpdate).toHaveBeenCalledWith("sam-1", { schoolRole: "member" });
+  });
+
+  it("rejects unknown roles", async () => {
+    await expect(schoolService.setMemberRole(owner(), "sam-1", "owner")).rejects.toThrow("manager or instructor");
+  });
+
+  it("a manager can view instructors in the school; an instructor can't", async () => {
+    const member = { _id: "sam-1" };
+    Instructor.findOne.mockReturnValue({ lean: async () => member });
+    expect(await schoolService.viewableInstructor(manager(), "sam-1")).toBe(member);
+    expect(await schoolService.viewableInstructor(instructor(), "other")).toBeNull();
+  });
+
+  it("a manager counts as a seat", async () => {
+    await schoolService.invite(owner(), "x@example.com");
+    expect(Instructor.countDocuments).toHaveBeenCalledWith({ schoolId: SCHOOL_ID, schoolRole: { $in: ["member", "manager"] }, active: true });
+  });
+
+  it("a school's overview tells each role what they can do", async () => {
+    Instructor.find.mockReturnValue({ lean: async () => [] });
+    SchoolInvite.find.mockReturnValue({ sort: () => ({ lean: async () => [] }) });
+    const asOwner = await schoolService.overview(owner());
+    expect(asOwner.permissions).toEqual(expect.arrayContaining(["school.billing", "school.roles", "school.invite"]));
+    const asManager = await schoolService.overview(manager());
+    expect(asManager.role).toBe("manager");
+    expect(asManager.permissions).toEqual(expect.arrayContaining(["school.invite", "school.remove", "school.viewAll"]));
+    expect(asManager.permissions).not.toContain("school.billing");
+    const asInstructor = await schoolService.overview(instructor());
+    expect(asInstructor.permissions).toEqual(["school.view"]);
+    expect(asInstructor.members).toEqual([]);
   });
 });

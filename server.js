@@ -4,12 +4,14 @@ const { startTokenRefreshSchedule } = require("./src/utils/refreshWhatsappToken"
 
 const app = require('./app');
 const { startReminderJob } = require("./src/jobs/reminders");
+const { startBillingJob } = require("./src/jobs/billing");
 
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
     startReminderJob();
+    startBillingJob();
     const chalk = (await import("chalk")).default;
     const dim = chalk.dim;
     const bold = chalk.bold;

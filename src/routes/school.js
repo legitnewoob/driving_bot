@@ -47,10 +47,8 @@ router.get("/", async (req, res) => {
 router.patch("/", async (req, res) => {
   try {
     const instructor = await me(req);
-    const school = instructor && (await schoolService.schoolFor(instructor));
-    if (!school || String(school.ownerId) !== String(instructor._id)) {
-      return res.status(403).json({ success: false, error: "Only the school owner can do that" });
-    }
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    const { school } = await schoolService.requireSchool(instructor, "school.rename", "Only the school owner can rename the school");
     const name = String(req.body?.name || "").trim();
     if (!name || name.length > 80) return res.status(400).json({ success: false, error: "School name must be 1–80 characters" });
     await School.findByIdAndUpdate(school._id, { name });
@@ -97,7 +95,7 @@ router.post("/invites/:token/accept", async (req, res) => {
   }
 });
 
-// Extra instructor seats beyond the 3 included, £10/month each
+// Extra instructor seats beyond the ones included in the plan
 router.put("/seats", async (req, res) => {
   try {
     const instructor = await me(req);
@@ -106,6 +104,18 @@ router.put("/seats", async (req, res) => {
     res.json({ success: true, data: await schoolService.overview(instructor) });
   } catch (err) {
     fail(res, err, "change seats");
+  }
+});
+
+// Owner: make an instructor a manager (or back)
+router.put("/members/:id/role", async (req, res) => {
+  try {
+    const instructor = await me(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    const data = await schoolService.setMemberRole(instructor, req.params.id, req.body?.role);
+    res.json({ success: true, data });
+  } catch (err) {
+    fail(res, err, "change the role");
   }
 });
 

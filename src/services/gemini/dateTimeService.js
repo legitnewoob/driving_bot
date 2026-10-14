@@ -1,5 +1,10 @@
-const { model } = require("../../config/gemini");
+const { fastModel, model: mainModel } = require("../../config/gemini");
+
+// Use the fast model unless Google has retired it, then fall back to the main one
+let model = fastModel || mainModel;
+const isRetiredModel = (err) => /\b404\b|not found|no longer available/i.test(err?.message || "");
 const timezoneUtils = require("../../utils/timezoneUtils");
+const logger = require("../../utils/logger-advanced");
 
 class DateTimeService {
   // Constants
@@ -15,6 +20,9 @@ class DateTimeService {
     evening: "19:00",
     night: "21:00",
   };
+
+  // Words and patterns that suggest a message mentions a date or time
+  static DATE_TIME_CUE = /\b(today|tonight|tomorrow|tmrw|tmr|weekend|week|weeks|month|fortnight|mon|monday|tue|tues|tuesday|wed|weds|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday|jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december|morning|afternoon|evening|night|noon|midday|asap|earliest|soonest|earlier|later|o'?clock)\b|\b\d{1,2}\s?(am|pm)\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}(st|nd|rd|th)\b|\b\d{1,2}[/-]\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b|\bat \d{1,2}\b/i;
 
   static URGENCY_KEYWORDS = /\b(asap|as soon as possible|immediately|earliest|soonest|urgently|quickest)\b/i;
   static DAY_NUMBER_REGEX = /\b(\d{1,2})(?:st|nd|rd|th)\b/i;
@@ -72,26 +80,28 @@ class DateTimeService {
    * @returns {Promise<Object>} Extracted date/time information
    */
   static async extractDateTimeFromMessage(message) {
-    console.log(`🔍 Extracting date/time from: "${message}"`);
-
     if (!this.isValidInput(message)) {
-      console.log("❌ Invalid message input");
       return this.getDefaultResult();
     }
 
     try {
-      // Try local extraction first for simple cases
+      // Most messages ("hi", "yes", a postcode, a lesson type) mention no date or
+      // time at all, so skip the AI call for them.
+      if (!this.DATE_TIME_CUE.test(message)) {
+        return this.getDefaultResult();
+      }
+
+      // Common, unambiguous phrasings are parsed locally (no AI call)
       const localResult = this.fallbackExtraction(message);
       if (this.isHighConfidenceResult(localResult)) {
-        console.log("✅ Using local extraction (high confidence)");
+        logger.info(`DateTime extracted locally: date=${localResult.date}, time=${localResult.time}`);
         return localResult;
       }
 
       // Use Gemini for complex cases
       return await this.extractWithGemini(message);
     } catch (error) {
-      console.error("❌ Error with date/time extraction:", error.message);
-      console.error("Stack trace:", error.stack);
+      logger.error(`DateTime extraction error: ${error.message}`);
       return this.fallbackExtraction(message);
     }
   }
@@ -103,16 +113,15 @@ class DateTimeService {
    * @returns {Promise<Object>} Extracted date/time information
    */
   static async extractWithGemini(message, retryCount = 0) {
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 1;
     
     if (!model) {
-      console.log("❌ Gemini model not available, using fallback");
+      logger.warn("Gemini model not available, using fallback");
       return this.fallbackExtraction(message);
     }
 
     try {
       const prompt = this.buildGeminiPrompt(message);
-      console.log("🤖 Sending to Gemini for datetime extraction with JSON schema");
 
       // Use Gemini's JSON mode with schema
       const result = await model.generateContent({
@@ -125,11 +134,9 @@ class DateTimeService {
       });
       
       if (!this.isValidGeminiResponse(result)) {
-        console.log("❌ Invalid Gemini response");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await this.delay(1000);
+          logger.warn(`DateTime Gemini: invalid response, retrying (${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(200);
           return this.extractWithGemini(message, retryCount + 1);
         }
         
@@ -137,16 +144,13 @@ class DateTimeService {
       }
 
       const content = result.response.text();
-      console.log("🤖 Gemini raw response:", content.trim());
 
       const parsed = this.parseGeminiResponse(content);
       
       if (!parsed) {
-        console.log("⚠️ Failed to parse Gemini response");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await this.delay(1000);
+          logger.warn(`DateTime Gemini: parse failed, retrying (${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(200);
           return this.extractWithGemini(message, retryCount + 1);
         }
         
@@ -154,26 +158,29 @@ class DateTimeService {
       }
       
       if (!this.validateExtractedData(parsed)) {
-        console.log("⚠️ Gemini response failed validation");
-        
         if (retryCount < MAX_RETRIES) {
-          console.log(`🔄 Retrying... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await this.delay(1000);
+          logger.warn(`DateTime Gemini: validation failed, retrying (${retryCount + 1}/${MAX_RETRIES})`);
+          await this.delay(200);
           return this.extractWithGemini(message, retryCount + 1);
         }
         
         return this.fallbackExtraction(message);
       }
 
-      console.log("✅ Gemini extracted and validated:", parsed);
+      logger.info(`DateTime extracted: date=${parsed.date}, time=${parsed.time}, confidence=${parsed.confidence}`);
       return this.normalizeResult(parsed);
       
     } catch (error) {
-      console.error("❌ Error in Gemini extraction:", error.message);
+      logger.error(`DateTime Gemini extraction error: ${error.message}`);
+
+      if (isRetiredModel(error) && mainModel && model !== mainModel) {
+        logger.warn("DateTime: fast model unavailable; using the main model from now on (set GEMINI_FAST_MODEL to fix)");
+        model = mainModel;
+        return this.extractWithGemini(message, retryCount);
+      }
       
       if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 Retrying after error... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-        await this.delay(1000);
+        await this.delay(200);
         return this.extractWithGemini(message, retryCount + 1);
       }
       
@@ -190,8 +197,6 @@ class DateTimeService {
     const context = this.getDateTimeContext();
     const dateHint = this.generateDateHint(message, context.today);
     
-    console.log(`💡 Generated Hint: "${dateHint}"`);
-
     return `You are a date/time parsing assistant. Extract date and time from the message below.
 
 Current Context:
@@ -225,7 +230,7 @@ Extract the date and time information according to these rules.`;
       currentTime: timezoneUtils.getCurrentTimeString(),
       tomorrowStr: timezoneUtils.getTomorrowDateString(),
       currentDay: timezoneUtils.getCurrentDay(),
-      currentTimezone: process.env.APP_TIMEZONE || "Asia/Kolkata",
+      currentTimezone: process.env.APP_TIMEZONE || "Europe/London",
     };
   }
 
@@ -239,7 +244,6 @@ Extract the date and time information according to these rules.`;
     // Check for urgency keywords first
     const urgencyMatch = message.match(this.URGENCY_KEYWORDS);
     if (urgencyMatch) {
-      console.log("Urgency match:", urgencyMatch);
       return `Hint: The user wants the earliest possible date/time ("${urgencyMatch[1]}"). The system handles this automatically. DO NOT RETURN ANY specific date or time. Instead, set "hasDateTime" to false and "confidence" to "medium".`;
     }
 
@@ -278,7 +282,6 @@ Extract the date and time information according to these rules.`;
   static parseGeminiResponse(content) {
     try {
       if (!content || typeof content !== 'string') {
-        console.error("❌ Invalid content type");
         return null;
       }
 
@@ -288,14 +291,13 @@ Extract the date and time information according to these rules.`;
       
       // Verify we got the expected structure
       if (!this.hasRequiredJsonStructure(parsed)) {
-        console.error("❌ Parsed JSON missing required fields");
+        logger.warn("DateTime: parsed JSON missing required fields");
         return null;
       }
 
       return parsed;
     } catch (error) {
-      console.error("❌ Error parsing Gemini JSON:", error.message);
-      console.error("Raw content:", content);
+      logger.error(`DateTime JSON parse error: ${error.message}`);
       return null;
     }
   }
@@ -321,7 +323,6 @@ Extract the date and time information according to these rules.`;
    */
   static validateExtractedData(data) {
     if (!data || typeof data !== "object") {
-      console.log("❌ Data is not an object");
       return false;
     }
 
@@ -337,12 +338,9 @@ Extract the date and time information according to these rules.`;
 
     for (const prop of requiredProps) {
       if (!(prop in data)) {
-        console.log(`❌ Missing property: ${prop}`);
-        
         // Try to provide defaults for missing properties
         if (this.canProvideDefault(prop, data)) {
           data[prop] = this.getDefaultForProperty(prop);
-          console.log(`✓ Provided default for ${prop}: ${data[prop]}`);
         } else {
           return false;
         }
@@ -383,13 +381,9 @@ Extract the date and time information according to these rules.`;
 
     for (const validation of validations) {
       if (!validation.check) {
-        console.log(`❌ ${validation.msg}`);
-        
-        // Try to fix if possible
         if (validation.fix) {
           try {
             validation.fix();
-            console.log(`✓ Auto-fixed: ${validation.msg}`);
           } catch (e) {
             return false;
           }
@@ -488,17 +482,79 @@ Extract the date and time information according to these rules.`;
    * @returns {Object} Extraction result
    */
   static fallbackExtraction(message) {
-    console.log("🔄 Using fallback extraction");
-    
     if (!this.isValidInput(message)) {
       return this.getDefaultResult();
     }
 
-    // TODO: Implement sophisticated local extraction logic
-    // This could include regex patterns for common date/time formats
-    // For now, returning default result
-    
-    return this.getDefaultResult();
+    const text = message.toLowerCase().replace(/\s+/g, " ").trim();
+    let rest = text;
+    const take = (re) => {
+      const m = rest.match(re);
+      if (m) rest = rest.replace(m[0], " ");
+      return m;
+    };
+
+    const today = timezoneUtils.getCurrentDateString();
+    let date = null;
+    let time = null;
+
+    // ── Date ──
+    let m;
+    if ((m = take(/\b(\d{4})-(\d{2})-(\d{2})\b/))) {
+      date = `${m[1]}-${m[2]}-${m[3]}`;
+    } else if (take(/\bday after tomorrow\b/)) {
+      date = timezoneUtils.addDays(today, 2);
+    } else if (take(/\b(today|tonight)\b/)) {
+      date = today;
+    } else if (take(/\b(tomorrow|tmrw|tmr)\b/)) {
+      date = timezoneUtils.addDays(today, 1);
+    } else if ((m = take(/\b(?:(?:this|on)\s+)?(mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?\b/))) {
+      // "next Friday" is ambiguous in the UK; leave it (and same-day names) to the AI
+      if (/\bnext\s*$/.test(text.slice(0, text.indexOf(m[0].trim())))) return this.getDefaultResult();
+      const target = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(m[1].slice(0, 3));
+      const now = Number(timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), "d"));
+      const ahead = (target - now + 7) % 7;
+      if (ahead === 0) return this.getDefaultResult();
+      date = timezoneUtils.addDays(today, ahead);
+    } else if ((m = take(/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b(?:\s+(\d{4}))?/))
+      || (m = take(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?/))) {
+      const [day, mon] = /^\d/.test(m[1]) ? [m[1], m[2]] : [m[2], m[1]];
+      const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(mon.slice(0, 3)) + 1;
+      let year = m[3] ? Number(m[3]) : Number(today.slice(0, 4));
+      const pad = (n) => String(n).padStart(2, "0");
+      let candidate = `${year}-${pad(month)}-${pad(day)}`;
+      if (!m[3] && candidate < today) candidate = `${year + 1}-${pad(month)}-${pad(day)}`;
+      if (Number(day) < 1 || Number(day) > 31) return this.getDefaultResult();
+      date = candidate;
+    }
+
+    // ── Time ──
+    if ((m = take(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/))) {
+      let h = Number(m[1]);
+      if (h < 1 || h > 12) return this.getDefaultResult();
+      if (m[3] === "pm" && h !== 12) h += 12;
+      if (m[3] === "am" && h === 12) h = 0;
+      time = `${String(h).padStart(2, "0")}:${m[2] || "00"}`;
+    } else if ((m = take(/\b([01]?\d|2[0-3]):([0-5]\d)\b/))) {
+      time = `${m[1].padStart(2, "0")}:${m[2]}`;
+    } else if (take(/\b(noon|midday)\b/)) {
+      time = "12:00";
+    }
+
+    // Anything date-ish we didn't understand ("next week", "afternoon", "the 21st",
+    // "at 10") means the message needs the AI.
+    if ((!date && !time) || this.DATE_TIME_CUE.test(rest)) {
+      return this.getDefaultResult();
+    }
+
+    return {
+      hasDateTime: true,
+      date,
+      time,
+      confidence: this.CONFIDENCE_LEVELS.HIGH,
+      explicitDate: !!date,
+      explicitTime: !!time,
+    };
   }
 
   /**

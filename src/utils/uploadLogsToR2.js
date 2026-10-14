@@ -70,16 +70,23 @@ async function uploadContentToR2(content, key) {
     );
 }
 
+// Last uploaded modification time per file, so unchanged logs aren't re-sent every run
+const uploadedAt = new Map();
+const NETWORK_ERRORS = new Set(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "EHOSTUNREACH"]);
+
+function errorCode(err) {
+    return err?.code || err?.errors?.[0]?.code || err?.name || "unknown";
+}
+
 /**
  * Upload logs folder
  */
 async function uploadLogsFolder() {
-    console.log("Starting logs upload to R2...");
+    if (!bucketName || !process.env.R2_ENDPOINT) return;
 
     const baseFolder = path.join(PROJECT_ROOT, "message-logs");
 
     if (!fs.existsSync(baseFolder)) {
-        console.log("No logs folder found.");
         return;
     }
 
@@ -94,8 +101,10 @@ async function uploadLogsFolder() {
 
         for (const file of files) {
             const localFilePath = path.join(datePath, file);
+            const stat = fs.statSync(localFilePath);
 
-            if (!fs.statSync(localFilePath).isFile()) continue;
+            if (!stat.isFile()) continue;
+            if (uploadedAt.get(localFilePath) === stat.mtimeMs) continue;
 
             const r2Key = `${process.env.R2_DIRECTORY}/logs/${date}/${file}`;
 
@@ -103,15 +112,18 @@ async function uploadLogsFolder() {
                 const content = fs.readFileSync(localFilePath, "utf8");
 
                 await uploadContentToR2(content, r2Key);
-
-                // console.log(`Uploaded: ${r2Key}`);
+                uploadedAt.set(localFilePath, stat.mtimeMs);
             } catch (err) {
-                console.error(`R2 upload failed for ${r2Key}:`, err);
+                const code = errorCode(err);
+                if (NETWORK_ERRORS.has(code)) {
+                    // Can't reach R2 at all; the rest would fail too. Try again next run.
+                    console.error(`R2 log upload skipped: can't reach R2 (${code}). Will retry next run.`);
+                    return;
+                }
+                console.error(`R2 upload failed for ${r2Key}: ${code} ${err?.message || ""}`.trim());
             }
         }
     }
-
-    console.log("Logs upload process completed.");
 }
 
 module.exports = uploadLogsFolder;

@@ -17,16 +17,16 @@ console.log("NODE_ENV:", process.env.NODE_ENV);
 const env = process.env.NODE_ENV || "uat";
 let envFile = path.join(PROJECT_ROOT, `.env`);
 
-if(env === "development") {
-  console.log("Loading development environment variables...");
-  envFile = path.join(PROJECT_ROOT, `envs/.env.${process.env.LOAD_ENV || 'development'}`);
+if(env === "development" || env === "test") {
+  console.log(`Loading ${env} environment variables...`);
+  envFile = path.join(PROJECT_ROOT, `envs/.env.${process.env.LOAD_ENV || env}`);
 }
 
 console.log("Loading environment from:", envFile);
 
 if (fs.existsSync(envFile)) {
   dotenv.config({ path: envFile, override: true });
-} else if(env === "development") {
+} else if(env === "development" || env === "test") {
   console.warn(`⚠️ No env file found for ${env}`);
 }
 

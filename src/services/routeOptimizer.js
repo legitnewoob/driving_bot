@@ -1,149 +1,535 @@
-const dotenv = require("dotenv");
 const haversine = require("../utils/haversine.js");
 const Booking = require("../models/bookingModel.js");
 const User = require("../models/userModel.js");
+const logger = require("../utils/logger-advanced.js");
+const timezoneUtils = require("../utils/timezoneUtils");
+const { getDrivingMatrix } = require("./distanceMatrixService.js");
+const settings = require("./instructorSettings");
 
-dotenv.config();
+// Rough conversion used when the Routes API has no answer: 1 km ≈ 2 min urban driving.
+const KM_TO_MIN_FACTOR = 2;
+const ADJACENT_GAP_MIN = 15;
+const FALLBACK_OFFER_COUNT = 3;
+const ACTIVE_STATUSES = ["confirmed", "rescheduled"];
+const KM_PER_MILE = 1.609344;
+const UK_POSTCODE = /^([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}$/i;
+
+function pointKey(p) {
+  return `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
+}
+
+function uniquePoints(points) {
+  const seen = new Map();
+  for (const p of points) if (p && !seen.has(pointKey(p))) seen.set(pointKey(p), p);
+  return [...seen.values()];
+}
 
 class RouteOptimizer {
-  constructor() {
-    this.LATITUDE_DEFAULT =
-      parseFloat(process.env.LATITUDE_DEFAULT) || 53.0168046;
-    this.LONGITUDE_DEFAULT =
-      parseFloat(process.env.LONGITUDE_DEFAULT) || -2.2190649;
-    
-    // 🗺️ Distance zones (in km)
-    this.ZONES = [
-      { name: "CLOSE", maxDistance: 5, timeRange: { start: "09:00", end: "11:59" } },
-      { name: "MID", maxDistance: 10, timeRange: { start: "12:00", end: "14:59" } },
-      { name: "FAR", maxDistance: 15, timeRange: { start: "15:00", end: "17:59" } },
-      { name: "VERY_FAR", maxDistance: Infinity, timeRange: { start: "18:00", end: "23:59" } }
-    ];
-  }
-
-  /**
-   * Converts time string to minutes for comparison
-   * @param {string} time - Time in format "HH:MM"
-   * @returns {number} Minutes since midnight
-   */
   timeToMinutes(time) {
     const [hours, minutes] = time.split(":").map(Number);
     return hours * 60 + minutes;
   }
 
-  /**
-   * Checks if a time falls within a time range
-   * @param {string} time - Time to check
-   * @param {object} timeRange - Object with start and end times
-   * @returns {boolean}
-   */
-  isTimeInRange(time, timeRange) {
-    const timeMinutes = this.timeToMinutes(time);
-    const startMinutes = this.timeToMinutes(timeRange.start);
-    const endMinutes = this.timeToMinutes(timeRange.end);
-    return timeMinutes >= startMinutes && timeMinutes <= endMinutes;
+  _isValidLoc(loc) {
+    return (
+      loc &&
+      typeof loc.latitude === "number" &&
+      !isNaN(loc.latitude) &&
+      typeof loc.longitude === "number" &&
+      !isNaN(loc.longitude)
+    );
+  }
+
+  _pickLoc(...candidates) {
+    for (const c of candidates) {
+      if (this._isValidLoc(c)) return c;
+    }
+    return null;
+  }
+
+  hasValidLocation(booking) {
+    return (
+      this._isValidLoc(booking.pickupLocation) ||
+      this._isValidLoc(booking.dropoffLocation) ||
+      this._isValidLoc(booking.location)
+    );
+  }
+
+  _toPoint(loc) {
+    if (!loc) return null;
+    if (this._isValidLoc(loc)) return { lat: loc.latitude, lng: loc.longitude };
+    const lat = loc.lat;
+    const lng = loc.lng ?? loc.long;
+    if (typeof lat === "number" && typeof lng === "number" && !isNaN(lat) && !isNaN(lng)) {
+      return { lat, lng };
+    }
+    return null;
+  }
+
+  homePoint(instructor) {
+    return this._toPoint(instructor?.baseLocation);
   }
 
   /**
-   * Determines which zone a user belongs to based on their distance
-   * @param {number} distance - Distance in km
-   * @returns {object} Zone object
+   * The instructor's day as time-ordered stops. Each stop starts at its pickup
+   * (or drop-off / legacy location) and ends at its drop-off (or pickup / legacy).
+   * Stops with no usable location still block their time but count as zero travel.
    */
-  getUserZone(distance) {
-    return this.ZONES.find(zone => distance <= zone.maxDistance);
+  buildDayPlan(bookings, route) {
+    return bookings
+      .filter((b) => typeof b.time === "string")
+      .map((b) => {
+        const startAt = this.timeToMinutes(b.time);
+        return {
+          label: b.time,
+          startAt,
+          endAt: startAt + route.lessonDurationMin,
+          startLoc: this._toPoint(this._pickLoc(b.pickupLocation, b.dropoffLocation, b.location)),
+          endLoc: this._toPoint(this._pickLoc(b.dropoffLocation, b.pickupLocation, b.location)),
+        };
+      })
+      .sort((a, b) => a.startAt - b.startAt);
   }
 
-  async filterAvailableSlotsByLocation(
-    availableSlotsForDate,
-    dateRequested,
-    instructorId,
-    userPhone
-  ) {
+  /**
+   * Returns travel(a, b) in minutes. One Routes matrix covers every leg a slot
+   * evaluation can need: into the learner, out of the learner, and the existing
+   * stop-to-stop legs. Missing elements fall back to straight-line estimates.
+   */
+  async buildTravel(plan, userPt, homePt, departureTime = null) {
+    const origins = uniquePoints([userPt, homePt, ...plan.map((s) => s.endLoc)]);
+    const destinations = uniquePoints([userPt, homePt, ...plan.map((s) => s.startLoc)]);
+
+    let matrix = null;
     try {
-      // 🧍 Get user info
-      const user = await User.findOne({ phone: userPhone });
-      if (!user?.location?.latitude || !user?.location?.longitude) {
-        console.warn(`⚠️ User location not found for ${userPhone}, returning all slots.`);
+      matrix = await getDrivingMatrix(origins, destinations, departureTime);
+    } catch (err) {
+      logger.warn(`Routes matrix unavailable, using straight-line estimates: ${err.message}`);
+    }
+
+    const oIdx = new Map(origins.map((p, i) => [pointKey(p), i]));
+    const dIdx = new Map(destinations.map((p, i) => [pointKey(p), i]));
+
+    return (a, b) => {
+      if (!a || !b) return 0;
+      if (pointKey(a) === pointKey(b)) return 0;
+      const i = oIdx.get(pointKey(a));
+      const j = dIdx.get(pointKey(b));
+      const api = matrix && i !== undefined && j !== undefined ? matrix[i]?.[j] : null;
+      if (api !== null && api !== undefined) return api;
+      return haversine(a.lat, a.lng, b.lat, b.lng) * KM_TO_MIN_FACTOR;
+    };
+  }
+
+  _isStranded(slotStart, slotEnd, before, after, direct, grace) {
+    if (before.home || after.home) return false;
+    const slack = slotStart - before.at + grace + (after.at - slotEnd + grace);
+    return direct > slack;
+  }
+
+  /**
+   * Scores one candidate slot by the driving it adds to the day
+   * (cheapest insertion), whether the instructor can make it on time,
+   * and how many other free slots it would leave unbookable.
+   * Lower score is better.
+   */
+  scoreSlot(slot, plan, userPt, homePt, route, travel, freeSlots = []) {
+    const duration = route.lessonDurationMin;
+    const grace = route.travelGraceMin;
+    const s = this.timeToMinutes(slot);
+    const e = s + duration;
+
+    const clash = plan.find((p) => s < p.endAt && e > p.startAt);
+    if (clash) {
+      return { slot, feasible: false, addedDrive: null, score: Infinity, reason: `overlaps your ${clash.label} lesson` };
+    }
+
+    let prev = null;
+    let next = null;
+    for (const p of plan) {
+      if (p.endAt <= s) prev = p;
+      if (p.startAt >= e && !next) next = p;
+    }
+
+    const before = prev
+      ? { loc: prev.endLoc, at: prev.endAt, home: false, label: prev.label }
+      : { loc: homePt, at: -Infinity, home: true };
+    const after = next
+      ? { loc: next.startLoc, at: next.startAt, home: false, label: next.label }
+      : { loc: homePt, at: Infinity, home: true };
+
+    const hw = route.homeLegWeight;
+    const weight = (stop) => (stop.home ? hw : 1);
+    const travelIn = travel(before.loc, userPt);
+    const travelOut = travel(userPt, after.loc);
+    const direct = travel(before.loc, after.loc);
+    const directWeight = before.home || after.home ? hw : 1;
+    const addedDrive = Math.max(
+      0,
+      weight(before) * travelIn + weight(after) * travelOut - directWeight * direct
+    );
+
+    const arriveOk = before.home || before.at + travelIn <= s + grace;
+    const leaveOk = after.home || e + travelOut <= after.at + grace;
+
+    if (!arriveOk || !leaveOk) {
+      const reason = !arriveOk
+        ? `can't get there in time after your ${before.label} lesson (${Math.round(travelIn)} min drive)`
+        : `couldn't reach your ${after.label} lesson in time afterwards (${Math.round(travelOut)} min drive)`;
+      return { slot, feasible: false, addedDrive, travelIn, travelOut, score: Infinity, reason };
+    }
+
+    let newlyStranded = 0;
+    if (route.fragmentationPenaltyMin > 0) {
+      const lo = prev ? prev.endAt : -Infinity;
+      const hi = next ? next.startAt : Infinity;
+      const userStop = { loc: userPt, home: false };
+      for (const free of freeSlots) {
+        if (free === slot) continue;
+        const fs = this.timeToMinutes(free);
+        const fe = fs + duration;
+        if (fs < lo || fe > hi || (fs < e && fe > s)) continue;
+        const wasStranded = this._isStranded(fs, fe, before, after, direct, grace);
+        const isStranded = fs < s
+          ? this._isStranded(fs, fe, before, { ...userStop, at: s }, travelIn, grace)
+          : this._isStranded(fs, fe, { ...userStop, at: e }, after, travelOut, grace);
+        if (isStranded && !wasStranded) newlyStranded++;
+      }
+    }
+
+    const adjacent = !!(
+      (prev && s - prev.endAt <= ADJACENT_GAP_MIN) ||
+      (next && next.startAt - e <= ADJACENT_GAP_MIN)
+    );
+
+    const score =
+      addedDrive +
+      route.fragmentationPenaltyMin * newlyStranded -
+      (adjacent ? route.adjacencyBonusMin : 0);
+
+    const mins = Math.round(addedDrive);
+    let reason;
+    if (prev && next) reason = `+${mins} min drive, between your ${prev.label} and ${next.label} lessons`;
+    else if (prev) reason = `+${mins} min drive, after your ${prev.label} lesson`;
+    else if (next) reason = `+${mins} min drive, before your ${next.label} lesson`;
+    else reason = homePt ? `+${mins} min drive from home` : "no other lessons that day";
+    if (newlyStranded > 0) {
+      reason += `; leaves ${newlyStranded} free slot${newlyStranded > 1 ? "s" : ""} hard to fill`;
+    }
+
+    return { slot, feasible: true, addedDrive, travelIn, travelOut, newlyStranded, adjacent, score, reason };
+  }
+
+  /**
+   * Scores every slot for a day, best first. Infeasible slots sort last.
+   * @param {string[]} availableSlots
+   * @param {object[]} bookings - confirmed bookings that day
+   * @param {{lat:number, long:number}} userLocation
+   * @param {{lat:number, long:number}|null} instructorBase
+   * @param {object} route - resolved route settings
+   */
+  async scoreSlots(availableSlots, bookings, userLocation, instructorBase, route, departureTime = null) {
+    const userPt = this._toPoint(userLocation);
+    const homePt = this._toPoint(instructorBase);
+    const plan = this.buildDayPlan(bookings, route);
+    const travel = await this.buildTravel(plan, userPt, homePt, departureTime);
+
+    return availableSlots
+      .map((slot) => this.scoreSlot(slot, plan, userPt, homePt, route, travel, availableSlots))
+      .sort((a, b) => {
+        if (a.feasible !== b.feasible) return a.feasible ? -1 : 1;
+        return a.score - b.score;
+      });
+  }
+
+  _chronological(slots) {
+    return [...slots].sort((a, b) => this.timeToMinutes(a) - this.timeToMinutes(b));
+  }
+
+  // Slots whose lesson would overlap a lesson already booked in the database.
+  // Calendar checks alone miss lessons that have no calendar event.
+  _bookedSlots(slots, bookings, lessonMin) {
+    const timed = bookings.filter((b) => typeof b.time === "string" && /^\d{1,2}:\d{2}$/.test(b.time));
+    return slots.filter((slot) => {
+      const start = this.timeToMinutes(slot);
+      return timed.some((b) => {
+        const other = this.timeToMinutes(b.time);
+        return start < other + lessonMin && other < start + lessonMin;
+      });
+    });
+  }
+
+  _applyLearnerTimeRules(slots, date, prefs) {
+    const unavailable = prefs?.unavailable || [];
+    if (!unavailable.length) return slots;
+    const day = Number(timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(date, "12:00"), "d"));
+    return slots.filter((slot) => {
+      const m = this.timeToMinutes(slot);
+      return !unavailable.some(
+        (u) =>
+          (!u.days?.length || u.days.includes(day)) &&
+          u.from && u.to &&
+          m >= this.timeToMinutes(u.from) &&
+          m < this.timeToMinutes(u.to)
+      );
+    });
+  }
+
+  _preferredSlots(slots, date, prefs) {
+    const times = prefs?.preferredTimes || [];
+    const days = prefs?.preferredDays || [];
+    if (!times.length && !days.length) return [];
+    const day = Number(timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(date, "12:00"), "d"));
+    if (days.length && !days.includes(day)) return [];
+    return times.length ? slots.filter((s) => times.includes(s)) : [...slots];
+  }
+
+  async _weeklyLimitReached(date, instructorId, userPhone, prefs) {
+    const cap = prefs?.maxLessonsPerWeek;
+    if (!cap || !userPhone) return false;
+    const day = Number(timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(date, "12:00"), "d"));
+    const monday = timezoneUtils.addDays(date, -((day + 6) % 7));
+    const sunday = timezoneUtils.addDays(monday, 6);
+    const count = await Booking.countDocuments({
+      userPhone,
+      instructorId,
+      status: { $in: ACTIVE_STATUSES },
+      date: { $gte: monday, $lte: sunday },
+    });
+    return count >= cap;
+  }
+
+  /**
+   * Everything the bot needs to know about one date for one learner:
+   * which slots to offer (chronological), the scored evaluations, the
+   * learner's preferred slots, and a reason if the day is closed to them.
+   */
+  async planDay({ date, instructor, availableSlots, userLoc = null, prefs = {}, userPhone = null }) {
+    const route = settings.resolveRouteSettings(instructor);
+    const bot = settings.resolveBotSettings(instructor);
+    const instructorId = instructor?.phoneNumberId;
+    const empty = { offered: [], evaluations: [], preferred: [] };
+
+    if (!availableSlots?.length) return empty;
+
+    const bookings = await Booking.find({
+      date,
+      instructorId,
+      status: { $in: ACTIVE_STATUSES },
+    });
+
+    if (bot.maxLessonsPerDay && bookings.length >= bot.maxLessonsPerDay) {
+      return { ...empty, blockedReason: "day_full" };
+    }
+    if (await this._weeklyLimitReached(date, instructorId, userPhone, prefs)) {
+      return { ...empty, blockedReason: "weekly_limit" };
+    }
+
+    const booked = this._bookedSlots(availableSlots, bookings, route.lessonDurationMin);
+    const slots = this._applyLearnerTimeRules(availableSlots, date, prefs).filter((s) => !booked.includes(s));
+    const userPt = this._toPoint(userLoc);
+
+    if (!route.enabled || !userPt || !slots.length) {
+      const offered = this._chronological(slots);
+      return { offered, evaluations: [], preferred: this._preferredSlots(offered, date, prefs), booked };
+    }
+
+    const homePt = this.homePoint(instructor);
+    if (!homePt) {
+      logger.warn(`Route optimiser: instructor ${instructorId} has no base location; home legs ignored`);
+    }
+
+    const departure = timezoneUtils.createDateInTimezone(date, this._chronological(slots)[0]);
+    const evaluations = await this.scoreSlots(
+      slots,
+      bookings,
+      { lat: userPt.lat, long: userPt.lng },
+      homePt ? { lat: homePt.lat, long: homePt.lng } : null,
+      route,
+      departure
+    );
+
+    const maxAdded = prefs?.priority
+      ? Infinity
+      : (prefs?.maxAddedDriveMin ?? route.maxAddedDriveMin);
+    const feasible = evaluations.filter((e) => e.feasible);
+    const within = feasible.filter((e) => e.addedDrive <= maxAdded);
+    const chosen = within.length ? within : feasible.slice(0, FALLBACK_OFFER_COUNT);
+    const offered = this._chronological(chosen.map((e) => e.slot));
+
+    logger.info(
+      `Route optimiser ${date}: offered [${offered.join(", ")}]` +
+      `${within.length ? "" : feasible.length ? " (fallback: none within limit)" : " (none reachable)"}; top: ` +
+      evaluations.slice(0, 5).map((e) => `${e.slot} ${e.feasible ? e.score.toFixed(1) : "✗"} (${e.reason})`).join(" | ")
+    );
+
+    return {
+      offered,
+      evaluations,
+      preferred: this._preferredSlots(offered, date, prefs),
+      usedFallback: !within.length && feasible.length > 0,
+      booked,
+    };
+  }
+
+  /**
+   * The learner's location and scheduling preferences for this instructor.
+   * Location priority: explicit override (pickup given in this conversation)
+   * → first saved place → profile postcode location.
+   */
+  async resolveUserContext(instructor, userPhone, override = null) {
+    const instructorId = instructor?.phoneNumberId;
+    const user = await User.findOne({ phone: userPhone, ...(instructorId && { instructorId }) });
+    const prefs = plainPrefs(user?.schedulingPrefs);
+
+    let userLoc = null;
+    if (override && typeof override.lat === "number" && typeof override.long === "number") {
+      userLoc = { lat: override.lat, long: override.long };
+    } else {
+      const saved = (prefs.savedPlaces || []).find((p) => typeof p.latitude === "number");
+      if (saved) userLoc = { lat: saved.latitude, long: saved.longitude };
+      else if (user?.location?.latitude && user?.location?.longitude) {
+        userLoc = { lat: user.location.latitude, long: user.location.longitude };
+      }
+    }
+
+    return { user, prefs, userLoc };
+  }
+
+  /**
+   * Back-compatible entry point: the slots to offer a learner on a date.
+   * Returns the input unchanged if anything goes wrong.
+   */
+  async filterAvailableSlotsByLocation(availableSlotsForDate, dateRequested, instructor, userPhone, userLocationOverride = null) {
+    try {
+      if (!availableSlotsForDate || availableSlotsForDate.length === 0) {
         return availableSlotsForDate;
       }
-
-      const userLocation = {
-        lat: user.location.latitude,
-        long: user.location.longitude,
-      };
-
-      // 📅 Get all EXISTING bookings for that date
-      const bookingsForDate = await Booking.find({ 
-        date: dateRequested, 
-        instructorId 
-      });
-
-      // 🏠 Instructor's home base
-      const instructorBase = {
-        lat: this.LATITUDE_DEFAULT,
-        long: this.LONGITUDE_DEFAULT,
-      };
-
-      console.log(`\n📊 Filtering slots for date: ${dateRequested}`);
-      console.log(`👤 User location: (${userLocation.lat.toFixed(4)}, ${userLocation.long.toFixed(4)})`);
-      console.log(`🏠 Instructor base: (${instructorBase.lat.toFixed(4)}, ${instructorBase.long.toFixed(4)})`);
-      console.log(`📅 Existing bookings: ${bookingsForDate.length}`);
-      console.log(`🕒 Available slots: ${availableSlotsForDate.length}\n`);
-
-      // 🗺️ Find nearest reference point (existing booking or base)
-      let referencePoint = instructorBase;
-      let minDistance = haversine(
-        userLocation.lat,
-        userLocation.long,
-        instructorBase.lat,
-        instructorBase.long
-      );
-      let referenceType = "instructor base";
-
-      // Check distance to all existing bookings
-      bookingsForDate.forEach((booking) => {
-        const distance = haversine(
-          userLocation.lat,
-          userLocation.long,
-          booking.location.latitude,
-          booking.location.longitude
-        );
-
-        if (distance < minDistance) {
-          minDistance = distance;
-          referencePoint = booking.location;
-          referenceType = `existing booking at ${booking.time}`;
-        }
-      });
-
-      console.log(`📍 User is ${minDistance.toFixed(2)}km from nearest point (${referenceType})`);
-
-      // 🎯 Determine user's zone
-      const userZone = this.getUserZone(minDistance);
-      console.log(`🗺️ User assigned to zone: ${userZone.name} (${userZone.timeRange.start}-${userZone.timeRange.end})\n`);
-
-      // 🕒 Filter slots that match the user's zone time range
-      const filteredSlots = availableSlotsForDate.filter((slotTime) => {
-        const inRange = this.isTimeInRange(slotTime, userZone.timeRange);
-        console.log(`  ${slotTime}: ${inRange ? '✅ AVAILABLE' : '❌ filtered'} (${userZone.name} zone)`);
-        return inRange;
-      });
-
-      // 📌 If no slots available in their zone, offer the LAST available slot as fallback
-      if (filteredSlots.length === 0 && availableSlotsForDate.length > 0) {
-        const lastSlot = availableSlotsForDate[availableSlotsForDate.length - 1];
-        console.log(`\n⚠️ No slots in ${userZone.name} zone - offering last slot as fallback: ${lastSlot}`);
-        filteredSlots.push(lastSlot);
+      const { prefs, userLoc } = await this.resolveUserContext(instructor, userPhone, userLocationOverride);
+      if (!userLoc) {
+        logger.warn(`User location not found for ${userPhone}, returning all slots`);
       }
-
-      console.log(`\n✅ Final result: ${filteredSlots.length} slot(s) available\n`);
-      return filteredSlots;
-      
+      const { offered } = await this.planDay({
+        date: dateRequested,
+        instructor,
+        availableSlots: availableSlotsForDate,
+        userLoc,
+        prefs,
+        userPhone,
+      });
+      return offered;
     } catch (error) {
-      console.error("❌ Error filtering available slots:", error);
-      return availableSlotsForDate; // Return unfiltered on error
+      logger.error(`Route optimiser error: ${error.message}`);
+      return availableSlotsForDate;
     }
+  }
+
+  /**
+   * Evaluates one specific slot (used when recording a booking's added drive).
+   */
+  async evaluateSlot(date, time, instructor, userLoc) {
+    const route = settings.resolveRouteSettings(instructor);
+    const userPt = this._toPoint(userLoc);
+    if (!userPt) return null;
+    const bookings = await Booking.find({
+      date,
+      instructorId: instructor?.phoneNumberId,
+      status: { $in: ACTIVE_STATUSES },
+    });
+    const homePt = this.homePoint(instructor);
+    const plan = this.buildDayPlan(bookings, route);
+    const travel = await this.buildTravel(plan, userPt, homePt, timezoneUtils.createDateInTimezone(date, time));
+    return this.scoreSlot(time, plan, userPt, homePt, route, travel, [time]);
+  }
+
+  /**
+   * The best-fitting slot on each of the next few bookable days, ordered by
+   * least added driving. Used to suggest "I'm already near you on Tuesday".
+   */
+  async suggestBestDays(instructor, { userLoc, prefs = {}, userPhone = null, excludeDate = null, limit = 3 } = {}) {
+    const route = settings.resolveRouteSettings(instructor);
+    if (!route.enabled || !route.suggestOtherDays || !this._toPoint(userLoc)) return [];
+
+    const calendarService = require("./calendarService");
+    const dates = settings
+      .upcomingBookableDates(instructor, route.lookAheadDays + 1)
+      .filter((d) => d !== excludeDate)
+      .slice(0, route.lookAheadDays);
+
+    const results = await Promise.all(
+      dates.map(async (date) => {
+        try {
+          const free = await calendarService.getAvailableTimeSlotsForDate(date, instructor);
+          const day = await this.planDay({ date, instructor, availableSlots: free, userLoc, prefs, userPhone });
+          const best = day.evaluations.find((e) => e.feasible && day.offered.includes(e.slot));
+          return best ? { date, time: best.slot, addedDrive: best.addedDrive, reason: best.reason } : null;
+        } catch (err) {
+          logger.warn(`Best-days check failed for ${date}: ${err.message}`);
+          return null;
+        }
+      })
+    );
+
+    return results
+      .filter(Boolean)
+      .sort((a, b) => a.addedDrive - b.addedDrive || a.date.localeCompare(b.date))
+      .slice(0, limit);
+  }
+
+  /**
+   * The earliest date with a slot this learner can be offered, and the
+   * best-fitting slot on that date.
+   */
+  async findEarliestOfferedSlot(instructor, userPhone) {
+    const calendarService = require("./calendarService");
+    const route = settings.resolveRouteSettings(instructor);
+    const { prefs, userLoc } = await this.resolveUserContext(instructor, userPhone);
+    const dates = settings.upcomingBookableDates(instructor, Math.max(route.lookAheadDays, 30));
+
+    for (const date of dates) {
+      const free = await calendarService.getAvailableTimeSlotsForDate(date, instructor);
+      const day = await this.planDay({ date, instructor, availableSlots: free, userLoc, prefs, userPhone });
+      if (!day.offered.length) continue;
+      const best = day.evaluations.find((e) => e.feasible && day.offered.includes(e.slot));
+      return { date, time: best ? best.slot : day.offered[0] };
+    }
+    return null;
+  }
+
+  /**
+   * Whether a learner is inside the instructor's service area. With no
+   * area configured everyone is inside.
+   */
+  checkServiceArea(instructor, userLoc, postcode = null) {
+    const { serviceArea } = settings.resolveRouteSettings(instructor);
+    const hasRadius = !!serviceArea.radiusMiles;
+    const hasDistricts = serviceArea.postcodeDistricts.length > 0;
+    if (!hasRadius && !hasDistricts) return { inside: true };
+
+    if (hasDistricts && postcode) {
+      const match = postcode.trim().match(UK_POSTCODE);
+      const district = (match ? match[1] : postcode.trim().split(/\s+/)[0]).toUpperCase();
+      if (serviceArea.postcodeDistricts.includes(district)) return { inside: true };
+    }
+
+    const home = this.homePoint(instructor);
+    const user = this._toPoint(userLoc);
+    if (hasRadius && home && user) {
+      const miles = haversine(home.lat, home.lng, user.lat, user.lng) / KM_PER_MILE;
+      if (miles <= serviceArea.radiusMiles) return { inside: true };
+      // Tell the learner in the unit the instructor set their area in
+      const away = serviceArea.unit === "km" ? miles * KM_PER_MILE : miles;
+      return { inside: false, reason: `about ${Math.round(away)} ${serviceArea.unit} away (area is ${serviceArea.radius} ${serviceArea.unit})` };
+    }
+
+    if (hasDistricts && postcode) return { inside: false, reason: "postcode is outside the instructor's area" };
+    return { inside: true };
   }
 }
 
-module.exports = RouteOptimizer;
+function plainPrefs(prefs) {
+  if (!prefs) return {};
+  return typeof prefs.toObject === "function" ? prefs.toObject() : prefs;
+}
+
+module.exports = new RouteOptimizer();

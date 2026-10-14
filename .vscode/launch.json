@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug E2E: current file",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest.cmd",
+      "args": [
+        "--config",
+        "${workspaceFolder}/jest.config.e2e.js",
+        "--runInBand",
+        "${fileBasenameNoExtension}"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest.cmd"
+      },
+      "osx": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest"
+      },
+      "linux": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest"
+      }
+    },
+    {
+      "name": "Debug E2E: all tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest.cmd",
+      "args": [
+        "--config",
+        "${workspaceFolder}/jest.config.e2e.js",
+        "--runInBand"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest.cmd"
+      },
+      "osx": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest"
+      },
+      "linux": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest"
+      }
+    }
+  ]
+}

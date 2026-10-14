@@ -3,8 +3,8 @@ const moment = require('moment-timezone');
 
 class TimezoneUtils {
   constructor() {
-    // Get timezone from environment or default to Asia/Kolkata
-    this.timezone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+    // Get timezone from environment or default to Europe/London (instructors are UK-based)
+    this.timezone = process.env.APP_TIMEZONE || 'Europe/London';
     console.log(`🌍 Using timezone: ${this.timezone}`);
   }
 

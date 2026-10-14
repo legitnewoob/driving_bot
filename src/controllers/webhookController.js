@@ -5,6 +5,7 @@ const calendarService = require("../services/calendarService");
 const { ensureUserDetails } = require("../services/userDetailsService");
 const getChatLogger = require("../utils/chatLogger");
 const getDbChatLogger = require("../utils/dbChatLogger");
+const logger = require("../utils/logger-advanced");
 
 const {
   getUserSession,
@@ -12,266 +13,600 @@ const {
   getInstructor,
 } = require("../models/instructorModel");
 const timezoneUtils = require("../utils/timezoneUtils");
+const routeOptimizer = require("../services/routeOptimizer");
+const settings = require("../services/instructorSettings");
+const sessionStore = require("../services/sessionStore");
+const notifications = require("../services/notificationService");
+const User = require("../models/userModel");
+const Booking = require("../models/bookingModel");
+const ProcessedMessage = require("../models/processedMessageModel");
+const { notifyInstructorLearnerMessage } = require("../utils/emailNotifier");
+const { runExclusive } = require("../utils/keyedQueue");
+const { to12h } = require("../utils/timeFormat");
+const { isDbReady } = require("../utils/db");
+
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
+const HISTORY_LENGTH = 10;
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const NO_INSTRUCTOR_MESSAGE =
+  "Sorry, this number isn't linked to a Donna Drive instructor, so I can't help with lessons here. " +
+  "Please contact your driving instructor directly.";
+const NO_INSTRUCTOR_REPLY_GAP_MS = 60 * 60 * 1000;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SILENT_TYPES = new Set(["reaction", "system", "ephemeral", "unknown"]);
+
+function stripEmoji(text) {
+  return text
+    .replace(EMOJI, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .join("\n");
+}
+
+function formatDay(date) {
+  return timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(date, "12:00"), "ddd D MMM");
+}
+
+/**
+ * Turns a WhatsApp message into what the bot understands:
+ * text (typed, tapped or synthesised), an optional shared location,
+ * the id of a tapped button/row, or the type of a message we can't read.
+ */
+function parseIncoming(message) {
+  switch (message.type) {
+    case "text":
+      return { text: message.text?.body || "" };
+    case "interactive": {
+      const reply = message.interactive?.button_reply || message.interactive?.list_reply;
+      return reply ? { text: reply.title, buttonId: reply.id } : {};
+    }
+    case "button":
+      return { text: message.button?.text || "", buttonId: message.button?.payload };
+    case "location": {
+      const loc = message.location || {};
+      if (typeof loc.latitude !== "number" || typeof loc.longitude !== "number") return {};
+      const label = loc.address || loc.name || `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+      return {
+        text: `📍 Shared location: ${label}`,
+        location: { lat: loc.latitude, long: loc.longitude, label },
+      };
+    }
+    default:
+      return SILENT_TYPES.has(message.type) ? {} : { unsupportedType: message.type || "unknown" };
+  }
+}
 
 class WebhookController {
-  /* ========== HELPER METHOD ========== */
+  // learner::number → when we last said "this number isn't linked"
+  _noInstructorReplies = new Map();
+  // learner::instructor → when we last said "Donna is switched off"
+  _donnaOffReplies = new Map();
 
-  clearUserConversationHistoryAndContext(from) {
-    const session = getUserSession(from);
+  /* ========== PER-MESSAGE CONTEXT ========== */
 
-    if (session.conversationHistory.length > 0) {
-      session.conversationHistory = [];
-      console.log(`🧹 Clearing conversation history for ${from}`);
-    }
+  // Everything a single message needs. Nothing is stored on the controller,
+  // so concurrent messages for different instructors can't mix.
+  _makeContext({ from, instructor, isMock, mockReplyCallback }) {
+    const bot = settings.resolveBotSettings(instructor);
+    const format = (text) => (bot.emojis ? text : stripEmoji(text));
+    const mock = (text, interactive) => {
+      if (mockReplyCallback) mockReplyCallback(text, interactive);
+      return Promise.resolve();
+    };
 
-    updateUserSession(from, session);
-    // Also clear AI service pending context
+    return {
+      from,
+      instructor,
+      instructorId: instructor.phoneNumberId,
+      bot,
+      isMock,
+      send: (text) =>
+        isMock ? mock(format(text)) : whatsappService.sendTextMessage(from, format(text), instructor),
+      sendButtons: (text, buttons) =>
+        isMock
+          ? mock(`${format(text)}\n${buttons.map((b) => `[${b.title}]`).join(" ")}`, { type: "buttons", body: format(text), buttons })
+          : whatsappService.sendButtons(from, format(text), buttons, instructor),
+      sendList: (text, buttonLabel, rows) =>
+        isMock
+          ? mock(`${format(text)}\n${rows.map((r) => `• ${r.title}`).join("\n")}`, { type: "list", body: format(text), buttonLabel, rows })
+          : whatsappService.sendList(from, format(text), buttonLabel, rows, instructor),
+    };
+  }
+
+  /* ========== CONVERSATION STATE ========== */
+
+  clearUserConversationHistoryAndContext(from, instructorId) {
+    const session = getUserSession(from, instructorId);
+    session.conversationHistory = [];
+    updateUserSession(from, session, instructorId);
     aiService.clearPendingContext(from);
   }
 
-  clearOnlyUserConversationHistory(from) {
-    const session = getUserSession(from);
+  clearOnlyUserConversationHistory(from, instructorId) {
+    const session = getUserSession(from, instructorId);
     session.conversationHistory = [];
-    updateUserSession(from, session);
+    updateUserSession(from, session, instructorId);
+  }
+
+  // The number the learner messaged isn't linked to any instructor (e.g. it's in the
+  // pool but nobody has been assigned it yet). Say so instead of going silent, at most
+  // once an hour per learner. There's no instructor token, so use the number's own
+  // token from the pool, or WHATSAPP_TOKEN as a fallback.
+  async _replyNoInstructor(from, phoneNumberId, isMock, mockReplyCallback) {
+    const key = `${from}::${phoneNumberId}`;
+    const last = this._noInstructorReplies.get(key);
+    if (last && Date.now() - last < NO_INSTRUCTOR_REPLY_GAP_MS) return;
+    this._noInstructorReplies.set(key, Date.now());
+
+    const text = NO_INSTRUCTOR_MESSAGE;
+    try {
+      if (isMock) {
+        if (mockReplyCallback) mockReplyCallback(text);
+        return;
+      }
+      let token = process.env.WHATSAPP_TOKEN || null;
+      if (isDbReady()) {
+        const PhoneNumber = require("../models/phoneNumberModel");
+        const pooled = await PhoneNumber.findOne({ phoneNumberId }).lean();
+        if (pooled?.whatsappToken) token = pooled.whatsappToken;
+      }
+      if (!token) {
+        logger.warn(`Can't tell ${from} this number isn't linked: no WhatsApp token for ${phoneNumberId}`);
+        return;
+      }
+      await whatsappService.sendTextMessage(from, text, { phoneNumberId, whatsappToken: token });
+    } catch (err) {
+      logger.warn(`Couldn't send the not-linked reply to ${from}: ${err.message}`);
+    }
+  }
+
+  async _donnaOff(ctx, messageContent, extra = {}) {
+    const { from, instructor } = ctx;
+    const key = `${from}::${ctx.instructorId}`;
+    const last = this._donnaOffReplies.get(key);
+    if (!last || Date.now() - last >= NO_INSTRUCTOR_REPLY_GAP_MS) {
+      this._donnaOffReplies.set(key, Date.now());
+      await ctx.send(
+        `Sorry, ${instructor.name || "your instructor"} isn't taking bookings through Donna right now. ` +
+        `Please contact them directly.`
+      );
+    }
+
+    if (ctx.isMock) return;
+    const user = isDbReady() ? await User.findOne({ phone: from, instructorId: ctx.instructorId }).catch(() => null) : null;
+    notifyInstructorLearnerMessage(instructor, user || { phone: from }, messageContent, { reason: "off" }).catch(() => {});
+    notifications
+      .notify(instructor, {
+        type: "paused_message",
+        message: `${user?.name || from}: "${String(messageContent).slice(0, 120)}" (Donna is switched off)`,
+        clientId: `notif-off-${from}-${extra.messageId || Date.now()}`,
+        learnerPhone: from,
+      })
+      .catch(() => {});
+  }
+
+  // Instructor may have switched off cancelling/moving through Donna
+  async _allowed(ctx, action) {
+    const ok = action === "move" ? ctx.bot.allowReschedule : ctx.bot.allowCancel;
+    if (!ok) {
+      await ctx.send(`To ${action === "move" ? "move" : "cancel"} a lesson, please contact ${ctx.instructor.name} directly.`);
+    }
+    return ok;
+  }
+
+  _remember(ctx, userText, assistantText) {
+    const session = getUserSession(ctx.from, ctx.instructorId);
+    session.conversationHistory.push(
+      { role: "user", content: userText },
+      { role: "assistant", content: assistantText }
+    );
+    session.conversationHistory = session.conversationHistory.slice(-HISTORY_LENGTH);
+    updateUserSession(ctx.from, session, ctx.instructorId);
   }
 
   /* ========== BOOKING ACTIONS ========== */
 
-  async next_available_slot(from) {
-    console.log("Let's find the next available appointment...");
-
-    const earliestSlot = await calendarService.findEarliestAvailableSlot(
-      process.env.PHONE_NUMBER_ID
-    );
-
+  async next_available_slot(ctx) {
+    logger.info("Finding next available appointment...");
+    let earliestSlot = null;
+    try {
+      earliestSlot = await routeOptimizer.findEarliestOfferedSlot(ctx.instructor, ctx.from);
+    } catch (err) {
+      logger.warn(`Route-aware earliest slot failed, using calendar only: ${err.message}`);
+    }
+    if (!earliestSlot) {
+      earliestSlot = await calendarService.findEarliestAvailableSlot(ctx.instructor);
+    }
     if (earliestSlot) {
-      // Here you can store the result or format a message for the user
-      // For example, store it in a user session:
-      // userSession.nextAvailableSlot = earliestSlot;
-      console.log(
-        `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}.`
+      logger.info(`Next available slot for ${ctx.from}: ${earliestSlot.date} at ${earliestSlot.time}`);
+      aiService.updatePendingContext(ctx.from, earliestSlot);
+      this.clearOnlyUserConversationHistory(ctx.from, ctx.instructorId);
+      await ctx.sendButtons(
+        `The next available appointment is on ${formatDay(earliestSlot.date)} at ${to12h(earliestSlot.time)}. Would you like to book it?`,
+        [
+          { id: "confirm:yes", title: "Yes, book it" },
+          { id: "confirm:no", title: "Another time" },
+        ]
       );
-      aiService.updatePendingContext(from, earliestSlot);
-      this.clearOnlyUserConversationHistory(from);
-      await whatsappService.sendTextMessage(from, `The next available appointment is on ${earliestSlot.date} at ${earliestSlot.time}. Would you like to book it?`);
     } else {
-      console.log("Sorry, no appointments are available in the near future.");
-      return "Sorry, no appointments are available in the near future. Please check back later.";
+      await ctx.send("Sorry, no appointments are available in the near future. Please check back later.");
     }
   }
 
-  async showBookings(from) {
-    const bookings = await bookingService.getBookingsByUser(from);
-    // console.log(bookings);
-    if (!bookings.length) {
-      await whatsappService.sendTextMessage(
-        from,
-        "📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬"
-      );
+  /* ========== LESSON PICKERS (tap instead of typing a booking ID) ========== */
 
-      // Clear conversation history and pending context after showing empty bookings
-      this.clearUserConversationHistoryAndContext(from);
+  async _upcomingBookings(ctx) {
+    const today = timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), "YYYY-MM-DD");
+    const bookings = await bookingService.getBookingsByUser(ctx.from, ctx.instructorId);
+    return bookings.filter((b) => b.date >= today).slice(0, 10);
+  }
+
+  _bookingRow(b, prefix) {
+    const where = b.pickupLocation?.address;
+    const description = [b.lessonTypeName, where].filter(Boolean).join(" · ");
+    return { id: `${prefix}:${b.bookingId}`, title: `${formatDay(b.date)}, ${to12h(b.time)}`, ...(description ? { description } : {}) };
+  }
+
+  // purpose: "cancel" or "move"
+  async pickBooking(ctx, purpose) {
+    const bookings = await this._upcomingBookings(ctx);
+    if (!bookings.length) {
+      await ctx.send("You don't have any upcoming lessons. Would you like to book one?");
+      return;
+    }
+    if (bookings.length === 1) {
+      return purpose === "cancel" ? this.confirmCancel(ctx, bookings[0]) : this.startMove(ctx, bookings[0]);
+    }
+    await ctx.sendList(
+      purpose === "cancel" ? "Which lesson would you like to cancel?" : "Which lesson would you like to move?",
+      "Choose a lesson",
+      bookings.map((b) => this._bookingRow(b, purpose === "cancel" ? "cancelpick" : "movepick"))
+    );
+  }
+
+  async _ownActiveBooking(ctx, bookingId) {
+    const b = await Booking.findOne({ bookingId, userPhone: ctx.from, instructorId: ctx.instructorId });
+    return b && (b.status === "confirmed" || b.status === "rescheduled") ? b : null;
+  }
+
+  // Ask before cancelling. Late cancellations go straight to the fee warning, which is its own confirmation.
+  async confirmCancel(ctx, booking) {
+    if (bookingService.isLateCancellation(booking, ctx.instructor)) {
+      return this.cancelBooking(ctx, { bookingId: booking.bookingId });
+    }
+    const question = `Cancel your lesson on ${formatDay(booking.date)} at ${to12h(booking.time)}?`;
+    await ctx.sendButtons(question, [
+      { id: `cancelyes:${booking.bookingId}`, title: "Yes, cancel it" },
+      { id: "cancelno", title: "Keep it" },
+    ]);
+    this._remember(ctx, `I want to cancel ${booking.bookingId}`, `${question}\n[ACTION:NULL]\n{}`);
+  }
+
+  // Remember which lesson is moving, then let Donna find the new time as usual.
+  async startMove(ctx, booking) {
+    const question =
+      `Moving your lesson on ${formatDay(booking.date)} at ${to12h(booking.time)} (${booking.bookingId}). ` +
+      `What day and time would suit you instead?`;
+    await ctx.send(question);
+    this._remember(
+      ctx,
+      `I want to move my lesson ${booking.bookingId} on ${booking.date} at ${booking.time}`,
+      `${question}\n[ACTION:NULL]\n{"bookingId": "${booking.bookingId}"}`
+    );
+  }
+
+  async showBookings(ctx) {
+    const bookings = await bookingService.getBookingsByUser(ctx.from, ctx.instructorId);
+    if (!bookings.length) {
+      await ctx.send("📭 *No bookings found*\n\nYou don't have any upcoming bookings.\n\n_Ready to schedule your next appointment? Just let me know!_ 💬");
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
       return;
     }
 
-    // Sort bookings by date (earliest first)
-    // const sortedBookings = bookings.sort(
-    //   (a, b) => new Date(a.date) - new Date(b.date)
-    // );
+    const now = timezoneUtils.getCurrentDate();
+
     const sortedBookings = bookings.sort(
-      (a, b) =>
-        timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
+      (a, b) => timezoneUtils.toTimezone(a.date) - timezoneUtils.toTimezone(b.date)
     );
 
-    // const now = new Date();
-    const nowStr = timezoneUtils.getCurrentDateString();
-    const now = timezoneUtils.getCurrentDate(); // actual Date object in timezone
+    const pastBookings = sortedBookings.filter(booking => {
+      const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
+      const isToday = timezoneUtils.isToday(dateStr);
+      return !isToday && timezoneUtils.toTimezone(booking.date) < now;
+    });
 
-    let message = `*🗓️ YOUR BOOKINGS* (${sortedBookings.length})\n`;
+    const upcomingBookings = sortedBookings.filter(booking => {
+      const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
+      const isToday = timezoneUtils.isToday(dateStr);
+      return isToday || timezoneUtils.toTimezone(booking.date) >= now;
+    });
+
+    let message = `*📆 YOUR BOOKINGS* (${sortedBookings.length})\n`;
     message += "━━━━━━━━━━━━━━━━━\n\n";
 
-    sortedBookings.forEach((booking, index) => {
-      const bookingId = booking.bookingId;
+    if (pastBookings.length > 0) {
+      const lastCompleted = pastBookings[pastBookings.length - 1];
+      const lastDate = timezoneUtils.formatDate(lastCompleted.date, "ddd, MMM D");
+      message += `✅ *${pastBookings.length} Completed Booking${pastBookings.length > 1 ? "s" : ""}*\n`;
+      message += `🕓 Last: ${lastDate}\n`;
+      if (upcomingBookings.length > 0) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
+      message += "\n";
+    }
+
+    upcomingBookings.forEach((booking, index) => {
       const dateStr = timezoneUtils.formatDate(booking.date, "YYYY-MM-DD");
       const isToday = timezoneUtils.isToday(dateStr);
       const isTomorrow = timezoneUtils.isTomorrow(dateStr);
-      const isPast = timezoneUtils.toTimezone(booking.date) < now && !isToday;
 
-      // Smart date formatting
       let dateDisplay;
       if (isToday) {
         dateDisplay = "🔥 *TODAY*";
       } else if (isTomorrow) {
         dateDisplay = "⭐ *TOMORROW*";
       } else {
-        const formattedDate = timezoneUtils.formatDate(
-          booking.date,
-          "ddd, MMM D"
-        );
-        dateDisplay = isPast ? `✅ ${formattedDate}` : `📅 ${formattedDate}`;
+        dateDisplay = `📅 ${timezoneUtils.formatDate(booking.date, "ddd, MMM D")}`;
       }
 
-      // Status indicator
-      let statusIcon = isPast ? "✅" : isToday ? "🔥" : "📌";
-
-      message += `${statusIcon} *${isPast ? "Completed" : "Booking #"} ${index + 1
-        }*\n`;
-      message += `🆔 ${bookingId}\n`;
+      const statusIcon = isToday ? "🔥" : "📌";
+      message += `${statusIcon} *Booking #${index + 1}*\n`;
+      message += `🆔 ${booking.bookingId}\n`;
       message += `${dateDisplay}\n`;
-      message += `⏰ ${booking.time}\n`;
+      message += `⏰ ${to12h(booking.time)}\n`;
 
-      // Add optional details with better formatting
-      if (booking.service) message += `🎯 Service: *${booking.service}*\n`;
-      if (booking.postalCode) message += `📍 ${booking.postalCode}\n`;
+      if (booking.lessonTypeName) message += `🎯 Lesson: *${booking.lessonTypeName}*\n`;
+      if (booking.pickupLocation?.address) message += `📍 Pickup: ${booking.pickupLocation.address}\n`;
+      if (booking.dropoffLocation?.address) message += `🏁 Drop-off: ${booking.dropoffLocation.address}\n`;
       if (booking.status) {
         const statusEmoji =
-          booking.status.toLowerCase() === "confirmed"
-            ? "✅"
-            : booking.status.toLowerCase() === "pending"
-              ? "⏳"
-              : booking.status.toLowerCase() === "cancelled"
-                ? "❌"
-                : "📋";
+          booking.status.toLowerCase() === "confirmed" ? "✅" :
+            booking.status.toLowerCase() === "cancelled" ? "❌" : "📋";
         message += `${statusEmoji} Status: ${booking.status}\n`;
       }
-      if (booking.notes) message += `📝 ${booking.notes}\n`;
-
-      // Add separator between bookings (except for last one)
-      if (index < sortedBookings.length - 1) {
-        message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
-      }
+      if (index < upcomingBookings.length - 1) message += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n";
       message += "\n";
     });
 
-    // Add helpful footer
-    const upcomingCount = sortedBookings.filter(
-      (b) =>
-        timezoneUtils.toTimezone(b.date) >= now &&
-        (b.status === "confirmed" || b.status === "rescheduled")
+    const upcomingCount = upcomingBookings.filter(
+      b => b.status === "confirmed" || b.status === "rescheduled"
     ).length;
 
     if (upcomingCount > 0) {
-      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""
-        }_ ⏰\n`;
-      message += "_Need to reschedule? Just let me know!_ 💬";
+      message += `_You have ${upcomingCount} upcoming appointment${upcomingCount > 1 ? "s" : ""}_ ⏰`;
     } else {
-      message +=
-        "_All bookings completed! Ready to schedule your next appointment?_ 🚀";
+      message += "_All bookings completed! Ready to schedule your next appointment?_ 🚀";
     }
 
-    await whatsappService.sendTextMessage(from, message);
+    await ctx.send(message);
+    this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
 
-    // Clear conversation history and pending context after showing bookings
-    this.clearUserConversationHistoryAndContext(from);
+    if (upcomingCount > 0) {
+      const buttons = [
+        ...(ctx.bot.allowReschedule ? [{ id: "menu:move", title: "Move a lesson" }] : []),
+        ...(ctx.bot.allowCancel ? [{ id: "menu:cancel", title: "Cancel a lesson" }] : []),
+        { id: "menu:book", title: "Book another" },
+      ];
+      await ctx.sendButtons("What would you like to do?", buttons);
+    }
   }
 
-  async updateBooking(from, bookingData) {
-    const updated = await bookingService.rescheduleBooking(from, bookingData);
-
-    if (!updated) {
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ No booking found to update."
+  async updateBooking(ctx, bookingData) {
+    if (!bookingData?.bookingId) return this.pickBooking(ctx, "move");
+    if (!bookingData.newDate || !bookingData.newTime) {
+      const booking = await this._ownActiveBooking(ctx, bookingData.bookingId);
+      return booking ? this.startMove(ctx, booking) : this.pickBooking(ctx, "move");
+    }
+    try {
+      const updated = await bookingService.rescheduleBooking(ctx.from, bookingData, ctx.instructorId);
+      if (!updated) {
+        await ctx.send(`⚠️ No booking found with ID ${bookingData?.bookingId || "(none given)"}. Say "show my bookings" to see your lessons.`);
+        return;
+      }
+      await ctx.send(`✅ Booking ${updated.bookingId} moved to ${formatDay(bookingData.newDate)} at ${to12h(bookingData.newTime)}`);
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+    } catch (err) {
+      logger.error(`Reschedule error for ${ctx.from}: ${err.message}`);
+      await ctx.send(
+        err.userFacing
+          ? `❌ ${err.message}`
+          : "❌ Sorry, I couldn't move that lesson just now. Please try again in a minute."
       );
     }
-
-    await whatsappService.sendTextMessage(
-      from,
-      `✅ Booking updated to ${bookingData.newDate} at ${bookingData.newTime}`
-    );
-
-    // Clear conversation history and pending context after successful update
-    this.clearUserConversationHistoryAndContext(from);
   }
 
-  // controller/service layer where WhatsApp reply is sent
-  async cancelBooking(from, bookingData) {
+  async cancelBooking(ctx, bookingData) {
+    const bookingId = bookingData?.bookingId || "";
+    if (!bookingId) return this.pickBooking(ctx, "cancel");
     try {
-      console.log("HERE", bookingData);
-
-      const bookingId = bookingData?.bookingId || "";
-      if (!bookingId) {
-        return whatsappService.sendTextMessage(
-          from,
-          "⚠️ Please provide a valid booking ID to cancel."
-        );
+      const existing = await Booking.findOne({ bookingId, userPhone: ctx.from, instructorId: ctx.instructorId });
+      if (!existing || existing.status === "cancelled" || existing.status === "completed") {
+        return ctx.send(`⚠️ No booking found with ID ${bookingId}. Say "show my bookings" to see your lessons.`);
       }
 
-      const booking = await bookingService.cancelBooking(bookingId);
-
-      if (!booking) {
-        return whatsappService.sendTextMessage(
-          from,
-          `⚠️ No booking found with ID: ${bookingId}`
-        );
-      }
-
-      if (booking.status === "cancelled") {
-        await whatsappService.sendTextMessage(
-          from,
-          `✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`
-        );
-
-        // Clear conversation history and pending context after successful cancellation
-        this.clearUserConversationHistoryAndContext(from);
+      if (bookingService.isLateCancellation(existing, ctx.instructor) && !bookingData.acknowledgedLateFee) {
+        const hours = ctx.bot.cancellationNoticeHours;
+        const fee = ctx.bot.lateCancellationFee;
+        const warning =
+          `⚠️ Your lesson on ${formatDay(existing.date)} at ${to12h(existing.time)} is less than ${hours} hours away. ` +
+          (fee ? `Cancelling now may be charged £${fee}. ` : `${ctx.instructor.name} may still charge for it. `) +
+          `Do you still want to cancel ${bookingId}?`;
+        await ctx.sendButtons(warning, [
+          { id: `latecancel:yes:${bookingId}`, title: "Yes, cancel it" },
+          { id: "latecancel:no", title: "Keep my lesson" },
+        ]);
+        this._remember(ctx, `I want to cancel ${bookingId}`, `${warning}\n[ACTION:NULL]\n{}`);
         return;
       }
 
-      // fallback (should not usually happen)
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ Could not cancel the booking. Please try again later."
-      );
+      const booking = await bookingService.cancelBooking(bookingId, {
+        userPhone: ctx.from,
+        instructorId: ctx.instructorId,
+        instructor: ctx.instructor,
+      });
+      if (!booking) {
+        return ctx.send(`⚠️ No booking found with ID ${bookingId}.`);
+      }
+      await ctx.send(`✅ Your booking (ID: ${bookingId}) has been cancelled successfully.`);
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
     } catch (err) {
-      console.error("Cancel booking controller error:", err.message);
-      return whatsappService.sendTextMessage(
-        from,
-        "⚠️ Something went wrong while cancelling your booking. Please try again."
-      );
+      logger.error(`Cancel booking error: ${err.message}`);
+      return ctx.send("⚠️ Something went wrong while cancelling your booking. Please try again.");
     }
   }
 
-  async processBooking(from, bookingData) {
+  async processBooking(ctx, bookingData) {
     try {
+      logger.info(`Processing booking for ${ctx.from}: ${bookingData.date} at ${bookingData.time}`);
+      const pending = aiService.pendingContext[ctx.from];
+      if (pending?.pickupCoords && bookingData.pickupAddress && bookingData.pickupAddress === pending.pickupAddress) {
+        bookingData.pickupCoords = pending.pickupCoords;
+      }
 
-      console.log("📝 Processing booking for:", from, bookingData);
-      const booking = await bookingService.createBooking(from, bookingData);
-      console.log(booking);
-      const confirmationMessage = [
+      const result = await bookingService.createBooking(ctx.from, bookingData, ctx.instructor);
+      const lines = [
         "🎉 Booking Confirmed!",
         "",
-        `🆔 Booking ID: ${booking.booking.bookingId}`,
+        `🆔 Booking ID: ${result.booking.bookingId}`,
         "✅ Your driving lesson has been successfully booked:",
         "",
+        `👨‍🏫 Instructor: ${ctx.instructor.name}`,
+        `📅 Date: ${timezoneUtils.formatDate(
+          timezoneUtils.createDateInTimezone(bookingData.date, "12:00"),
+          "dddd, MMMM D, YYYY"
+        )}`,
+        `🕐 Time: ${to12h(bookingData.time)}`,
+      ];
+      if (result.lessonType) {
+        lines.push(`🎯 Lesson: ${result.lessonType.name} (£${result.lessonType.price})`);
+      }
+      if (bookingData.pickupAddress) {
+        lines.push(`📍 Pickup: ${bookingData.pickupAddress}`);
+      }
+      if (bookingData.dropoffAddress) {
+        lines.push(`🏁 Drop-off: ${bookingData.dropoffAddress}`);
+      }
+      lines.push("", "Good luck with your driving lesson! 🚗💨");
 
-        `👨‍🏫 Instructor: ${booking.instructor.name}`,
-        `📅 Date: ${new Date(bookingData.date).toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        })}`,
-        `🕐 Time: ${bookingData.time}`,
-        "",
-        "Good luck with your driving lesson! 🚗💨",
-      ].join("\n");
-
-      await whatsappService.sendTextMessage(from, confirmationMessage);
-
-      // Clear conversation history and pending context after successful booking
-      this.clearUserConversationHistoryAndContext(from);
+      await ctx.send(lines.join("\n"));
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
     } catch (error) {
-      console.log(error);
-      console.error("❌ Booking error:", error.message);
-
-      const errorMessage = error.message.includes("validation")
+      logger.error(`Booking error for ${ctx.from}: ${error.message}`);
+      const errorMessage = error.userFacing || error.message.includes("validation")
         ? `❌ ${error.message}`
         : "❌ Sorry, there was an error processing your booking. Please try again.";
-
-      await whatsappService.sendTextMessage(from, errorMessage);
-
-      // Don't clear context on booking errors - user might want to retry with same date/time
+      await ctx.send(errorMessage);
     }
+  }
+
+  async handover(ctx, user) {
+    if (!ctx.bot.handover) {
+      await ctx.send(`You can reach ${ctx.instructor.name} directly on their own number. I'm happy to help with bookings in the meantime!`);
+      return;
+    }
+    try {
+      if (user) {
+        await User.updateOne(
+          { phone: ctx.from, instructorId: ctx.instructorId },
+          { $set: { "schedulingPrefs.donnaPaused": true } }
+        );
+      }
+    } catch (err) {
+      logger.warn(`Couldn't pause Donna for ${ctx.from}: ${err.message}`);
+    }
+    await notifications.notify(ctx.instructor, {
+      type: "handover",
+      message: `${user?.name || ctx.from} asked to talk to you. Donna is paused for them until you turn her back on.`,
+      clientId: `notif-handover-${ctx.from}-${Date.now()}`,
+      learnerPhone: ctx.from,
+      emailSubject: `${user?.name || ctx.from} wants to talk to you`,
+    });
+    await ctx.send(`I've let ${ctx.instructor.name} know — they'll get back to you directly. 👍`);
+  }
+
+  async joinWaitlist(ctx, data) {
+    const waitlistService = require("../services/waitlistService");
+    try {
+      await waitlistService.join(ctx.instructor, ctx.from, data || {});
+      await ctx.send("👍 You're on the list. If an earlier slot opens up, I'll message you straight away.");
+    } catch (err) {
+      logger.error(`Waitlist join failed for ${ctx.from}: ${err.message}`);
+      await ctx.send("Sorry, I couldn't add you to the waiting list just now. Please try again.");
+    }
+  }
+
+  /* ========== TAPPED BUTTONS / LIST ROWS ========== */
+
+  // Returns true if the tap was fully handled here; otherwise the caller
+  // continues with `rewrite` as the message text for the AI.
+  async _handleTap(ctx, user, buttonId) {
+    const [kind, ...rest] = buttonId.split(":");
+
+    if (kind === "slot" && rest.length === 3) {
+      const [date, hh, mm] = rest;
+      const time = `${hh}:${mm}`;
+      if (DATE.test(date) && TIME.test(time)) {
+        return { handled: false, rewrite: `I'd like ${time} on ${date}` };
+      }
+    }
+
+    if (kind === "lt" && rest[0]) {
+      const LessonType = require("../models/lessonTypeModel");
+      const type = await LessonType.findOne({ _id: rest[0], instructorId: ctx.instructorId, active: true }).lean().catch(() => null);
+      if (type) return { handled: false, rewrite: `I'd like the ${type.name} lesson` };
+      return { handled: false };
+    }
+
+    if (kind === "menu") {
+      if (rest[0] === "book") return { handled: false, rewrite: "I'd like to book another lesson" };
+      if (rest[0] === "move" || rest[0] === "cancel") {
+        if (!(await this._allowed(ctx, rest[0]))) return { handled: true };
+        await this.pickBooking(ctx, rest[0]);
+        return { handled: true };
+      }
+    }
+
+    if ((kind === "cancelpick" || kind === "movepick" || kind === "cancelyes") && rest[0]) {
+      const action = kind === "movepick" ? "move" : "cancel";
+      if (!(await this._allowed(ctx, action))) return { handled: true };
+      const booking = await this._ownActiveBooking(ctx, rest[0]);
+      if (!booking) {
+        await ctx.send("That lesson isn't booked any more. Say \"my bookings\" to see what's coming up.");
+        return { handled: true };
+      }
+      if (kind === "cancelpick") await this.confirmCancel(ctx, booking);
+      else if (kind === "movepick") await this.startMove(ctx, booking);
+      else await this.cancelBooking(ctx, { bookingId: booking.bookingId });
+      return { handled: true };
+    }
+
+    if (kind === "cancelno") {
+      await ctx.send("No problem, your lesson is still booked. 👍");
+      this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+      return { handled: true };
+    }
+
+    if (kind === "latecancel") {
+      if (rest[0] === "yes" && rest[1]) {
+        await this.cancelBooking(ctx, { bookingId: rest[1], acknowledgedLateFee: true });
+      } else {
+        await ctx.send("No problem, your lesson is still booked. 👍");
+        this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+      }
+      return { handled: true };
+    }
+
+    if (kind === "rem") {
+      const reminders = require("../jobs/reminders");
+      await reminders.handleReply(ctx, rest[0], rest[1], this);
+      return { handled: true };
+    }
+
+    if (kind === "wl") {
+      const waitlistService = require("../services/waitlistService");
+      await waitlistService.handleReply(ctx, user, rest, this);
+      return { handled: true };
+    }
+
+    return { handled: false };
   }
 
   /* ========== WEBHOOK VERIFICATION ========== */
@@ -280,167 +615,303 @@ class WebhookController {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
-      console.log("Webhook verified successfully!");
+      logger.info("Webhook verified");
       return res.status(200).send(challenge);
     }
-
     res.status(403).send("Forbidden");
   }
 
   /* ========== WEBHOOK HANDLER ========== */
 
+  // Meta retries webhooks that are slow to answer, so acknowledge first and
+  // then process. Repeated message ids are skipped.
   async handleWebhook(req, res) {
+    res.status(200).send("OK");
+
+    const body = req.body;
+    if (body?.object !== "whatsapp_business_account") return;
+
+    const jobs = [];
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        if (change.field !== "messages") continue;
+        const phoneNumberId = change.value?.metadata?.phone_number_id;
+        for (const message of change.value?.messages || []) {
+          jobs.push(this._processWebhookMessage(message, phoneNumberId));
+        }
+      }
+    }
+    await Promise.all(jobs);
+  }
+
+  async _firstTimeSeen(messageId) {
+    if (!messageId || !isDbReady()) return true;
     try {
-      const body = req.body;
+      await ProcessedMessage.create({ _id: messageId });
+      return true;
+    } catch (err) {
+      if (err?.code === 11000) return false;
+      logger.warn(`Duplicate check failed for ${messageId}: ${err.message}`);
+      return true;
+    }
+  }
 
-      if (body.object === "whatsapp_business_account") {
-        for (const entry of body.entry || []) {
-          for (const change of entry.changes || []) {
-            if (change.field === "messages") {
-              for (const message of change.value.messages || []) {
-                const from = message.from;
-                const messageType = message.type;
+  async _processWebhookMessage(message, phoneNumberId) {
+    try {
+      if (!(await this._firstTimeSeen(message.id))) {
+        logger.info(`Skipping repeated WhatsApp message ${message.id}`);
+        return;
+      }
 
-                let messageContent = "";
+      const incoming = parseIncoming(message);
+      if (!incoming.text && !incoming.unsupportedType) return;
 
-                if (messageType === "text") {
-                  messageContent = message.text.body;
-                } else if (messageType === "interactive") {
-                  if (message.interactive.type === "button_reply") {
-                    messageContent = message.interactive.button_reply.title;
-                  } else if (message.interactive.type === "list_reply") {
-                    messageContent = message.interactive.list_reply.title;
-                  }
-                }
-
-                if (messageContent) {
-                  const instructor = process.env.PHONE_NUMBER_ID; 
-                  const chatLogger = getChatLogger(from);
-                  const dbChatLogger = getDbChatLogger(instructor, from);
-                  chatLogger.info(`${messageContent}`); // file system logger
-                  dbChatLogger.user(`${messageContent}`); // MongoDB logger with metadata
-                  //console.log(`📩 Incoming: ${from} → ${messageContent}`);
-                  await this.handleIncomingMessage(from, messageContent);
-                }
-              }
-            }
-          }
+      if (incoming.text) {
+        try {
+          getChatLogger(message.from).info(`${incoming.text}`);
+          getDbChatLogger(phoneNumberId, message.from).user(`${incoming.text}`);
+        } catch (logErr) {
+          logger.warn(`Chat logger skipped: ${logErr.message}`);
         }
       }
 
-      res.status(200).send("OK");
+      await this.handleIncomingMessage(message.from, incoming.text || "", phoneNumberId, false, null, {
+        messageId: message.id,
+        location: incoming.location,
+        buttonId: incoming.buttonId,
+        unsupportedType: incoming.unsupportedType,
+      });
     } catch (error) {
-      console.error("Webhook error:", error);
-      res.status(500).send("Internal Server Error");
+      logger.error(`Webhook message error: ${error.message}`);
     }
   }
 
   /* ========== MESSAGE HANDLER ========== */
 
-  async handleIncomingMessage(from, messageContent) {
+  /**
+   * Handles one learner message. Messages from the same learner are
+   * processed one at a time, in order.
+   * @param {object} extra - { messageId, location, buttonId, unsupportedType }
+   */
+  handleIncomingMessage(from, messageContent, instructorPhoneId, isMock = false, mockReplyCallback = null, extra = {}) {
+    return runExclusive(from, () =>
+      this._handleMessage(from, messageContent, instructorPhoneId, isMock, mockReplyCallback, extra)
+    );
+  }
+
+  async _handleMessage(from, messageContent, instructorPhoneId, isMock, mockReplyCallback, extra) {
+    logger.info(`Message from ${from} (instructor: ${instructorPhoneId}): "${messageContent}"`);
+
+    const instructor = await getInstructor(instructorPhoneId);
+    if (!instructor) {
+      logger.error(`No instructor found for phoneNumberId: ${instructorPhoneId}`);
+      await this._replyNoInstructor(from, instructorPhoneId, isMock, mockReplyCallback);
+      return;
+    }
+
+    const ctx = this._makeContext({ from, instructor, isMock, mockReplyCallback });
+
+    if (extra.messageId && !isMock) {
+      whatsappService.markReadAndTyping(extra.messageId, instructor).catch(() => {});
+    }
+
+    await sessionStore.load(from, ctx.instructorId);
+
     try {
-      console.log('MESSAGE CONTENT', messageContent);
-      console.log(`📱 Message from ${from}: "${messageContent}"`);
-
-      // 🧠 Step 1: Check user profile before AI flow
-      const { inProgress, user, justCompleted } = await ensureUserDetails(from, messageContent);
-      if (inProgress) {
-        console.log("⏳ Waiting for user details to be completed...");
-        // ⏸ Stop here — don't send message to Gemini yet
+      // Instructor has switched Donna off (e.g. an emergency): tell the learner to
+      // contact them directly, and pass the message on to the instructor.
+      if (!ctx.bot.donnaEnabled) {
+        await this._donnaOff(ctx, messageContent, extra);
         return;
       }
 
-      if (justCompleted) {
-
-        console.log("✅ User details just completed. Clearing context...");
-        // Now safe to clear conversation history here
-        this.clearUserConversationHistoryAndContext(from);
-
-        whatsappService.sendTextMessage(from, "🚗 How can I assist you today?");
-
+      if (extra.unsupportedType) {
+        await ctx.send("Sorry, I can only read text messages and shared locations for now. Could you type that for me? 🙂");
         return;
       }
 
-      // ✅ Step 2: Continue your existing AI-based logic
-      const session = getUserSession(from);
-      const aiResponse = await aiService.getResponse(
+      // Not taking new learners → tell new numbers and stop
+      if (!ctx.bot.acceptingNewLearners) {
+        const existing = await User.findOne({ phone: from, instructorId: ctx.instructorId });
+        if (!existing) {
+          await ctx.send(
+            `Hi! Thanks for getting in touch. ${instructor.name} isn't taking on new learners at the moment, so I can't book lessons for you right now. Please check back later.`
+          );
+          return;
+        }
+      }
+
+      // Sign-up questions before anything else
+      const { inProgress, user, justCompleted } = await ensureUserDetails(
+        from,
         messageContent,
+        (_to, text) => ctx.send(text),
+        ctx.instructorId,
+        ctx.bot.customGreeting
+      );
+      if (inProgress) return;
+      if (justCompleted) {
+        this.clearUserConversationHistoryAndContext(from, ctx.instructorId);
+        await ctx.send("🚗 How can I assist you today?");
+        return;
+      }
+
+      // Instructor has paused Donna for this learner
+      if (user?.schedulingPrefs?.donnaPaused) {
+        logger.info(`Donna paused for ${from} (instructor ${ctx.instructorId}); not replying`);
+        notifyInstructorLearnerMessage(instructor, user, messageContent).catch(() => {});
+        notifications
+          .notify(instructor, {
+            type: "paused_message",
+            message: `${user.name || from}: "${messageContent.slice(0, 120)}" (Donna is paused for them)`,
+            clientId: `notif-paused-${from}-${extra.messageId || Date.now()}`,
+            learnerPhone: from,
+          })
+          .catch(() => {});
+        return;
+      }
+
+      let text = messageContent;
+      if (extra.buttonId) {
+        const tap = await this._handleTap(ctx, user, extra.buttonId);
+        if (tap.handled) return;
+        if (tap.rewrite) text = tap.rewrite;
+      }
+
+      if (extra.location) {
+        aiService.updatePendingPickupDropoff(from, {
+          pickupAddress: extra.location.label,
+          pickupCoords: { lat: extra.location.lat, long: extra.location.long },
+        });
+      }
+
+      // AI
+      const session = getUserSession(from, ctx.instructorId);
+      const aiResponse = await aiService.getResponse(
+        text,
         session.conversationHistory,
-        from
+        from,
+        instructor,
+        user
       );
 
-      // console.log("🤖 AI Response:", aiResponse);
+      const { hasAction, actionType, bookingData, responseText } = aiService.extractActions(aiResponse);
 
-      const { hasAction, actionType, bookingData, responseText } =
-        aiService.extractActions(aiResponse);
-
-      if (responseText) {
-        await whatsappService.sendTextMessage(from, responseText);
+      // Remember a date/time Donna worked out herself (e.g. "next Wed" → 2026-10-21),
+      // so the next turn checks real availability for it.
+      if (actionType === "null" && DATE.test(bookingData?.date || "")) {
+        const today = timezoneUtils.formatDate(timezoneUtils.getCurrentDate(), "YYYY-MM-DD");
+        const pending = aiService.pendingContext[from] || {};
+        if (bookingData.date >= today && bookingData.date !== pending.date) {
+          aiService.updatePendingContext(from, {
+            date: bookingData.date,
+            time: TIME.test(bookingData.time || "") ? bookingData.time : null,
+          });
+        }
       }
 
-      // Check if an action will be performed - if so, don't update conversation history
-      // as it will be cleared after the action completes
+      // Remember pickup/drop-off from any action JSON so slot scoring can use them
+      if (bookingData?.pickupAddress || bookingData?.dropoffAddress) {
+        aiService.updatePendingPickupDropoff(from, {
+          pickupAddress: bookingData.pickupAddress,
+          dropoffAddress: bookingData.dropoffAddress,
+        });
+      }
+
+      if (responseText) {
+        await this._sendReply(ctx, responseText, bookingData);
+      }
+
       const willPerformAction =
         hasAction &&
-        ["book", "show_bookings", "update_booking", "cancel_booking"].includes(
-          actionType
-        );
+        ["book", "show_bookings", "update_booking", "cancel_booking", "handover", "waitlist"].includes(actionType);
 
       if (hasAction) {
         switch (actionType) {
           case "book":
             bookingData.userPhone = from;
-            await this.processBooking(from, bookingData);
+            await this.processBooking(ctx, bookingData);
             break;
-
           case "show_bookings":
-            await this.showBookings(from);
+            await this.showBookings(ctx);
             break;
-
           case "update_booking":
-            await this.updateBooking(from, bookingData);
+            if (!ctx.bot.allowReschedule) {
+              await ctx.send(`To move a lesson, please contact ${instructor.name} directly.`);
+              break;
+            }
+            await this.updateBooking(ctx, bookingData);
             break;
-
           case "cancel_booking":
-            await this.cancelBooking(from, bookingData);
+            if (!ctx.bot.allowCancel) {
+              await ctx.send(`To cancel a lesson, please contact ${instructor.name} directly.`);
+              break;
+            }
+            await this.cancelBooking(ctx, bookingData);
             break;
           case "next_available_slot":
-            await this.next_available_slot(from);
+            await this.next_available_slot(ctx);
+            break;
+          case "handover":
+            await this.handover(ctx, user);
+            break;
+          case "waitlist":
+            await this.joinWaitlist(ctx, bookingData);
             break;
           case "null":
-            // await whatsappService.sendTextMessage(from, "⚠️ ACTION IS NULL");
             break;
         }
       }
 
-      // Only maintain conversation history if no action was performed
-      // (actions will clear the history themselves)
       if (!willPerformAction) {
-        session.conversationHistory.push(
-          { role: "user", content: messageContent },
-          { role: "assistant", content: aiResponse }
-        );
-
-        const conversationHistoryLength = 10;
-        if (session.conversationHistory.length > conversationHistoryLength) {
-          session.conversationHistory = session.conversationHistory.slice(
-            -conversationHistoryLength
-          );
-        }
-
-        updateUserSession(from, session);
+        this._remember(ctx, text, aiResponse);
       }
     } catch (error) {
-      console.error("❌ Error handling message:", error.message);
+      logger.error("Error handling message from " + from + ": " + error.message);
+      await ctx.send("⚠️ Sorry, I'm having trouble processing your message. Please try again.");
+    } finally {
+      await sessionStore.save(from, ctx.instructorId);
+    }
+  }
 
-      await whatsappService.sendTextMessage(
-        from,
-        "⚠️ Sorry, I'm having trouble processing your message. Please try again."
+  // Sends Donna's reply, as tappable times or yes/no buttons when she asked for them.
+  async _sendReply(ctx, responseText, data) {
+    const date = data?.offerDate;
+    const times = Array.isArray(data?.offerSlots)
+      ? data.offerSlots.filter((t) => typeof t === "string" && TIME.test(t)).slice(0, 10)
+      : [];
+
+    if (times.length >= 2 && typeof date === "string" && DATE.test(date)) {
+      return ctx.sendList(
+        responseText,
+        "Choose a time",
+        times.map((t) => ({ id: `slot:${date}:${t}`, title: `${formatDay(date)}, ${to12h(t)}` }))
       );
     }
+    if (data?.offerLessonTypes === true) {
+      const types = (await aiService._lessonTypesFor(ctx.instructor)).slice(0, 10);
+      if (types.length >= 2) {
+        return ctx.sendList(
+          responseText,
+          "Choose a lesson",
+          types.map((t) => ({
+            id: `lt:${t._id}`,
+            title: t.name,
+            description: [`£${t.price}`, t.description].filter(Boolean).join(" · "),
+          }))
+        );
+      }
+    }
+    if (data?.askConfirm === true) {
+      return ctx.sendButtons(responseText, [
+        { id: "confirm:yes", title: "Yes, book it" },
+        { id: "confirm:no", title: "No, change it" },
+      ]);
+    }
+    return ctx.send(responseText);
   }
 }
 
 module.exports = new WebhookController();
+module.exports.parseIncoming = parseIncoming;

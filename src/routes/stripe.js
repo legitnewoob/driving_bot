@@ -38,6 +38,10 @@ router.post("/create-checkout-session", async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
+    if (instructor.schoolRole === "member") {
+      return res.status(400).json({ success: false, error: "Your driving school covers your subscription, so there's nothing to pay." });
+    }
+
     if (instructor.subscriptionId && ["active", "trialing"].includes(instructor.subscriptionStatus)) {
       return res.status(400).json({ success: false, error: "You already have an active subscription" });
     }

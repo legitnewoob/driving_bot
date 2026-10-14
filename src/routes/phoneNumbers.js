@@ -3,6 +3,7 @@ const router = express.Router();
 const phoneNumberService = require("../services/phoneNumberService");
 const Instructor = require("../models/instructorSchema");
 const { getSetupStatus } = require("../services/setupStatus");
+const { notifyNumberPoolEmpty } = require("../utils/emailNotifier");
 
 router.get("/my-number", async (req, res) => {
   try {
@@ -57,9 +58,11 @@ router.post("/request", async (req, res) => {
     const result = await phoneNumberService.assignNumber(instructor._id, { region });
 
     if (!result) {
+      notifyNumberPoolEmpty(instructor).catch(() => {});
       return res.status(409).json({
         success: false,
-        error: "No numbers available in your region. Please contact support.",
+        code: "NO_NUMBERS",
+        error: "We're setting up more WhatsApp numbers right now. We've been notified and will email you as soon as yours is ready.",
       });
     }
 

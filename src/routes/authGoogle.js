@@ -204,6 +204,13 @@ router.post("/verify", jwtAuth, (req, res) => {
  * GET /api/auth/me
  * JWT protected — returns current instructor profile.
  */
+// Which school (if any) this instructor owns or belongs to, for the dashboard nav
+async function schoolInfo(instructor) {
+  const school = await require("../services/schoolService").schoolFor(instructor, { create: false });
+  if (!school) return instructor.plan === "driving-school" && instructor.schoolRole !== "member" ? { role: "owner", name: null } : null;
+  return { role: String(school.ownerId) === String(instructor._id) ? "owner" : "member", name: school.name };
+}
+
 router.get("/me", jwtAuth, async (req, res) => {
   try {
     if (!req.user?.email) {
@@ -230,6 +237,7 @@ router.get("/me", jwtAuth, async (req, res) => {
         onboardingComplete: instructor.onboardingComplete,
         onboardingStatus: instructor.onboardingStatus,
         createdAt: instructor.createdAt,
+        school: await schoolInfo(instructor),
       },
     });
   } catch (err) {

@@ -218,6 +218,39 @@ async function notifyInstructorLearnerMessage(instructor, learner, messageText, 
   return sendNotification(subject, html, `${off ? "donna_off" : "paused_learner"}:${email}:${learner?.phone}`, email);
 }
 
+const escapeHtml = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/** Invite an instructor to join a driving school on Donna Drive. */
+async function sendSchoolInvite({ to, schoolName, ownerName, link }) {
+  const subject = `${ownerName || schoolName} invited you to join ${schoolName} on Donna Drive`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <p>Hi,</p>
+      <p><strong>${escapeHtml(ownerName || "Your driving school")}</strong> has invited you to join
+      <strong>${escapeHtml(schoolName)}</strong> on Donna Drive.</p>
+      <p>Donna answers your learners on WhatsApp, books lessons around your diary and keeps your calendar up to date.
+      Your school covers the cost.</p>
+      <p style="margin: 24px 0;">
+        <a href="${escapeHtml(link)}" style="background:#f2584a;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:bold;">Join ${escapeHtml(schoolName)}</a>
+      </p>
+      <p style="color: #555; font-size: 13px;">Sign in with the Google account for ${escapeHtml(to)}. This invite expires in 14 days.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, null, to);
+}
+
+/** Tell ops the WhatsApp number pool ran out while an instructor was waiting for one. */
+async function notifyNumberPoolEmpty(instructor) {
+  const subject = "⚠️ Donna Drive: no WhatsApp numbers left in the pool";
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <p><strong>${escapeHtml(instructor?.name || "An instructor")}</strong> (${escapeHtml(instructor?.email || "")}) tried to get a WhatsApp number, but none are available.</p>
+      <p>Add numbers with <code>POST /api/admin/phone-numbers</code>, then let them know.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, "number_pool_empty");
+}
+
 /**
  * Clear the dedupe/cooldown map (useful for testing).
  */
@@ -237,6 +270,8 @@ module.exports = {
   notifyInvalidGrant,
   notifyInstructorReauth,
   notifyInstructorLearnerMessage,
+  sendSchoolInvite,
+  notifyNumberPoolEmpty,
   clearCooldowns,
   resetTransporter,
 };

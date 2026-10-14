@@ -22,12 +22,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn().mockResolvedValue(["09:00", "10:00"]),
   checkAvailability: jest.fn(),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
-  getLearnerName: jest.fn().mockResolvedValue("Tone User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,
@@ -172,9 +166,13 @@ describe("System Prompt – Tone & Personality", () => {
     expect(prompt).toContain("24-hour");
   });
 
-  it("specifies available days as Monday–Friday", () => {
-    expect(prompt).toContain("Monday");
-    expect(prompt).toContain("Friday");
+  it("fills available days from the instructor's settings (Monday–Friday by default)", () => {
+    // Days are a template placeholder now; check the rendered prompt.
+    expect(prompt).toContain("{{WORKING_DAYS}}");
+    const aiService = require("../../src/services/gemini/aiService");
+    const rendered = aiService.getSystemPrompt({ name: "Sam", availableTimes: ["09:00"] });
+    expect(rendered).toContain("Available days: Monday–Friday");
+    expect(rendered).not.toContain("{{");
   });
 
   it("requires collection of pickup and dropoff addresses", () => {
@@ -268,7 +266,8 @@ describe("Conversation History", () => {
       "447700000099",
       expect.objectContaining({
         conversationHistory: expect.any(Array),
-      })
+      }),
+      "inst-tone"
     );
   });
 

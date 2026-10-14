@@ -5,19 +5,21 @@ const logger = require("../utils/logger-advanced");
 // ── In-memory session store (per-user conversation state) ─────────────
 const userSessions = {};
 
-function getUserSession(phone) {
-    if (!userSessions[phone]) {
-        userSessions[phone] = {
+function getUserSession(phone, instructorPhoneId) {
+    const key = instructorPhoneId ? `${phone}::${instructorPhoneId}` : phone;
+    if (!userSessions[key]) {
+        userSessions[key] = {
             conversationHistory: [],
             lastActivity: timezoneUtils.getCurrentDate()
         };
     }
-    return userSessions[phone];
+    return userSessions[key];
 }
 
-function updateUserSession(phone, session) {
+function updateUserSession(phone, session, instructorPhoneId) {
+    const key = instructorPhoneId ? `${phone}::${instructorPhoneId}` : phone;
     session.lastActivity = timezoneUtils.getCurrentDate();
-    userSessions[phone] = session;
+    userSessions[key] = session;
 }
 
 // ── Instructor lookup (DB-backed) ─────────────────────────────────────
@@ -58,29 +60,11 @@ function invalidateInstructorCache(phoneNumberId) {
     delete _instructorCache[phoneNumberId];
 }
 
-// ── Available dates (next 90 weekdays) ────────────────────────────────
+// ── Bookable dates (working days within the booking window) ──────────
 
-function getAvailableDates() {
-    const dates = [];
-    const today = timezoneUtils.getCurrentDate(); // gets current date in IST
-    
-    // Create today's date at midnight (local)
-    const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-    for (let i = 1; i <= 90; i++) {
-        const date = new Date(todayLocal);
-        date.setDate(todayLocal.getDate() + i);
-
-        const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            dates.push(`${year}-${month}-${day}`);
-        }
-    }
-
-    return dates;
+function getAvailableDates(instructor = {}) {
+    const { bookableDates } = require("../services/instructorSettings");
+    return bookableDates(instructor);
 }
 
 

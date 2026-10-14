@@ -34,12 +34,6 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn(),
   checkAvailability: jest.fn(),
 }));
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-123"),
-  getLearnerName: jest.fn().mockResolvedValue("Test User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,
@@ -106,7 +100,6 @@ jest.mock("../../src/models/instructorModel", () => ({
 const Booking = require("../../src/models/bookingModel");
 const User = require("../../src/models/userModel");
 const calendarService = require("../../src/services/calendarService");
-const sheetsService = require("../../src/services/sheetsService");
 const whatsappService = require("../../src/services/whatsappService");
 const bookingService = require("../../src/services/bookingService");
 const webhookController = require("../../src/controllers/webhookController");
@@ -242,9 +235,6 @@ describe("Flow – BOOK Action", () => {
         time: "10:00",
       })
     );
-    expect(sheetsService.updateLearnerRecord).toHaveBeenCalledWith(
-      "flow-sheet", expect.any(Object), expect.any(Object), "create", MOCK_INSTRUCTOR
-    );
   });
 
   it("booking with pickup and dropoff addresses included in confirmation", async () => {
@@ -315,10 +305,11 @@ describe("Flow – SHOW_BOOKINGS Action", () => {
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Show my bookings");
 
-    expect(replies.length).toBe(2);
+    expect(replies.length).toBe(3);
     expect(replies[0]).toBe("Here are your bookings");
     expect(replies[1]).toContain("DL-AAAA");
     expect(replies[1]).toContain("10:00");
+    expect(replies[2]).toBe("What would you like to do?\n[Move a lesson] [Cancel a lesson] [Book another]");
   });
 
   it("shows empty bookings message when no bookings exist", async () => {
@@ -368,13 +359,14 @@ describe("Flow – CANCEL_BOOKING Action", () => {
     expect(replies[1]).toContain("DL-XXXX");
   });
 
-  it("handles missing bookingId gracefully", async () => {
+  it("handles missing bookingId by offering their lessons (none here)", async () => {
     mockAiResponse('Cancel!\n[ACTION:CANCEL_BOOKING]\n{}');
     mockAiAction("cancel_booking", {}, "Cancel!");
+    Booking.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([]) });
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Cancel booking");
 
-    expect(replies[1]).toContain("provide a valid booking ID");
+    expect(replies[1]).toContain("don't have any upcoming lessons");
   });
 
   it("handles booking not found", async () => {
@@ -456,9 +448,9 @@ describe("Flow – UPDATE_BOOKING Action", () => {
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Reschedule to 2pm");
 
     expect(replies.length).toBe(2);
-    expect(replies[1]).toContain("Booking updated");
-    expect(replies[1]).toContain("2025-07-02");
-    expect(replies[1]).toContain("14:00");
+    expect(replies[1]).toContain("Booking DL-UPDT moved to");
+    expect(replies[1]).toContain("Wed 2 Jul");
+    expect(replies[1]).toContain("2:00 pm");
   });
 
   it("shows error when booking not found for update", async () => {
@@ -471,8 +463,8 @@ describe("Flow – UPDATE_BOOKING Action", () => {
 
     const replies = await sendMockMessage(REGISTERED_USER.phone, "Reschedule");
 
-    // rescheduleBooking throws "Booking not found" → webhook catches and shows error
-    expect(replies[1]).toContain("trouble");
+    // Unknown or someone else's booking id → same "not found" reply either way
+    expect(replies[1]).toContain("No booking found with ID DL-GONE");
   });
 });
 
@@ -498,8 +490,7 @@ describe("Flow – NEXT_AVAILABLE_SLOT Action", () => {
     const replies = await sendMockMessage(REGISTERED_USER.phone, "When's the next slot?");
 
     expect(replies.length).toBe(2);
-    expect(replies[1]).toContain("2025-07-01");
-    expect(replies[1]).toContain("09:00");
+    expect(replies[1]).toContain("Tue 1 Jul at 9:00 am");
   });
 
   it("handles no slots available", async () => {
@@ -597,7 +588,7 @@ describe("Flow – Data Deletion", () => {
 
     const replies = await sendMockMessage("447800000003", "delete my data", "inst-flow");
 
-    expect(User.deleteOne).toHaveBeenCalledWith({ phone: "447800000003" });
+    expect(User.deleteOne).toHaveBeenCalledWith({ phone: "447800000003", instructorId: "inst-flow" });
     expect(replies[0]).toContain("deleted");
   });
 });
@@ -702,19 +693,6 @@ describe("Flow – createBooking Edge Cases", () => {
       }, MOCK_INSTRUCTOR)
     ).rejects.toThrow("location details are incomplete");
   });
-
-  it("continues even if Sheets update fails", async () => {
-    User.findOne.mockResolvedValue(REGISTERED_USER);
-    sheetsService.updateLearnerRecord.mockRejectedValueOnce(new Error("Sheets quota"));
-
-    const result = await bookingService.createBooking(REGISTERED_USER.phone, {
-      date: "2025-07-01", time: "10:00", userPhone: REGISTERED_USER.phone,
-    }, MOCK_INSTRUCTOR);
-
-    // Booking still created despite sheets error
-    expect(result.booking.bookingId).toBe("DL-EDGE");
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Sheets update failed"));
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -747,7 +725,7 @@ describe("Flow – cancelBooking & getBookingsByUser", () => {
 
     expect(result.status).toBe("cancelled");
     expect(mockBooking.save).toHaveBeenCalled();
-    expect(calendarService.deleteEvent).toHaveBeenCalledWith("cal-can1");
+    expect(calendarService.deleteEvent).toHaveBeenCalledWith("cal-can1", expect.any(Object));
   });
 
   it("getBookingsByUser calls Booking.find with correct filters", async () => {
@@ -1035,7 +1013,7 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(aiService.getResponse).toHaveBeenCalledWith(
-      "Yes, book it", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR
+      "Yes, book it", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR, expect.objectContaining({ phone: REGISTERED_USER.phone })
     );
   });
 
@@ -1067,7 +1045,7 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(aiService.getResponse).toHaveBeenCalledWith(
-      "10:00 AM", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR
+      "10:00 AM", expect.any(Array), REGISTERED_USER.phone, MOCK_INSTRUCTOR, expect.objectContaining({ phone: REGISTERED_USER.phone })
     );
   });
 
@@ -1081,12 +1059,14 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
     expect(aiService.getResponse).not.toHaveBeenCalled();
   });
 
-  it("returns 500 on unexpected error", async () => {
-    const req = { body: null }; // will cause error
+  it("always acknowledges with 200, even for a malformed body", async () => {
+    // Changed: we acknowledge before processing so Meta never retries.
+    const req = { body: null };
     const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
 
     await webhookController.handleWebhook(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(aiService.getResponse).not.toHaveBeenCalled();
   });
 });

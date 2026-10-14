@@ -1,11 +1,16 @@
 const express = require('express');
 const authRoutes = require('./src/routes/auth');
+const authGoogleRoutes = require('./src/routes/authGoogle');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
 const bookingRoutes = require('./src/routes/bookings');
 const dashboardRoutes = require('./src/routes/dashboard');
 const learnerRoutes = require('./src/routes/learners');
+const stripeRoutes = require('./src/routes/stripe');
+const stripeWebhookHandler = require('./src/routes/stripeWebhook');
+const phoneNumberRoutes = require('./src/routes/phoneNumbers');
+const adminRoutes = require('./src/routes/admin');
 const connectDB = require("./src/config/database");
 const uploadLogsFolder = require("./src/utils/uploadLogsToR2");
 const path = require("path");
@@ -13,8 +18,19 @@ const rateLimit = require("express-rate-limit");
 const basicAuth = require("express-basic-auth");
 const jwtAuth = require("./src/middleware/jwtAuth");
 const apiKeyAuth = require("./src/middleware/apiKeyAuth");
+const adminAuth = require("./src/middleware/adminAuth");
 
 
+
+// Startup env validation
+if (process.env.NODE_ENV === 'production') {
+  const required = ['JWT_SECRET', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'MONGO_URI', 'GOOGLE_CLIENT_ID', 'ADMIN_API_KEY'];
+  const missing = required.filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error(`FATAL: Missing required env vars: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+}
 
 const app = express();
 
@@ -24,13 +40,26 @@ app.set('trust proxy', 1);
 
 
 
-// Rate Limiter
+// Rate Limiters
 const logLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // 50 requests per IP
+  windowMs: 15 * 60 * 1000,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: "Too many requests. Please try again later."
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many auth attempts. Please try again later." },
+  skip: (req) => {
+    // Don't rate-limit authenticated read endpoints — only limit public signup/exchange
+    const openPaths = ["/google-signup", "/exchange-code"];
+    return !openPaths.some(p => req.path.startsWith(p));
+  },
 });
 
 // Basic Auth 
@@ -63,6 +92,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Stripe webhook needs raw body — must be mounted BEFORE express.json()
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+
 // Middleware
 app.use(express.json());
 connectDB();
@@ -70,11 +102,15 @@ connectDB();
 // Routes
 app.use('/webhook', webhookRoutes);
 app.use('/auth' , authRoutes);
+app.use('/api/auth', authLimiter, authGoogleRoutes);
+app.use('/api/stripe', jwtAuth, stripeRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
-app.use('/api/bookings', logAuth, bookingRoutes);
+app.use('/api/bookings', adminAuth, bookingRoutes);
 app.use('/api/dashboard', jwtAuth, dashboardRoutes);
 app.use('/api/learners', apiKeyAuth, learnerRoutes);
+app.use('/api/phone-numbers', jwtAuth, phoneNumberRoutes);
+app.use('/api/admin', adminAuth, adminRoutes);
 
 // Mock Route (development only)
 if (process.env.NODE_ENV === 'development') {
@@ -88,9 +124,14 @@ app.get("/logs-viewer", logAuth , logLimiter , (req, res) => {
   res.sendFile(path.join(__dirname, "public/logs.html"));
 });
 
+// Unauthenticated health check for load balancers / uptime monitors
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: `${Math.floor(process.uptime())}s` });
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
-    res.json({ 
+    res.json({
         status: "ok",
         name: "Donna",
         description: "WhatsApp Driving School Bot",
@@ -107,7 +148,16 @@ const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');
 setInterval(cleanUpContexts, 1 * 60 * 1000); // every 5 minutes
 setInterval(cleanupSessions, 10 * 60 * 1000); // every 10 minutes
 
-// Upload logs to R2 every 5 minutes
-setInterval(uploadLogsFolder, process.env.WAIT_FOR_R2_IN_MINS * 60 * 1000); 
+// Upload logs to R2 (WAIT_FOR_R2_IN_MINS, default 5 minutes)
+const r2Minutes = Number(process.env.WAIT_FOR_R2_IN_MINS) > 0 ? Number(process.env.WAIT_FOR_R2_IN_MINS) : 5;
+setInterval(uploadLogsFolder, r2Minutes * 60 * 1000);
+
+// Graceful shutdown
+const mongoose = require("mongoose");
+process.on('SIGTERM', async () => {
+  console.log('[app] SIGTERM received, shutting down...');
+  await mongoose.connection.close();
+  process.exit(0);
+});
 
 module.exports = app;

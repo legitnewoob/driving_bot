@@ -436,3 +436,122 @@ describe("Duration precision", () => {
     expect(result).toEqual([10, 20, 40]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// getDrivingMatrix – many origins × many destinations
+// ═══════════════════════════════════════════════════════════════════════════
+
+const { getDrivingMatrix } = require("../../src/services/distanceMatrixService");
+
+function el(originIndex, destinationIndex, seconds) {
+  return { originIndex, destinationIndex, duration: `${seconds}s`, condition: "ROUTE_EXISTS" };
+}
+
+describe("getDrivingMatrix", () => {
+  const FUTURE = new Date(Date.now() + 24 * 3600 * 1000);
+
+  it("returns a full origin × destination matrix in minutes", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60), el(0, 1, 120), el(1, 0, 180), el(1, 1, 240)] });
+
+    const m = await getDrivingMatrix([ORIGIN, DEST_A], [DEST_B, DEST_C]);
+
+    expect(m).toEqual([[1, 2], [3, 4]]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    const body = axios.post.mock.calls[0][1];
+    expect(body.origins).toHaveLength(2);
+    expect(body.destinations).toHaveLength(2);
+    expect(body.routingPreference).toBeUndefined();
+  });
+
+  it("leaves failed elements as null", async () => {
+    axios.post.mockResolvedValue({
+      data: [el(0, 0, 60), { originIndex: 0, destinationIndex: 1, condition: "ROUTE_NOT_FOUND" }],
+    });
+    expect(await getDrivingMatrix([ORIGIN], [DEST_A, DEST_B])).toEqual([[1, null]]);
+  });
+
+  it("returns all nulls when the request fails", async () => {
+    axios.post.mockRejectedValue(new Error("network"));
+    expect(await getDrivingMatrix([ORIGIN], [DEST_A])).toEqual([[null]]);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Routes matrix request failed"));
+  });
+
+  it("returns all nulls without an API key", async () => {
+    delete process.env.GOOGLE_MAPS_API_KEY;
+    expect(await getDrivingMatrix([ORIGIN], [DEST_A])).toEqual([[null]]);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it("serves a repeat request from the cache", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A]);
+    const again = await getDrivingMatrix([ORIGIN], [DEST_A]);
+    expect(again).toEqual([[1]]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("only re-requests origins with missing elements", async () => {
+    axios.post.mockResolvedValueOnce({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A]);
+
+    axios.post.mockResolvedValueOnce({ data: [el(0, 0, 120)] });
+    const m = await getDrivingMatrix([ORIGIN, DEST_B], [DEST_A]);
+
+    expect(m).toEqual([[1], [2]]);
+    expect(axios.post.mock.calls[1][1].origins).toHaveLength(1);
+  });
+
+  it("uses traffic-aware routing for a small matrix with a future departure", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A], FUTURE);
+    const body = axios.post.mock.calls[0][1];
+    expect(body.routingPreference).toBe("TRAFFIC_AWARE");
+    expect(body.departureTime).toBe(FUTURE.toISOString());
+  });
+
+  it("skips traffic-aware routing above 100 elements", async () => {
+    axios.post.mockResolvedValue({ data: [] });
+    const many = Array.from({ length: 11 }, (_, i) => ({ lat: 53 + i / 100, lng: -2 }));
+    await getDrivingMatrix(many, many, FUTURE); // 121 elements
+    expect(axios.post.mock.calls[0][1].routingPreference).toBeUndefined();
+  });
+
+  it("skips traffic-aware routing for past departures", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A], new Date(Date.now() - 3600 * 1000));
+    expect(axios.post.mock.calls[0][1].routingPreference).toBeUndefined();
+  });
+
+  it("caches traffic-aware and plain results separately", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A]);
+    await getDrivingMatrix([ORIGIN], [DEST_A], FUTURE);
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  });
+
+  it("splits requests that exceed 625 elements", async () => {
+    axios.post.mockResolvedValue({ data: [] });
+    const pts = Array.from({ length: 30 }, (_, i) => ({ lat: 53 + i / 100, lng: -2 }));
+    await getDrivingMatrix(pts, pts); // 900 elements
+    expect(axios.post.mock.calls.length).toBeGreaterThan(1);
+    for (const [, body] of axios.post.mock.calls) {
+      expect(body.origins.length * body.destinations.length).toBeLessThanOrEqual(625);
+    }
+  });
+
+  it("maps chunked responses back to the right cells", async () => {
+    const pts = Array.from({ length: 30 }, (_, i) => ({ lat: 53 + i / 100, lng: -2 }));
+    axios.post.mockImplementation(async (_url, body) => ({
+      data: body.origins.map((_, oi) => el(oi, 0, Math.round((body.origins[oi].waypoint.location.latLng.latitude - 53) * 100) * 60)),
+    }));
+    const m = await getDrivingMatrix(pts, pts);
+    expect(m[0][0]).toBeCloseTo(0, 5);
+    expect(m[29][0]).toBeCloseTo(29, 5);
+  });
+
+  it("returns an empty matrix for empty inputs without calling the API", async () => {
+    expect(await getDrivingMatrix([], [DEST_A])).toEqual([]);
+    expect(await getDrivingMatrix([ORIGIN], [])).toEqual([[]]);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+});

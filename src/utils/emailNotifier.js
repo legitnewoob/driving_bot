@@ -45,7 +45,7 @@ function getTransporter() {
  * @param {string} [dedupeKey] - Optional key to prevent duplicate emails within cooldown
  * @returns {Promise<boolean>} true if sent, false if skipped/failed
  */
-async function sendNotification(subject, html, dedupeKey = null) {
+async function sendNotification(subject, html, dedupeKey = null, toOverride = null) {
   // Dedupe check
   if (dedupeKey) {
     const lastSent = _sentRecently.get(dedupeKey);
@@ -61,7 +61,7 @@ async function sendNotification(subject, html, dedupeKey = null) {
     return false;
   }
 
-  const to = process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
+  const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
 
   try {
     await transporter.sendMail({
@@ -143,6 +143,74 @@ async function notifyInvalidGrant(instructor, service, errorMessage) {
 }
 
 /**
+ * Send a re-authentication prompt directly to the instructor's own email.
+ * Called alongside notifyInvalidGrant so both admin and instructor are alerted.
+ *
+ * @param {Object} instructor - Instructor object (needs name, email)
+ */
+async function notifyInstructorReauth(instructor) {
+  const name = instructor?.name || "there";
+  const email = instructor?.email;
+  if (!email) return false;
+
+  const dashboardUrl = process.env.DASHBOARD_URL || process.env.BASE_URL || "http://localhost:8080";
+  const reconnectUrl = `${dashboardUrl}/get-onboard`;
+
+  const subject = `⚠️ Action needed — reconnect your Google Calendar`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #d32f2f;">Your Google Calendar connection has expired</h2>
+      <p>Hi ${name},</p>
+      <p>Your Google Calendar authorisation has expired or been revoked. Donna AI can no longer
+         create or update calendar events for your lessons until you reconnect.</p>
+
+      <p style="margin: 24px 0;">
+        <a href="${reconnectUrl}" style="background: #1976d2; color: white; padding: 12px 24px;
+           text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+          Reconnect Google Calendar
+        </a>
+      </p>
+
+      <p style="color: #555; font-size: 14px;">
+        Once you click the button above, sign in to your dashboard and click
+        <strong>Connect Google Calendar</strong>. The whole process takes about 30 seconds.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+      <p style="color: #999; font-size: 11px;">
+        This email was sent by Donna AI. If you have already reconnected, you can ignore this message.
+      </p>
+    </div>
+  `;
+
+  return sendNotification(subject, html, `instructor_reauth:${email}`, email);
+}
+
+/**
+ * Tell an instructor that a learner they've paused Donna for has messaged.
+ * At most one email per learner per cooldown window.
+ */
+async function notifyInstructorLearnerMessage(instructor, learner, messageText) {
+  const email = instructor?.email;
+  if (!email) return false;
+  const who = learner?.name || learner?.phone || "A learner";
+  const escape = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const subject = `💬 ${who} messaged — Donna is paused for them`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <p>Hi ${escape(instructor.name || "there")},</p>
+      <p><strong>${escape(who)}</strong> (${escape(learner?.phone || "")}) sent a message. You've paused Donna for this learner, so she hasn't replied.</p>
+      <blockquote style="border-left: 3px solid #ddd; margin: 16px 0; padding: 8px 12px; color: #333;">${escape(messageText).slice(0, 1000)}</blockquote>
+      <p style="color: #555; font-size: 14px;">Reply to them on WhatsApp, or turn Donna back on from the Learners page.</p>
+      <p style="color: #999; font-size: 11px;">You'll get at most one of these per learner per hour.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, `paused_learner:${email}:${learner?.phone}`, email);
+}
+
+/**
  * Clear the dedupe/cooldown map (useful for testing).
  */
 function clearCooldowns() {
@@ -159,6 +227,8 @@ function resetTransporter() {
 module.exports = {
   sendNotification,
   notifyInvalidGrant,
+  notifyInstructorReauth,
+  notifyInstructorLearnerMessage,
   clearCooldowns,
   resetTransporter,
 };

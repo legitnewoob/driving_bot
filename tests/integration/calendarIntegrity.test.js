@@ -11,12 +11,6 @@
 
 jest.mock("../../src/models/bookingModel");
 jest.mock("../../src/models/userModel");
-jest.mock("../../src/services/sheetsService", () => ({
-  getInstructorSpreadsheetId: jest.fn().mockReturnValue("sheet-cal"),
-  getLearnerName: jest.fn().mockResolvedValue("Cal User"),
-  updateLearnerRecord: jest.fn().mockResolvedValue({}),
-  initializeCredentials: jest.fn(),
-}));
 jest.mock("../../src/services/mapsService", () => ({
   getCoordinatesFromPostalCode: jest.fn().mockResolvedValue({
     lat: 53.02, lng: -2.22,

@@ -91,7 +91,8 @@
       margin-bottom: 6px;
     }
 
-    .config-section input {
+    .config-section input,
+    .config-section select {
       width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
@@ -104,8 +105,22 @@
       transition: border-color 0.2s;
     }
 
-    .config-section input:focus {
+    .config-section input:focus,
+    .config-section select:focus {
       border-color: var(--green);
+    }
+
+    .config-section select option {
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .instructor-info {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'IBM Plex Mono', monospace;
+      line-height: 1.4;
     }
 
     .status-dot {
@@ -313,6 +328,30 @@
       border-bottom-left-radius: 4px;
     }
 
+    .choices {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding-top: 8px;
+    }
+    .choices-label { font-size: 12px; opacity: 0.7; }
+    .choice {
+      background: transparent;
+      border: 1px solid rgba(83, 189, 235, 0.5);
+      color: #53bdeb;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .choice:hover:not(:disabled) { background: rgba(83, 189, 235, 0.12); }
+    .choice:disabled { opacity: 0.45; cursor: default; }
+    .location-btn { font-size: 18px; margin-right: 6px; }
+
     .bubble.error {
       background: #2a1215;
       border: 1px solid var(--error);
@@ -497,6 +536,14 @@
       <input type="text" id="phoneInput" value="917726877146" placeholder="e.g. 1234567890" />
     </div>
 
+    <div class="config-section">
+      <label>Instructor</label>
+      <select id="instructorSelect">
+        <option value="">Loading...</option>
+      </select>
+      <div class="instructor-info" id="instructorInfo"></div>
+    </div>
+
     <div class="status-dot" id="statusDot">Disconnected</div>
 
     <div class="log-section">
@@ -510,7 +557,7 @@
     <div class="chat-topbar">
       <div class="avatar">🤖</div>
       <div class="chat-topbar-info">
-        <h3>Your Bot</h3>
+        <h3 id="topbarName">Your Bot</h3>
         <span id="topbarPhone">+1 555 000 1234</span>
       </div>
       <div class="badge">MOCK MODE</div>
@@ -532,6 +579,7 @@
       <div class="input-wrap">
         <textarea id="messageInput" rows="1" placeholder="Type a message..."></textarea>
       </div>
+      <button class="send-btn location-btn" id="locationBtn" title="Share location (type &quot;lat, lng | place&quot; first)">📍</button>
       <button class="send-btn" id="sendBtn" title="Send">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
@@ -546,11 +594,15 @@
     const inputEl = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
     const phoneInput = document.getElementById('phoneInput');
+    const instructorSelect = document.getElementById('instructorSelect');
+    const instructorInfo = document.getElementById('instructorInfo');
     const statusDot = document.getElementById('statusDot');
     const logBody = document.getElementById('logBody');
     const typingEl = document.getElementById('typingIndicator');
     const emptyState = document.getElementById('emptyState');
     const topbarPhone = document.getElementById('topbarPhone');
+
+    let instructorsData = [];
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function formatPhone(num) {
@@ -569,7 +621,7 @@
       logBody.scrollTop = logBody.scrollHeight;
     }
 
-    function appendMessage(text, side, isError = false) {
+    function appendMessage(text, side, isError = false, interactive = null) {
       emptyState.style.display = 'none';
 
       // Move typing indicator to end (always last)
@@ -580,7 +632,30 @@
 
       const bubble = document.createElement('div');
       bubble.className = 'bubble' + (isError ? ' error' : '');
-      bubble.innerHTML = parseWhatsApp(text);
+      bubble.innerHTML = parseWhatsApp(interactive?.body || text);
+
+      if (interactive) {
+        const options = interactive.type === 'list' ? interactive.rows : interactive.buttons;
+        const wrap = document.createElement('div');
+        wrap.className = 'choices';
+        if (interactive.type === 'list') {
+          const label = document.createElement('div');
+          label.className = 'choices-label';
+          label.textContent = '☰ ' + (interactive.buttonLabel || 'Options');
+          wrap.appendChild(label);
+        }
+        options.forEach((o) => {
+          const btn = document.createElement('button');
+          btn.className = 'choice';
+          btn.textContent = o.title;
+          btn.addEventListener('click', () => {
+            wrap.querySelectorAll('button').forEach((b) => (b.disabled = true));
+            sendPayload({ text: o.title, buttonId: o.id, buttonKind: interactive.type === 'list' ? 'list' : 'button' });
+          });
+          wrap.appendChild(btn);
+        });
+        bubble.appendChild(wrap);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'msg-meta';
@@ -602,6 +677,49 @@
       topbarPhone.textContent = formatPhone(phoneInput.value || '000');
     });
 
+    // ── Instructor dropdown ──────────────────────────────────────────────────
+    async function loadInstructors() {
+      try {
+        const res = await fetch('/api/instructors');
+        const data = await res.json();
+        instructorsData = data.instructors || [];
+
+        instructorSelect.innerHTML = '';
+        if (instructorsData.length === 0) {
+          instructorSelect.innerHTML = '<option value="">No instructors found</option>';
+          instructorInfo.textContent = 'Start your backend & run seed script';
+          return;
+        }
+
+        instructorsData.forEach((inst, i) => {
+          const opt = document.createElement('option');
+          opt.value = inst.phoneNumberId;
+          opt.textContent = inst.name + (inst.phoneNumber ? ` (${inst.phoneNumber})` : '');
+          instructorSelect.appendChild(opt);
+        });
+
+        updateInstructorInfo();
+      } catch (err) {
+        instructorSelect.innerHTML = '<option value="">Failed to load</option>';
+        instructorInfo.textContent = 'Is your backend running?';
+      }
+    }
+
+    function updateInstructorInfo() {
+      const selected = instructorsData.find(i => i.phoneNumberId === instructorSelect.value);
+      const topbarName = document.getElementById('topbarName');
+      if (selected) {
+        instructorInfo.textContent = `${selected.email}\npnid: ${selected.phoneNumberId}`;
+        topbarName.textContent = selected.name + "'s Bot";
+      } else {
+        instructorInfo.textContent = '';
+        topbarName.textContent = 'Your Bot';
+      }
+    }
+
+    instructorSelect.addEventListener('change', updateInstructorInfo);
+    loadInstructors();
+
     // ── Socket events ─────────────────────────────────────────────────────────
     socket.on('connect', () => {
       statusDot.className = 'status-dot connected';
@@ -615,9 +733,9 @@
       addLog('Socket disconnected', 'err');
     });
 
-    socket.on('bot_message', ({ text }) => {
+    socket.on('bot_message', ({ text, interactive }) => {
       setTyping(false);
-      appendMessage(text, 'bot');
+      appendMessage(text, 'bot', false, interactive);
       addLog(`← bot: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`, 'out');
     });
 
@@ -628,20 +746,39 @@
     });
 
     // ── Send logic ────────────────────────────────────────────────────────────
+    function sendPayload({ text, buttonId, buttonKind, location }) {
+      const from = phoneInput.value.trim() || '2340000000000';
+      const phoneNumberId = instructorSelect.value || undefined;
+      const selected = instructorsData.find(i => i.phoneNumberId === phoneNumberId);
+      const instructorLabel = selected ? selected.name : phoneNumberId || 'default';
+      const shown = location ? `📍 ${location.name || `${location.latitude}, ${location.longitude}`}` : text;
+
+      appendMessage(shown, 'user');
+      addLog(`→ user (${from}) → ${instructorLabel}: ${shown}${buttonId ? ` [${buttonId}]` : ''}`, 'in');
+      setTyping(true);
+
+      socket.emit('user_message', { text, from, phoneNumberId, buttonId, buttonKind, location });
+    }
+
     function sendMessage() {
       const text = inputEl.value.trim();
       if (!text) return;
-
-      const from = phoneInput.value.trim() || '2340000000000';
-
-      appendMessage(text, 'user');
-      addLog(`→ user (${from}): ${text}`, 'in');
-      setTyping(true);
-
-      socket.emit('user_message', { text, from });
-
+      sendPayload({ text });
       inputEl.value = '';
       inputEl.style.height = 'auto';
+    }
+
+    // Share a map pin: "lat, lng" optionally followed by "| place name"
+    function shareLocation() {
+      const raw = inputEl.value.trim() || '53.0258, -2.1774 | Hanley Bus Station';
+      const [coords, name] = raw.split('|').map((x) => x.trim());
+      const [latitude, longitude] = coords.split(',').map((x) => Number(x.trim()));
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        addLog('Type "lat, lng | place name" in the box, then press 📍', 'err');
+        return;
+      }
+      sendPayload({ location: { latitude, longitude, ...(name ? { name } : {}) } });
+      inputEl.value = '';
     }
 
     function parseWhatsApp(text) {
@@ -665,6 +802,7 @@
     }
 
     sendBtn.addEventListener('click', sendMessage);
+    document.getElementById('locationBtn').addEventListener('click', shareLocation);
 
     inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

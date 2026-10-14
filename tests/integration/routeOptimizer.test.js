@@ -1,15 +1,15 @@
 /**
  * RouteOptimizer – Unit & Integration Tests
  *
- * Unit tests: timeToMinutes, hasValidLocation, scoreSlots, getNearestReferenceDistance
- * Integration tests: filterAvailableSlotsByLocation (Mongoose mocked)
+ * Scoring model (see PLAN-route-optimization.md §3):
+ *  - addedDrive = t(prev → learner) + t(learner → next) − t(prev → next), home legs weighted
+ *  - a slot is infeasible when the instructor can't arrive / leave in time
+ *  - slots that make other free slots unbookable are penalised
+ * Drive times come from a mocked Routes matrix; null elements fall back to
+ * straight-line estimates (2 min per km).
  */
 
 const haversine = require("../../src/utils/haversine");
-
-// ── We need a FRESH RouteOptimizer class (not the singleton) so we can
-//    control constructor defaults without env vars leaking between tests.
-//    Jest's module cache is reset per-file, but we also jest.mock the DB models.
 
 jest.mock("../../src/models/bookingModel");
 jest.mock("../../src/models/userModel");
@@ -18,28 +18,30 @@ jest.mock("../../src/utils/logger-advanced", () => ({
   warn: jest.fn(),
   error: jest.fn(),
 }));
-// Mock Distance Matrix API — returns null for every destination so
-// routeOptimizer falls back to haversine, keeping existing test logic intact.
 jest.mock("../../src/services/distanceMatrixService", () => ({
-  getDrivingDurations: jest.fn(async (_oLat, _oLng, destinations) =>
-    destinations.map(() => null)
+  getDrivingMatrix: jest.fn(async (origins, destinations) =>
+    origins.map(() => destinations.map(() => null))
   ),
+  getDrivingDurations: jest.fn(async (_oLat, _oLng, destinations) => destinations.map(() => null)),
   getDrivingDuration: jest.fn(async () => null),
   clearCache: jest.fn(),
+}));
+jest.mock("../../src/services/calendarService", () => ({
+  getAvailableTimeSlotsForDate: jest.fn(),
 }));
 
 const Booking = require("../../src/models/bookingModel");
 const User = require("../../src/models/userModel");
 const logger = require("../../src/utils/logger-advanced");
-
-// Import the singleton – its constructor has already run with default env
+const distanceMatrixService = require("../../src/services/distanceMatrixService");
+const calendarService = require("../../src/services/calendarService");
 const routeOptimizer = require("../../src/services/routeOptimizer");
+const { resolveRouteSettings } = require("../../src/services/instructorSettings");
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+const BASE = { lat: 53.0168046, long: -2.2190649 };
+const ROUTE = resolveRouteSettings({});
+const route = (overrides = {}) => ({ ...ROUTE, ...overrides });
 
-const INSTRUCTOR_BASE = { lat: 53.0168046, long: -2.2190649 }; // default
-
-/** Build a fake booking object that matches the Mongoose shape */
 function makeBooking(time, lat, long, status = "confirmed") {
   return {
     time,
@@ -50,524 +52,346 @@ function makeBooking(time, lat, long, status = "confirmed") {
   };
 }
 
+/**
+ * Mock the Routes matrix with an explicit table of drive times between named
+ * points. Any pair not listed falls back to the straight-line estimate.
+ */
+function mockMatrix(table) {
+  distanceMatrixService.getDrivingMatrix.mockImplementation(async (origins, destinations) =>
+    origins.map((o) =>
+      destinations.map((d) => {
+        const key = `${o.lat},${o.lng}->${d.lat},${d.lng}`;
+        return key in table ? table[key] : null;
+      })
+    )
+  );
+}
+const leg = (a, b) => `${a.lat},${a.long ?? a.lng}->${b.lat},${b.long ?? b.lng}`;
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  distanceMatrixService.getDrivingMatrix.mockImplementation(async (origins, destinations) =>
+    origins.map(() => destinations.map(() => null))
+  );
+  Booking.countDocuments = jest.fn().mockResolvedValue(0);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
-// UNIT TESTS
+// Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("RouteOptimizer – Unit Tests", () => {
-  // ── timeToMinutes ──────────────────────────────────────────────────────
+describe("timeToMinutes", () => {
+  it.each([
+    ["00:00", 0],
+    ["09:00", 540],
+    ["12:00", 720],
+    ["15:30", 930],
+    ["23:59", 1439],
+    ["9:05", 545],
+  ])("%s → %i", (time, expected) => {
+    expect(routeOptimizer.timeToMinutes(time)).toBe(expected);
+  });
+});
 
-  describe("timeToMinutes", () => {
-    it("converts midnight correctly", () => {
-      expect(routeOptimizer.timeToMinutes("00:00")).toBe(0);
-    });
-
-    it("converts morning time correctly", () => {
-      expect(routeOptimizer.timeToMinutes("09:00")).toBe(540);
-    });
-
-    it("converts noon correctly", () => {
-      expect(routeOptimizer.timeToMinutes("12:00")).toBe(720);
-    });
-
-    it("converts afternoon time correctly", () => {
-      expect(routeOptimizer.timeToMinutes("15:30")).toBe(930);
-    });
-
-    it("converts end-of-day time correctly", () => {
-      expect(routeOptimizer.timeToMinutes("23:59")).toBe(1439);
-    });
-
-    it("handles single-digit hours", () => {
-      expect(routeOptimizer.timeToMinutes("9:05")).toBe(545);
-    });
+describe("hasValidLocation", () => {
+  it("accepts legacy location, pickup only, or drop-off only", () => {
+    expect(routeOptimizer.hasValidLocation(makeBooking("09:00", 53.02, -2.22))).toBe(true);
+    expect(routeOptimizer.hasValidLocation({ pickupLocation: { latitude: 53.02, longitude: -2.22 } })).toBe(true);
+    expect(routeOptimizer.hasValidLocation({ dropoffLocation: { latitude: 53.02, longitude: -2.22 } })).toBe(true);
   });
 
-  // ── hasValidLocation ───────────────────────────────────────────────────
-
-  describe("hasValidLocation", () => {
-    it("returns true for a booking with valid lat/long", () => {
-      const booking = makeBooking("09:00", 53.02, -2.22);
-      expect(routeOptimizer.hasValidLocation(booking)).toBe(true);
-    });
-
-    it("returns false when location is null", () => {
-      expect(routeOptimizer.hasValidLocation({ location: null })).toBeFalsy();
-    });
-
-    it("returns false when location is undefined", () => {
-      expect(routeOptimizer.hasValidLocation({})).toBeFalsy();
-    });
-
-    it("returns false when latitude is NaN", () => {
-      expect(
-        routeOptimizer.hasValidLocation({
-          location: { latitude: NaN, longitude: -2.22 },
-        })
-      ).toBe(false);
-    });
-
-    it("returns false when longitude is NaN", () => {
-      expect(
-        routeOptimizer.hasValidLocation({
-          location: { latitude: 53.02, longitude: NaN },
-        })
-      ).toBe(false);
-    });
-
-    it("returns false when latitude is a string", () => {
-      expect(
-        routeOptimizer.hasValidLocation({
-          location: { latitude: "53.02", longitude: -2.22 },
-        })
-      ).toBe(false);
-    });
-
-    it("returns false when longitude is missing", () => {
-      expect(
-        routeOptimizer.hasValidLocation({
-          location: { latitude: 53.02 },
-        })
-      ).toBe(false);
-    });
-
-    it("returns true for zero coordinates (valid edge case)", () => {
-      expect(
-        routeOptimizer.hasValidLocation({
-          location: { latitude: 0, longitude: 0 },
-        })
-      ).toBe(true);
-    });
+  it("accepts zero coordinates", () => {
+    expect(routeOptimizer.hasValidLocation({ location: { latitude: 0, longitude: 0 } })).toBe(true);
   });
 
-  // ── scoreSlots ─────────────────────────────────────────────────────────
+  it("rejects missing, NaN, string or partial coordinates", () => {
+    expect(routeOptimizer.hasValidLocation({ location: null })).toBeFalsy();
+    expect(routeOptimizer.hasValidLocation({})).toBeFalsy();
+    expect(routeOptimizer.hasValidLocation({ location: { latitude: NaN, longitude: -2.22 } })).toBe(false);
+    expect(routeOptimizer.hasValidLocation({ location: { latitude: "53.02", longitude: -2.22 } })).toBe(false);
+    expect(routeOptimizer.hasValidLocation({ location: { latitude: 53.02 } })).toBe(false);
+  });
+});
 
-  describe("scoreSlots", () => {
-    const userLocation = { lat: 53.02, long: -2.23 };
+describe("buildDayPlan", () => {
+  it("starts each lesson at its pickup and ends it at its drop-off, sorted by time", () => {
+    const plan = routeOptimizer.buildDayPlan(
+      [
+        {
+          time: "14:00",
+          pickupLocation: { latitude: 53.1, longitude: -2.4 },
+          dropoffLocation: { latitude: 53.2, longitude: -2.5 },
+        },
+        { time: "09:00", location: { latitude: 53.03, longitude: -2.24 } },
+      ],
+      ROUTE
+    );
 
-    it("scores purely on base distance when no bookings exist", async () => {
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "12:00", "15:00"],
-        [],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      expect(scored).toHaveLength(3);
-      // All should have the same score (distance from base is identical for all slots)
-      expect(scored[0].score).toBeCloseTo(scored[1].score, 5);
-      expect(scored[0].reason).toMatch(/min from base/);
-    });
-
-    it("prefers slots nearer in time and distance to existing bookings", async () => {
-      // One booking at 10:00 very close to the user
-      const bookings = [makeBooking("10:00", 53.021, -2.231)];
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "11:00", "16:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      // 11:00 is 1 hour after the 10:00 booking and close → should score highest
-      // 09:00 is 1 hour before → should also score well
-      // 16:00 is 6 hours after → should score lowest
-      const slotOrder = scored.map((s) => s.slot);
-      expect(slotOrder.indexOf("16:00")).toBeGreaterThan(
-        slotOrder.indexOf("11:00")
-      );
-    });
-
-    it("returns scores in descending order (best first)", async () => {
-      const bookings = [makeBooking("10:00", 53.021, -2.231)];
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "10:00", "11:00", "15:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      for (let i = 1; i < scored.length; i++) {
-        expect(scored[i - 1].score).toBeGreaterThanOrEqual(scored[i].score);
-      }
-    });
-
-    it("ignores bookings without valid locations", async () => {
-      const bookings = [
-        { time: "10:00", location: null }, // invalid
-        makeBooking("14:00", 53.025, -2.24), // valid
-      ];
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "15:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      // Should still produce scores (only the 14:00 booking used)
-      expect(scored).toHaveLength(2);
-      scored.forEach((s) => expect(s.score).toBeGreaterThan(0));
-    });
-
-    it("handles a single available slot", async () => {
-      const scored = await routeOptimizer.scoreSlots(
-        ["12:00"],
-        [],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-      expect(scored).toHaveLength(1);
-      expect(scored[0].slot).toBe("12:00");
-    });
-
-    it("handles multiple bookings building a timeline", async () => {
-      const bookings = [
-        makeBooking("09:00", 53.01, -2.21),
-        makeBooking("11:00", 53.03, -2.25),
-        makeBooking("14:00", 53.02, -2.23),
-      ];
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["10:00", "12:00", "15:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      expect(scored).toHaveLength(3);
-      // 15:00 is right after the 14:00 booking at the user's exact location → best
-      expect(scored[0].slot).toBe("15:00");
-    });
+    expect(plan.map((p) => p.label)).toEqual(["09:00", "14:00"]);
+    expect(plan[1].startLoc).toEqual({ lat: 53.1, lng: -2.4 });
+    expect(plan[1].endLoc).toEqual({ lat: 53.2, lng: -2.5 });
+    expect(plan[1].endAt - plan[1].startAt).toBe(60);
   });
 
-  // ── getNearestReferenceDistance ─────────────────────────────────────────
+  it("falls back: missing drop-off ends at pickup, missing both uses legacy location", () => {
+    const plan = routeOptimizer.buildDayPlan(
+      [
+        { time: "10:00", pickupLocation: { latitude: 53.05, longitude: -2.3 } },
+        { time: "12:00", location: { latitude: 53.03, longitude: -2.24 } },
+      ],
+      ROUTE
+    );
+    expect(plan[0].endLoc).toEqual({ lat: 53.05, lng: -2.3 });
+    expect(plan[1].startLoc).toEqual({ lat: 53.03, lng: -2.24 });
+  });
 
-  describe("getNearestReferenceDistance", () => {
-    const userLocation = { lat: 53.02, long: -2.23 };
+  it("keeps lessons without a location so they still block their time", () => {
+    const plan = routeOptimizer.buildDayPlan([{ time: "10:00", location: null }], ROUTE);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].startLoc).toBeNull();
+  });
 
-    it("returns distance from base when no bookings", () => {
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "12:00",
-        [],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const expected = haversine(
-        userLocation.lat,
-        userLocation.long,
-        INSTRUCTOR_BASE.lat,
-        INSTRUCTOR_BASE.long
-      );
-      expect(dist).toBeCloseTo(expected, 5);
-    });
-
-    it("returns distance from nearest booking when one is closer than base", () => {
-      const nearbyBooking = makeBooking("10:00", 53.021, -2.231);
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "11:00",
-        [nearbyBooking],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const distToBooking = haversine(53.02, -2.23, 53.021, -2.231);
-      expect(dist).toBeCloseTo(distToBooking, 5);
-    });
-
-    it("returns base distance when all bookings are farther than base", () => {
-      const farBooking = makeBooking("10:00", 54.0, -3.0); // very far
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "11:00",
-        [farBooking],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const distToBase = haversine(
-        userLocation.lat,
-        userLocation.long,
-        INSTRUCTOR_BASE.lat,
-        INSTRUCTOR_BASE.long
-      );
-      expect(dist).toBeCloseTo(distToBase, 5);
-    });
-
-    it("skips bookings with invalid locations", () => {
-      const bookings = [
-        { time: "10:00", location: null },
-        makeBooking("12:00", 53.021, -2.231),
-      ];
-
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "13:00",
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const distToValidBooking = haversine(53.02, -2.23, 53.021, -2.231);
-      expect(dist).toBeCloseTo(distToValidBooking, 5);
-    });
-
-    it("picks the closest among multiple bookings", () => {
-      const bookings = [
-        makeBooking("09:00", 53.5, -2.5),   // far
-        makeBooking("11:00", 53.021, -2.231), // close
-        makeBooking("14:00", 53.3, -2.4),    // medium
-      ];
-
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "12:00",
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const closest = haversine(53.02, -2.23, 53.021, -2.231);
-      expect(dist).toBeCloseTo(closest, 5);
-    });
+  it("uses the configured lesson length", () => {
+    const plan = routeOptimizer.buildDayPlan([makeBooking("10:00", 53, -2)], route({ lessonDurationMin: 90 }));
+    expect(plan[0].endAt).toBe(600 + 90);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INTEGRATION TESTS  (filterAvailableSlotsByLocation – Mongoose mocked)
+// scoreSlots — the insertion-cost model
 // ═══════════════════════════════════════════════════════════════════════════
 
-const INST_OBJ = { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } };
+describe("scoreSlots", () => {
+  const A = { lat: 53.06, long: -2.25 };
+  const B = { lat: 53.10, long: -2.30 };
+  const U = { lat: 53.03, long: -2.22 };
 
-describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+  it("counts the drive out to the next lesson, not just the drive in (P1)", async () => {
+    // 09:00 at A, 13:00 at B. 10:00 is 2 min from A but 40 min from B;
+    // the learner is equally placed for a 11:00 between... use one learner and
+    // compare a slot with a far next lesson against one with home after.
+    mockMatrix({
+      [leg(A, U)]: 2,
+      [leg(U, B)]: 40,
+      [leg(A, B)]: 10,
+      [leg(U, BASE)]: 4,
+      [leg(B, BASE)]: 4,
+    });
+    const bookings = [makeBooking("09:00", A.lat, A.long), makeBooking("13:00", B.lat, B.long)];
+
+    const scored = await routeOptimizer.scoreSlots(["10:00", "14:00"], bookings, U, BASE, ROUTE);
+    const ten = scored.find((s) => s.slot === "10:00");
+
+    // In 2 + out 40 − direct 10 = 32 extra minutes
+    expect(ten.addedDrive).toBeCloseTo(32, 5);
+    expect(ten.reason).toMatch(/between your 09:00 and 13:00 lessons/);
   });
 
-  it("returns original slots when input is empty", async () => {
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      [],
-      "2025-06-15",
-      INST_OBJ,
-      "447000000001"
+  it("weights legs to and from home (P6)", async () => {
+    mockMatrix({ [leg(BASE, U)]: 10, [leg(U, BASE)]: 10 });
+
+    const half = await routeOptimizer.scoreSlots(["09:00"], [], U, BASE, ROUTE);
+    expect(half[0].addedDrive).toBeCloseTo(10, 5); // 0.5×10 + 0.5×10
+
+    const full = await routeOptimizer.scoreSlots(["09:00"], [], U, BASE, route({ homeLegWeight: 1 }));
+    expect(full[0].addedDrive).toBeCloseTo(20, 5);
+
+    const off = await routeOptimizer.scoreSlots(["09:00"], [], U, BASE, route({ homeLegWeight: 0 }));
+    expect(off[0].addedDrive).toBe(0);
+  });
+
+  it("ignores home legs when the instructor has no base (P8)", async () => {
+    const scored = await routeOptimizer.scoreSlots(["09:00"], [], U, null, ROUTE);
+    expect(scored[0].addedDrive).toBe(0);
+    expect(scored[0].reason).toBe("no other lessons that day");
+  });
+
+  it("rejects a back-to-back slot the instructor can't reach in time (P2)", async () => {
+    mockMatrix({ [leg(A, U)]: 18 });
+    const scored = await routeOptimizer.scoreSlots(["10:00"], [makeBooking("09:00", A.lat, A.long)], U, BASE, ROUTE);
+
+    expect(scored[0].feasible).toBe(false);
+    expect(scored[0].reason).toMatch(/can't get there in time after your 09:00 lesson \(18 min drive\)/);
+  });
+
+  it("allows a back-to-back slot within the grace period", async () => {
+    mockMatrix({ [leg(A, U)]: 8 });
+    const scored = await routeOptimizer.scoreSlots(["10:00"], [makeBooking("09:00", A.lat, A.long)], U, BASE, ROUTE);
+    expect(scored[0].feasible).toBe(true);
+  });
+
+  it("rejects a slot that would make the instructor late for the next lesson", async () => {
+    mockMatrix({ [leg(U, B)]: 25 });
+    const scored = await routeOptimizer.scoreSlots(["12:00"], [makeBooking("13:00", B.lat, B.long)], U, BASE, ROUTE);
+    expect(scored[0].feasible).toBe(false);
+    expect(scored[0].reason).toMatch(/couldn't reach your 13:00 lesson/);
+  });
+
+  it("a bigger grace period lets the same slot through", async () => {
+    mockMatrix({ [leg(A, U)]: 18 });
+    const scored = await routeOptimizer.scoreSlots(
+      ["10:00"], [makeBooking("09:00", A.lat, A.long)], U, BASE, route({ travelGraceMin: 20 })
     );
-
-    expect(result).toEqual([]);
+    expect(scored[0].feasible).toBe(true);
   });
 
-  it("returns original slots when input is null", async () => {
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      null,
-      "2025-06-15",
-      INST_OBJ,
-      "447000000001"
+  it("marks slots that overlap an existing lesson as infeasible", async () => {
+    const scored = await routeOptimizer.scoreSlots(
+      ["09:30"], [makeBooking("09:00", A.lat, A.long)], U, BASE, ROUTE
     );
-
-    expect(result).toEqual(null);
+    expect(scored[0].feasible).toBe(false);
+    expect(scored[0].reason).toMatch(/overlaps your 09:00 lesson/);
   });
 
-  it("returns all slots when user has no valid location", async () => {
-    User.findOne.mockResolvedValue({ phone: "447000000001", location: {} });
+  it("penalises a slot that leaves another free slot unbookable (P4)", async () => {
+    const far = { lat: 53.2, long: -2.45 };
+    mockMatrix({ [leg(far, A)]: 90, [leg(BASE, far)]: 5, [leg(far, BASE)]: 5 });
+    // Lesson at A at 12:00. Candidate 09:00 at "far" ends 10:00; the drive to A
+    // (90 min) still makes 12:00 with grace. But a 10:00 lesson in between would
+    // have only 10 + 70 = 80 min of slack for a 90-min drive, so it can't be sold.
+    const scored = await routeOptimizer.scoreSlots(
+      ["09:00", "10:00"],
+      [makeBooking("12:00", A.lat, A.long)],
+      far,
+      BASE,
+      ROUTE
+    );
+    const nine = scored.find((s) => s.slot === "09:00");
+    expect(nine.feasible).toBe(true);
+    expect(nine.newlyStranded).toBe(1);
+    expect(nine.reason).toMatch(/leaves 1 free slot hard to fill/);
+    expect(nine.score).toBeCloseTo(nine.addedDrive + 15, 5);
+  });
 
+  it("gives a small bonus to back-to-back slots so days stay compact", async () => {
+    mockMatrix({ [leg(A, U)]: 3 });
+    const scored = await routeOptimizer.scoreSlots(
+      ["10:00", "16:00"], [makeBooking("09:00", A.lat, A.long)], U, BASE, ROUTE
+    );
+    const ten = scored.find((s) => s.slot === "10:00");
+    const four = scored.find((s) => s.slot === "16:00");
+    expect(ten.adjacent).toBe(true);
+    expect(four.adjacent).toBe(false);
+    expect(ten.score).toBeLessThan(four.score);
+    expect(scored[0].slot).toBe("10:00");
+  });
+
+  it("treats lessons with no location as zero travel but still blocks their time", async () => {
+    const scored = await routeOptimizer.scoreSlots(
+      ["10:00", "11:00"], [{ time: "10:00", location: null }], U, BASE, ROUTE
+    );
+    const ten = scored.find((s) => s.slot === "10:00");
+    const eleven = scored.find((s) => s.slot === "11:00");
+    expect(ten.feasible).toBe(false);
+    expect(eleven.feasible).toBe(true);
+  });
+
+  it("falls back to straight-line estimates when the Routes API returns nothing", async () => {
+    const scored = await routeOptimizer.scoreSlots(["09:00"], [], U, BASE, ROUTE);
+    const km = haversine(U.lat, U.long, BASE.lat, BASE.long);
+    expect(scored[0].addedDrive).toBeCloseTo(km * 2, 5); // 0.5 × 2 legs × km × 2 min/km
+  });
+
+  it("falls back when the matrix call throws", async () => {
+    distanceMatrixService.getDrivingMatrix.mockRejectedValueOnce(new Error("boom"));
+    const scored = await routeOptimizer.scoreSlots(["09:00"], [], U, BASE, ROUTE);
+    expect(scored[0].feasible).toBe(true);
+    expect(scored[0].addedDrive).toBeGreaterThan(0);
+  });
+
+  it("sorts feasible slots first, then by score", async () => {
+    mockMatrix({ [leg(A, U)]: 30 });
+    const scored = await routeOptimizer.scoreSlots(
+      ["10:00", "14:00", "15:00"], [makeBooking("09:00", A.lat, A.long)], U, BASE, ROUTE
+    );
+    expect(scored[scored.length - 1].slot).toBe("10:00");
+    expect(scored[scored.length - 1].feasible).toBe(false);
+    for (let i = 1; i < scored.length - 1; i++) {
+      expect(scored[i - 1].score).toBeLessThanOrEqual(scored[i].score);
+    }
+  });
+
+  it("makes one matrix call covering learner, home and every lesson start/end", async () => {
+    const bookings = [
+      { time: "09:00", pickupLocation: { latitude: 53.01, longitude: -2.21 }, dropoffLocation: { latitude: 53.05, longitude: -2.3 } },
+      makeBooking("14:00", 53.02, -2.23),
+    ];
+    await routeOptimizer.scoreSlots(["11:00", "16:00"], bookings, U, BASE, ROUTE, new Date("2030-01-01T09:00:00Z"));
+
+    expect(distanceMatrixService.getDrivingMatrix).toHaveBeenCalledTimes(1);
+    const [origins, destinations, departure] = distanceMatrixService.getDrivingMatrix.mock.calls[0];
+    // origins: learner, home, each lesson's END (09:00 drop-off, 14:00 location)
+    expect(origins).toEqual([
+      { lat: U.lat, lng: U.long },
+      { lat: BASE.lat, lng: BASE.long },
+      { lat: 53.05, lng: -2.3 },
+      { lat: 53.02, lng: -2.23 },
+    ]);
+    // destinations: learner, home, each lesson's START (09:00 pickup, 14:00 location)
+    expect(destinations).toEqual([
+      { lat: U.lat, lng: U.long },
+      { lat: BASE.lat, lng: BASE.long },
+      { lat: 53.01, lng: -2.21 },
+      { lat: 53.02, lng: -2.23 },
+    ]);
+    expect(departure).toEqual(new Date("2030-01-01T09:00:00Z"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// filterAvailableSlotsByLocation / planDay
+// ═══════════════════════════════════════════════════════════════════════════
+
+const INST = { phoneNumberId: "inst-1", baseLocation: { latitude: BASE.lat, longitude: BASE.long } };
+
+function mockUser(lat, long, schedulingPrefs = {}) {
+  User.findOne.mockResolvedValue({
+    phone: "447000000001",
+    location: lat === undefined ? {} : { latitude: lat, longitude: long },
+    schedulingPrefs,
+  });
+}
+
+describe("filterAvailableSlotsByLocation", () => {
+  it("returns empty / null input unchanged", async () => {
+    expect(await routeOptimizer.filterAvailableSlotsByLocation([], "2025-06-15", INST, "4470")).toEqual([]);
+    expect(await routeOptimizer.filterAvailableSlotsByLocation(null, "2025-06-15", INST, "4470")).toBeNull();
+  });
+
+  it("returns every slot when the learner has no location", async () => {
+    mockUser();
+    Booking.find.mockResolvedValue([]);
     const slots = ["09:00", "10:00", "11:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      INST_OBJ,
-      "447000000001"
-    );
-
-    expect(result).toEqual(slots);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("User location not found")
-    );
+    expect(await routeOptimizer.filterAvailableSlotsByLocation(slots, "2025-06-15", INST, "4470")).toEqual(slots);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("User location not found"));
   });
 
-  it("returns all slots when user is not found in DB", async () => {
+  it("returns every slot when the learner isn't found", async () => {
     User.findOne.mockResolvedValue(null);
-
+    Booking.find.mockResolvedValue([]);
     const slots = ["09:00", "12:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      INST_OBJ,
-      "447000000002"
-    );
-
-    expect(result).toEqual(slots);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("User location not found")
-    );
+    expect(await routeOptimizer.filterAvailableSlotsByLocation(slots, "2025-06-15", INST, "4470")).toEqual(slots);
   });
 
-  it("close user gets all slots on empty day", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000001",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
-    Booking.find.mockResolvedValue([]);
-
-    const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      INST_OBJ,
-      "447000000001"
-    );
-
-    // Very close to base → all within threshold
-    expect(result.length).toBe(slots.length);
-  });
-
-  it("far user gets top-3 fallback on empty day", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000002",
-      location: { latitude: 53.2, longitude: -2.45 },
-    });
-    Booking.find.mockResolvedValue([]);
-
-    const slots = ["09:00", "10:00", "11:00", "12:00", "14:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      INST_OBJ,
-      "447000000002"
-    );
-
-    // Far user with no bookings → top-3 fallback
-    expect(result.length).toBe(3);
-  });
-
-  it("uses nearby bookings to filter when bookings exist close to user", async () => {
-    // User close to base
-    User.findOne.mockResolvedValue({
-      phone: "447000000003",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
-
-    // One confirmed booking at 10:00, very close to user
-    Booking.find.mockResolvedValue([
-      makeBooking("10:00", 53.019, -2.221),
-    ]);
-
-    const slots = ["09:00", "11:00", "14:00", "16:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000003"
-    );
-
-    // User is close to base AND close to booking → all within threshold
-    expect(result.length).toBeGreaterThan(0);
-    // Result should be chronologically sorted
-    for (let i = 1; i < result.length; i++) {
-      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-        routeOptimizer.timeToMinutes(result[i - 1])
-      );
-    }
-  });
-
-  it("preserves chronological order in the result", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000004",
-      location: { latitude: 53.017, longitude: -2.219 },
-    });
-
-    Booking.find.mockResolvedValue([
-      makeBooking("15:00", 53.018, -2.22),
-      makeBooking("09:00", 53.016, -2.218),
-    ]);
-
-    const slots = ["08:00", "10:00", "14:00", "16:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000004"
-    );
-
-    for (let i = 1; i < result.length; i++) {
-      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-        routeOptimizer.timeToMinutes(result[i - 1])
-      );
-    }
-  });
-
-  it("returns unfiltered slots on unexpected error (graceful fallback)", async () => {
+  it("returns the input unchanged on unexpected errors", async () => {
     User.findOne.mockRejectedValue(new Error("DB connection lost"));
-
     const slots = ["09:00", "11:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000005"
-    );
-
-    expect(result).toEqual(slots);
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("Route optimiser error")
-    );
+    expect(await routeOptimizer.filterAvailableSlotsByLocation(slots, "2025-06-15", INST, "4470")).toEqual(slots);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Route optimiser error"));
   });
 
-  it("handles Booking.find returning empty array", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000006",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
+  it("looks the learner up for this instructor only", async () => {
+    // Changed from { phone } – a learner can have separate records per instructor.
+    User.findOne.mockResolvedValue(null);
     Booking.find.mockResolvedValue([]);
-
-    const slots = ["09:00", "12:00", "15:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000006"
-    );
-
-    expect(result.length).toBeGreaterThan(0);
-    expect(result.length).toBeLessThanOrEqual(slots.length);
+    await routeOptimizer.filterAvailableSlotsByLocation(["09:00"], "2025-07-01", INST, "447123456789");
+    expect(User.findOne).toHaveBeenCalledWith({ phone: "447123456789", instructorId: "inst-1" });
   });
 
-  it("handles bookings with mixed valid/invalid locations", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000007",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
-
-    Booking.find.mockResolvedValue([
-      makeBooking("09:00", 53.019, -2.221),
-      { time: "11:00", location: null, status: "confirmed" },   // invalid
-      { time: "13:00", location: { latitude: NaN, longitude: -2.22 }, status: "confirmed" }, // invalid
-      makeBooking("15:00", 53.02, -2.23),
-    ]);
-
-    const slots = ["10:00", "12:00", "14:00", "16:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-06-15",
-      { phoneNumberId: "inst-1", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000007"
-    );
-
-    // Should still work, using only the two valid bookings
-    expect(result.length).toBeGreaterThan(0);
-  });
-
-  it("queries Booking with correct filters", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000000008",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
+  it("queries the instructor's active bookings for the date", async () => {
+    mockUser(53.018, -2.22);
     Booking.find.mockResolvedValue([]);
-
-    await routeOptimizer.filterAvailableSlotsByLocation(
-      ["09:00"],
-      "2025-07-01",
-      { phoneNumberId: "inst-42", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } },
-      "447000000008"
-    );
-
+    await routeOptimizer.filterAvailableSlotsByLocation(["09:00"], "2025-07-01", { ...INST, phoneNumberId: "inst-42" }, "4470");
     expect(Booking.find).toHaveBeenCalledWith({
       date: "2025-07-01",
       instructorId: "inst-42",
@@ -575,1123 +399,347 @@ describe("RouteOptimizer – Integration Tests (filterAvailableSlotsByLocation)"
     });
   });
 
-  it("queries User with correct phone number", async () => {
-    User.findOne.mockResolvedValue(null);
+  it("offers every slot to a learner close to home on an empty day", async () => {
+    mockUser(53.018, -2.22);
+    Booking.find.mockResolvedValue([]);
+    const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
+    expect(await routeOptimizer.filterAvailableSlotsByLocation(slots, "2025-06-15", INST, "4470")).toEqual(slots);
+  });
 
-    await routeOptimizer.filterAvailableSlotsByLocation(
-      ["09:00"],
-      "2025-07-01",
-      INST_OBJ,
-      "447123456789"
+  it("offers the 3 best slots when nothing is within the drive limit", async () => {
+    mockUser(53.2, -2.45); // ~20 km → ~40 min each way
+    Booking.find.mockResolvedValue([]);
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      ["09:00", "10:00", "11:00", "12:00", "14:00"], "2025-06-15", INST, "4470"
     );
+    expect(result).toHaveLength(3);
+  });
 
-    expect(User.findOne).toHaveBeenCalledWith({ phone: "447123456789" });
+  it("uses the conversation's pickup instead of the profile location", async () => {
+    mockUser(53.2, -2.45); // far profile location
+    Booking.find.mockResolvedValue([]);
+    const slots = ["09:00", "10:00", "11:00", "12:00"];
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      slots, "2025-08-01", INST, "4470", { lat: 53.018, long: -2.22 }
+    );
+    expect(result).toEqual(slots);
+  });
+
+  it("ignores an override with invalid types", async () => {
+    mockUser(53.2, -2.45);
+    Booking.find.mockResolvedValue([]);
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      ["09:00", "10:00", "11:00", "12:00"], "2025-08-01", INST, "4470", { lat: "53.02", long: -2.23 }
+    );
+    expect(result).toHaveLength(3); // fell back to the far profile location
+  });
+
+  it("returns results in chronological order", async () => {
+    mockUser(53.017, -2.219);
+    Booking.find.mockResolvedValue([makeBooking("15:00", 53.018, -2.22), makeBooking("09:00", 53.016, -2.218)]);
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(
+      ["08:00", "10:00", "14:00", "16:00"], "2025-06-15", INST, "4470"
+    );
+    const minutes = result.map((t) => routeOptimizer.timeToMinutes(t));
+    expect(minutes).toEqual([...minutes].sort((a, b) => a - b));
+  });
+
+  it("never offers slots the instructor can't reach, even as a fallback", async () => {
+    mockUser(53.2, -2.45);
+    Booking.find.mockResolvedValue([makeBooking("09:00", 53.0168, -2.2191), makeBooking("11:00", 53.0168, -2.2191)]);
+    // 10:00 sits between two lessons 40 min away → unreachable
+    const result = await routeOptimizer.filterAvailableSlotsByLocation(["10:00"], "2025-06-15", INST, "4470");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("planDay – instructor settings", () => {
+  it("never offers a time that clashes with a lesson already in the database", async () => {
+    // e.g. a lesson with no Google Calendar event, so the calendar thinks 11:00 is free
+    Booking.find.mockResolvedValue([{ time: "11:00", date: "2030-10-21", status: "confirmed" }]);
+    const free = ["09:00", "10:00", "11:00", "14:00"];
+
+    const unknownLocation = await routeOptimizer.planDay({ date: "2030-10-21", instructor: INST, availableSlots: free });
+    expect(unknownLocation.offered).toEqual(["09:00", "10:00", "14:00"]); // 10:00–11:00 is back-to-back, fine
+    expect(unknownLocation.booked).toEqual(["11:00"]);
+
+    const routingOff = await routeOptimizer.planDay({
+      date: "2030-10-21", instructor: { ...INST, routeSettings: { preset: "off" } }, availableSlots: free, userLoc: { lat: 53.2, long: -2.45 },
+    });
+    expect(routingOff.offered).not.toContain("11:00");
+  });
+
+  it("offers every free slot unscored when routing is off", async () => {
+    Booking.find.mockResolvedValue([]);
+    const inst = { ...INST, routeSettings: { preset: "off" } };
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: inst, availableSlots: ["14:00", "09:00"], userLoc: { lat: 53.2, long: -2.45 },
+    });
+    expect(day.offered).toEqual(["09:00", "14:00"]);
+    expect(day.evaluations).toEqual([]);
+    expect(distanceMatrixService.getDrivingMatrix).not.toHaveBeenCalled();
+  });
+
+  it("'tight' offers fewer slots than 'relaxed' for a mid-distance learner", async () => {
+    Booking.find.mockResolvedValue([]);
+    const learner = { lat: 53.07, long: -2.30 }; // ~8 km → ~16 min
+    const slots = ["09:00", "10:00", "11:00", "12:00", "14:00"];
+    const tight = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: { ...INST, routeSettings: { preset: "tight" } }, availableSlots: slots, userLoc: learner,
+    });
+    const relaxed = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: { ...INST, routeSettings: { preset: "relaxed" } }, availableSlots: slots, userLoc: learner,
+    });
+    expect(relaxed.offered).toEqual(slots);
+    expect(tight.offered).toHaveLength(3);
+    expect(tight.usedFallback).toBe(true);
+  });
+
+  it("closes the day once the daily lesson limit is reached", async () => {
+    Booking.find.mockResolvedValue([makeBooking("09:00", 53, -2), makeBooking("10:00", 53, -2)]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15",
+      instructor: { ...INST, botSettings: { maxLessonsPerDay: 2 } },
+      availableSlots: ["14:00"],
+      userLoc: { lat: 53.02, long: -2.22 },
+    });
+    expect(day.offered).toEqual([]);
+    expect(day.blockedReason).toBe("day_full");
+  });
+});
+
+describe("planDay – learner preferences", () => {
+  const far = { lat: 53.2, long: -2.45 };
+  const slots = ["09:00", "10:00", "11:00", "12:00", "14:00"];
+
+  it("priority learners get every reachable slot regardless of drive", async () => {
+    Booking.find.mockResolvedValue([]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: INST, availableSlots: slots, userLoc: far, prefs: { priority: true },
+    });
+    expect(day.offered).toEqual(slots);
+  });
+
+  it("a per-learner drive limit overrides the instructor's", async () => {
+    Booking.find.mockResolvedValue([]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: INST, availableSlots: slots, userLoc: far, prefs: { maxAddedDriveMin: 60 },
+    });
+    expect(day.offered).toEqual(slots);
+  });
+
+  it("removes the learner's unavailable times", async () => {
+    Booking.find.mockResolvedValue([]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-16", // Monday
+      instructor: INST,
+      availableSlots: slots,
+      userLoc: { lat: 53.018, long: -2.22 },
+      prefs: { unavailable: [{ days: [1], from: "09:00", to: "12:00" }] },
+    });
+    expect(day.offered).toEqual(["12:00", "14:00"]);
+  });
+
+  it("reports the learner's preferred slots", async () => {
+    Booking.find.mockResolvedValue([]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-16",
+      instructor: INST,
+      availableSlots: slots,
+      userLoc: { lat: 53.018, long: -2.22 },
+      prefs: { preferredTimes: ["10:00", "14:00"], preferredDays: [1] },
+    });
+    expect(day.preferred).toEqual(["10:00", "14:00"]);
+  });
+
+  it("closes the date when the learner's weekly limit is reached", async () => {
+    Booking.find.mockResolvedValue([]);
+    Booking.countDocuments.mockResolvedValue(2);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-18", // Wednesday
+      instructor: INST,
+      availableSlots: slots,
+      userLoc: { lat: 53.018, long: -2.22 },
+      prefs: { maxLessonsPerWeek: 2 },
+      userPhone: "4470",
+    });
+    expect(day.blockedReason).toBe("weekly_limit");
+    expect(Booking.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({ userPhone: "4470", date: { $gte: "2025-06-16", $lte: "2025-06-22" } })
+    );
+  });
+
+  it("uses a saved place when no pickup has been given", async () => {
+    User.findOne.mockResolvedValue({
+      location: { latitude: 53.2, longitude: -2.45 },
+      schedulingPrefs: { savedPlaces: [{ label: "College", latitude: 53.018, longitude: -2.22 }] },
+    });
+    const ctx = await routeOptimizer.resolveUserContext(INST, "4470");
+    expect(ctx.userLoc).toEqual({ lat: 53.018, long: -2.22 });
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EDGE CASE TESTS
+// Multi-learner day simulation (Stoke-on-Trent area)
 // ═══════════════════════════════════════════════════════════════════════════
-
-describe("RouteOptimizer – Edge Cases", () => {
-  describe("scoreSlots edge cases", () => {
-    it("handles user at exact same location as instructor base", async () => {
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "12:00"],
-        [],
-        INSTRUCTOR_BASE,
-        INSTRUCTOR_BASE
-      );
-
-      // Distance is 0 → score = 1/(1+0) = 1
-      expect(scored[0].score).toBeCloseTo(1, 5);
-    });
-
-    it("handles user at exact same location as an existing booking", async () => {
-      const bookingLoc = { lat: 53.05, long: -2.25 };
-      const bookings = [makeBooking("10:00", bookingLoc.lat, bookingLoc.long)];
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["11:00"],
-        bookings,
-        bookingLoc,
-        INSTRUCTOR_BASE
-      );
-
-      // Distance from ref is 0, gap is 60min → score = 1 * (1/2) = 0.5
-      expect(scored[0].score).toBeCloseTo(0.5, 1);
-    });
-
-    it("handles very large number of slots", async () => {
-      const slots = [];
-      for (let h = 8; h <= 18; h++) {
-        for (let m = 0; m < 60; m += 15) {
-          slots.push(`${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`);
-        }
-      }
-
-      const scored = await routeOptimizer.scoreSlots(
-        slots,
-        [],
-        { lat: 53.02, long: -2.23 },
-        INSTRUCTOR_BASE
-      );
-
-      expect(scored).toHaveLength(slots.length);
-    });
-  });
-
-  describe("getNearestReferenceDistance edge cases", () => {
-    it("returns 0 when user is at the base", () => {
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "12:00",
-        [],
-        INSTRUCTOR_BASE,
-        INSTRUCTOR_BASE
-      );
-      expect(dist).toBeCloseTo(0, 5);
-    });
-
-    it("returns 0 when user is at an existing booking location", () => {
-      const loc = { lat: 53.05, long: -2.25 };
-      const bookings = [makeBooking("10:00", loc.lat, loc.long)];
-
-      const dist = routeOptimizer.getNearestReferenceDistance(
-        "11:00",
-        bookings,
-        loc,
-        INSTRUCTOR_BASE
-      );
-      expect(dist).toBeCloseTo(0, 5);
-    });
-  });
-
-  describe("haversine sanity checks (used by RouteOptimizer)", () => {
-    it("returns 0 for same coordinates", () => {
-      expect(haversine(53.0, -2.0, 53.0, -2.0)).toBeCloseTo(0, 5);
-    });
-
-    it("returns correct known distance (London to Manchester ~260km)", () => {
-      const dist = haversine(51.5074, -0.1278, 53.4808, -2.2426);
-      expect(dist).toBeGreaterThan(250);
-      expect(dist).toBeLessThan(270);
-    });
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// REAL-LIFE MULTI-USER SIMULATION TESTS
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// These simulate a realistic day where multiple users book one after another.
-// Each test shows the schedule growing and checks how the optimizer adapts
-// its slot suggestions for each new user based on existing bookings.
-//
-// Geography used (around Stoke-on-Trent / Newcastle-under-Lyme area):
-//   Instructor base:    53.0168, -2.2191  (default env)
-//   CLOSE user  (~2km): 53.0300, -2.2200  "Alice"  – nearby neighbourhood
-//   MID user    (~6km): 53.0600, -2.2500  "Bob"    – next town over
-//   FAR user   (~20km): 53.2000, -2.4500  "Charlie"– different city
-//   CLOSE user2 (~1km): 53.0200, -2.2150  "Diana"  – right next to base
-//   MID user2   (~7km): 53.0700, -2.1600  "Eve"    – east side of town
 
 const USERS = {
-  alice:   { phone: "447111000001", lat: 53.0300, long: -2.2200 },
-  bob:     { phone: "447111000002", lat: 53.0600, long: -2.2500 },
-  charlie: { phone: "447111000003", lat: 53.2000, long: -2.4500 },
-  diana:   { phone: "447111000004", lat: 53.0200, long: -2.2150 },
-  eve:     { phone: "447111000005", lat: 53.0700, long: -2.1600 },
+  alice: { lat: 53.03, long: -2.22 }, // ~1.5 km from base
+  bob: { lat: 53.06, long: -2.25 }, // ~5 km
+  charlie: { lat: 53.2, long: -2.45 }, // ~25 km
+  diana: { lat: 53.02, long: -2.215 }, // ~0.5 km
+  eve: { lat: 53.07, long: -2.16 }, // ~7 km
 };
-
 const DATE = "2025-06-20";
-const INST = { phoneNumberId: "inst-main", baseLocation: { latitude: 53.0168046, longitude: -2.2190649 } };
-const ALL_SLOTS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+const ALL = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+const at = (time, who) => makeBooking(time, USERS[who].lat, USERS[who].long);
 
-/** Helper: mock User.findOne to return the right user by phone */
-function mockUserLookup(userKey) {
-  const u = USERS[userKey];
-  User.findOne.mockResolvedValue({
-    phone: u.phone,
-    location: { latitude: u.lat, longitude: u.long },
-  });
+async function offer(who, bookings, free) {
+  mockUser(USERS[who].lat, USERS[who].long);
+  Booking.find.mockResolvedValue(bookings);
+  return routeOptimizer.filterAvailableSlotsByLocation(free, DATE, INST, who);
 }
 
-describe("RouteOptimizer – Multi-User Day Simulation", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+describe("Multi-learner day simulation", () => {
+  it("first learner of the day near home sees every slot", async () => {
+    expect(await offer("alice", [], [...ALL])).toEqual(ALL);
   });
 
-  // ── Scenario 1: First booking of the day (empty schedule) ──────────
-
-  it("Scenario 1: Alice books first – close user gets all slots (empty day)", async () => {
-    mockUserLookup("alice");
-    Booking.find.mockResolvedValue([]); // no bookings yet
-
-    const freeSlots = [...ALL_SLOTS];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.alice.phone
-    );
-
-    // Alice is ~2km from base → ~4min driving (haversine fallback) → within 20min threshold → all slots offered
-    expect(result.length).toBe(ALL_SLOTS.length);
-    expect(result).toEqual(ALL_SLOTS); // chronological
+  it("a far learner on a sparse day gets the 3 best reachable slots", async () => {
+    const result = await offer("charlie", [at("10:00", "alice")], ALL.filter((s) => s !== "10:00"));
+    expect(result).toHaveLength(3);
+    // Straight after Alice's lesson is unreachable from 25 km away
+    expect(result).not.toContain("11:00");
   });
 
-  // ── Scenario 2: Second user, schedule has 1 booking ────────────────
-
-  it("Scenario 2: Bob books second – mid-distance user with Alice@10:00 already booked", async () => {
-    mockUserLookup("bob");
-    // Alice already confirmed at 10:00
-    Booking.find.mockResolvedValue([
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-    ]);
-
-    // 10:00 is taken, so calendar gives these
-    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.bob.phone
+  it("a nearby learner can't be squeezed straight after a lesson 5 km away", async () => {
+    // Changed: previously every afternoon slot was offered. Diana's 12:00
+    // follows Bob's 11:00 lesson ~5 km away (~10 min) with zero travel time
+    // between hourly lessons, which only just exceeds the 10-min grace.
+    const result = await offer(
+      "diana",
+      [at("09:00", "charlie"), at("10:00", "alice"), at("11:00", "bob")],
+      ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"]
     );
-
-    // Bob is ~6km from base → ~12min driving (haversine fallback) → within 20min → should get slots
-    expect(result.length).toBeGreaterThan(0);
-    // Result must be chronological
-    for (let i = 1; i < result.length; i++) {
-      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-        routeOptimizer.timeToMinutes(result[i - 1])
-      );
-    }
+    expect(result).toEqual(["13:00", "14:00", "15:00", "16:00", "17:00"]);
   });
 
-  // ── Scenario 3: Far-away user when schedule is sparse ──────────────
+  it("a cluster of nearby lessons makes the slot right after it the best fit", async () => {
+    const cluster = [makeBooking("09:00", 53.028, -2.218), makeBooking("10:00", 53.031, -2.221), makeBooking("11:00", 53.029, -2.219)];
+    const free = ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+    expect(await offer("alice", cluster, free)).toEqual(free);
 
-  it("Scenario 3: Charlie (far user) – only gets top-3 fallback when schedule is sparse", async () => {
-    mockUserLookup("charlie");
-    // Only Alice@10:00 booked
-    Booking.find.mockResolvedValue([
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-    ]);
-
-    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.charlie.phone
-    );
-
-    // Charlie is ~20km from base and ~20km from Alice → ~40min driving → no slots within 20min
-    // Should fallback to top-3 best-scored
-    expect(result.length).toBe(3);
-    // Still chronological
-    for (let i = 1; i < result.length; i++) {
-      expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-        routeOptimizer.timeToMinutes(result[i - 1])
-      );
-    }
+    const scored = await routeOptimizer.scoreSlots(free, cluster, USERS.alice, BASE, ROUTE);
+    expect(scored[0].slot).toBe("12:00");
   });
 
-  // ── Scenario 4: Half-full schedule, close user ─────────────────────
-
-  it("Scenario 4: Diana (very close) sees all remaining slots when day is half-booked", async () => {
-    mockUserLookup("diana");
-    // Morning is booked: Alice@10:00, Bob@11:00, Charlie@09:00
-    Booking.find.mockResolvedValue([
-      makeBooking("09:00", USERS.charlie.lat, USERS.charlie.long),
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("11:00", USERS.bob.lat, USERS.bob.long),
-    ]);
-
-    // Only afternoon free
-    const freeSlots = ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.diana.phone
-    );
-
-    // Diana is ~1km from base → ~2min driving → everything is within threshold
-    expect(result.length).toBe(6);
-    expect(result).toEqual(freeSlots);
+  it("the last slot of the day is offered if it's reachable", async () => {
+    const packed = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"].map((t) => at(t, "alice"));
+    // 16:00 lesson ends at Alice's (~1.5 km) – reachable for Diana
+    expect(await offer("diana", packed, ["17:00"])).toEqual(["17:00"]);
+    // …but not for Charlie 25 km away with no gap
+    expect(await offer("charlie", packed, ["17:00"])).toEqual([]);
   });
 
-  // ── Scenario 5: Busy schedule, mid-distance user ───────────────────
-
-  it("Scenario 5: Eve (mid-distance) gets optimized slots on a busy day", async () => {
-    mockUserLookup("eve");
-    // 6 out of 9 slots booked, spread across the day
-    Booking.find.mockResolvedValue([
-      makeBooking("09:00", USERS.charlie.lat, USERS.charlie.long),
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("11:00", USERS.bob.lat, USERS.bob.long),
-      makeBooking("13:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("14:00", USERS.alice.lat, USERS.alice.long), // Alice double-booked for test
-      makeBooking("16:00", USERS.bob.lat, USERS.bob.long),
-    ]);
-
-    const freeSlots = ["12:00", "15:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.eve.phone
-    );
-
-    // Eve is ~7km from base → ~14min driving → within 20min threshold
-    // She's closer to some bookings → should still get suggestions
-    expect(result.length).toBeGreaterThan(0);
-    expect(result.length).toBeLessThanOrEqual(3);
-  });
-
-  // ── Scenario 6: Far user when schedule is packed with nearby bookings ─
-
-  it("Scenario 6: Charlie (far) on a packed day – still gets top-3 fallback", async () => {
-    mockUserLookup("charlie");
-    // All close-range bookings
-    Booking.find.mockResolvedValue([
-      makeBooking("09:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("11:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("13:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("14:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("15:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("16:00", USERS.diana.lat, USERS.diana.long),
-    ]);
-
-    const freeSlots = ["12:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.charlie.phone
-    );
-
-    // Charlie is far from everyone → top-3 fallback (but only 2 slots available)
-    expect(result.length).toBe(2);
-    expect(result).toEqual(["12:00", "17:00"]);
-  });
-
-  // ── Scenario 7: Two users request simultaneously for same remaining slots ─
-
-  it("Scenario 7: Alice and Charlie compete for last 2 slots – close user gets both, far user gets fallback", async () => {
-    const existingBookings = [
-      makeBooking("09:00", USERS.bob.lat, USERS.bob.long),
-      makeBooking("10:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("11:00", USERS.eve.lat, USERS.eve.long),
-      makeBooking("12:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("13:00", USERS.bob.lat, USERS.bob.long),
-      makeBooking("14:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("16:00", USERS.eve.lat, USERS.eve.long),
-    ];
-
-    const lastSlots = ["15:00", "17:00"];
-
-    // Alice's perspective (close)
-    mockUserLookup("alice");
-    Booking.find.mockResolvedValue(existingBookings);
-    const aliceResult = await routeOptimizer.filterAvailableSlotsByLocation(
-      [...lastSlots], DATE, INST, USERS.alice.phone
-    );
-
-    // Charlie's perspective (far)
-    mockUserLookup("charlie");
-    Booking.find.mockResolvedValue(existingBookings);
-    const charlieResult = await routeOptimizer.filterAvailableSlotsByLocation(
-      [...lastSlots], DATE, INST, USERS.charlie.phone
-    );
-
-    // Alice is close → should see both slots (within threshold)
-    expect(aliceResult.length).toBe(2);
-
-    // Charlie is far → still gets both (only 2 available, top-3 fallback returns all)
-    expect(charlieResult.length).toBe(2);
-
-    // Both should be chronological
-    expect(aliceResult).toEqual(["15:00", "17:00"]);
-    expect(charlieResult).toEqual(["15:00", "17:00"]);
-  });
-
-  // ── Scenario 8: Growing schedule simulation (sequential bookings) ──
-
-  it("Scenario 8: progressive day – each booking narrows options for next user", async () => {
-    const bookingSoFar = [];
-
-    // Step 1: Alice books 10:00 (empty day)
-    mockUserLookup("alice");
-    Booking.find.mockResolvedValue([]);
-    const aliceSlots = await routeOptimizer.filterAvailableSlotsByLocation(
-      [...ALL_SLOTS], DATE, INST, USERS.alice.phone
-    );
-    expect(aliceSlots.length).toBe(ALL_SLOTS.length); // all available, she's close
-    // Simulate: she picks 10:00
-    bookingSoFar.push(makeBooking("10:00", USERS.alice.lat, USERS.alice.long));
-
-    // Step 2: Bob books (10:00 taken)
-    mockUserLookup("bob");
-    Booking.find.mockResolvedValue([...bookingSoFar]);
-    const bobFree = ALL_SLOTS.filter(s => s !== "10:00");
-    const bobSlots = await routeOptimizer.filterAvailableSlotsByLocation(
-      bobFree, DATE, INST, USERS.bob.phone
-    );
-    expect(bobSlots.length).toBeGreaterThan(0);
-    // Simulate: he picks 11:00
-    bookingSoFar.push(makeBooking("11:00", USERS.bob.lat, USERS.bob.long));
-
-    // Step 3: Charlie books (10:00, 11:00 taken) – far away
-    mockUserLookup("charlie");
-    Booking.find.mockResolvedValue([...bookingSoFar]);
-    const charlieFree = ALL_SLOTS.filter(s => !["10:00", "11:00"].includes(s));
-    const charlieSlots = await routeOptimizer.filterAvailableSlotsByLocation(
-      charlieFree, DATE, INST, USERS.charlie.phone
-    );
-    // Charlie is far → top-3 fallback
-    expect(charlieSlots.length).toBe(3);
-    // Simulate: he picks whatever is first offered
-    bookingSoFar.push(makeBooking(charlieSlots[0], USERS.charlie.lat, USERS.charlie.long));
-
-    // Step 4: Diana books (3 slots taken now)
-    mockUserLookup("diana");
-    Booking.find.mockResolvedValue([...bookingSoFar]);
-    const takenSlots = ["10:00", "11:00", charlieSlots[0]];
-    const dianaFree = ALL_SLOTS.filter(s => !takenSlots.includes(s));
-    const dianaSlots = await routeOptimizer.filterAvailableSlotsByLocation(
-      dianaFree, DATE, INST, USERS.diana.phone
-    );
-    // Diana is very close → gets all remaining within threshold
-    expect(dianaSlots.length).toBe(dianaFree.length);
-
-    // Step 5: Eve books (4 slots taken)
-    const dianaPick = dianaSlots[Math.floor(dianaSlots.length / 2)]; // picks a middle slot
-    bookingSoFar.push(makeBooking(dianaPick, USERS.diana.lat, USERS.diana.long));
-    mockUserLookup("eve");
-    Booking.find.mockResolvedValue([...bookingSoFar]);
-    const eveFree = ALL_SLOTS.filter(s => ![...takenSlots, dianaPick].includes(s));
-    const eveSlots = await routeOptimizer.filterAvailableSlotsByLocation(
-      eveFree, DATE, INST, USERS.eve.phone
-    );
-    expect(eveSlots.length).toBeGreaterThan(0);
-    expect(eveSlots.length).toBeLessThanOrEqual(eveFree.length);
-  });
-
-  // ── Scenario 9: Cluster effect – bookings in same area boost nearby slots ─
-
-  it("Scenario 9: cluster of nearby bookings makes optimizer prefer adjacent time slots", async () => {
-    mockUserLookup("alice");
-    // Three bookings all close together in the morning, all near Alice
-    Booking.find.mockResolvedValue([
-      makeBooking("09:00", 53.028, -2.218),
-      makeBooking("10:00", 53.031, -2.221),
-      makeBooking("11:00", 53.029, -2.219),
-    ]);
-
-    const freeSlots = ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      freeSlots, DATE, INST, USERS.alice.phone
-    );
-
-    // Alice is close to the cluster → all slots within threshold
-    expect(result.length).toBe(freeSlots.length);
-
-    // Now verify scoreSlots prefers 12:00 (right after the cluster) over 17:00
-    const scored = await routeOptimizer.scoreSlots(
-      freeSlots,
-      [
-        makeBooking("09:00", 53.028, -2.218),
-        makeBooking("10:00", 53.031, -2.221),
-        makeBooking("11:00", 53.029, -2.219),
-      ],
-      { lat: USERS.alice.lat, long: USERS.alice.long },
-      INSTRUCTOR_BASE
-    );
-    // 12:00 should score higher than 17:00 (closer in time to cluster)
-    const score12 = scored.find(s => s.slot === "12:00").score;
-    const score17 = scored.find(s => s.slot === "17:00").score;
-    expect(score12).toBeGreaterThan(score17);
-  });
-
-  // ── Scenario 10: Only 1 slot left on the day ──────────────────────
-
-  it("Scenario 10: last slot of the day – any user gets it regardless of distance", async () => {
-    const packed = [
-      makeBooking("09:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("10:00", USERS.bob.lat, USERS.bob.long),
-      makeBooking("11:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("12:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("13:00", USERS.eve.lat, USERS.eve.long),
-      makeBooking("14:00", USERS.bob.lat, USERS.bob.long),
-      makeBooking("15:00", USERS.diana.lat, USERS.diana.long),
-      makeBooking("16:00", USERS.alice.lat, USERS.alice.long),
-    ];
-
-    // Only 17:00 left – Charlie (far) requests it
-    mockUserLookup("charlie");
-    Booking.find.mockResolvedValue(packed);
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      ["17:00"], DATE, INST, USERS.charlie.phone
-    );
-
-    // Even though Charlie is far, only 1 slot → top-3 fallback returns it
-    expect(result).toEqual(["17:00"]);
-  });
-
-  // ── Scenario 11: Mixed distances, verify ordering stays chronological ─
-
-  it("Scenario 11: 5 users at different distances all get chronologically sorted results", async () => {
-    const bookings = [
-      makeBooking("10:00", USERS.alice.lat, USERS.alice.long),
-      makeBooking("14:00", USERS.bob.lat, USERS.bob.long),
-    ];
-    const freeSlots = ["09:00", "11:00", "12:00", "13:00", "15:00", "16:00", "17:00"];
-
-    for (const [name, userData] of Object.entries(USERS)) {
-      mockUserLookup(name);
-      Booking.find.mockResolvedValue(bookings);
-
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        [...freeSlots], DATE, INST, userData.phone
-      );
-
-      // Every user's result must be chronologically sorted
-      for (let i = 1; i < result.length; i++) {
-        expect(routeOptimizer.timeToMinutes(result[i])).toBeGreaterThanOrEqual(
-          routeOptimizer.timeToMinutes(result[i - 1])
-        );
-      }
+  it("every learner's options come back in time order", async () => {
+    const bookings = [at("10:00", "alice"), at("14:00", "bob")];
+    const free = ["09:00", "11:00", "12:00", "13:00", "15:00", "16:00", "17:00"];
+    for (const who of Object.keys(USERS)) {
+      const result = await offer(who, bookings, [...free]);
+      const minutes = result.map((t) => routeOptimizer.timeToMinutes(t));
+      expect(minutes).toEqual([...minutes].sort((a, b) => a - b));
     }
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DISTANCE MATRIX API INTEGRATION TESTS
+// Nearby days, single-slot evaluation, service area
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// These tests override the default Distance Matrix mock (which returns null)
-// to return real driving durations, verifying that routeOptimizer correctly
-// uses API results for scoring and threshold filtering.
 
-const distanceMatrixService = require("../../src/services/distanceMatrixService");
-
-describe("RouteOptimizer – Distance Matrix Integration", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+describe("suggestBestDays", () => {
+  const realNow = Date.now;
+  beforeAll(() => {
+    // Monday 2025-06-16 08:00 UTC
+    Date.now = () => new Date("2025-06-16T08:00:00Z").getTime();
+  });
+  afterAll(() => {
+    Date.now = realNow;
   });
 
-  afterEach(() => {
-    // Restore default mock (null fallback) so other tests aren't affected
-    distanceMatrixService.getDrivingDurations.mockImplementation(
-      async (_oLat, _oLng, destinations) => destinations.map(() => null)
+  it("returns the best-fitting slot per day, least added drive first", async () => {
+    const near = makeBooking("10:00", 53.02, -2.215);
+    Booking.find.mockImplementation(async ({ date }) => (date === "2025-06-19" ? [near] : []));
+    calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["11:00", "15:00"]);
+
+    const days = await routeOptimizer.suggestBestDays(
+      { ...INST, routeSettings: { lookAheadDays: 5, homeLegWeight: "full" } },
+      { userLoc: { lat: 53.021, long: -2.216 }, limit: 2 }
     );
+
+    expect(days).toHaveLength(2);
+    expect(days[0]).toMatchObject({ date: "2025-06-19", time: "11:00" });
+    expect(days[0].addedDrive).toBeLessThan(days[1].addedDrive);
   });
 
-  // ── scoreSlots with API durations ──────────────────────────────────────
-
-  describe("scoreSlots with API durations", () => {
-    const userLocation = { lat: 53.02, long: -2.23 };
-
-    it("uses API durations instead of haversine when available", async () => {
-      // API says: 5 min to base
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5]);
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00", "12:00"],
-        [],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      expect(scored).toHaveLength(2);
-      // travelMin should be 5 (from API), not haversine-based
-      expect(scored[0].travelMin).toBe(5);
-      expect(scored[0].reason).toMatch(/5min from base/);
-    });
-
-    it("uses API durations for booking references", async () => {
-      const bookings = [makeBooking("10:00", 53.021, -2.231)];
-
-      // durations[0] = user→base = 5min, durations[1] = user→booking = 2min
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5, 2]);
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["11:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      expect(scored).toHaveLength(1);
-      // Slot 11:00 references the 10:00 booking → travel = 2min from API
-      expect(scored[0].travelMin).toBe(2);
-      // 11:00 is AFTER the 10:00 booking → reason mentions "after"
-      expect(scored[0].reason).toMatch(/2min after 10:00 booking/);
-    });
-
-    it("falls back to haversine for null API elements (mixed results)", async () => {
-      const bookings = [
-        makeBooking("10:00", 53.021, -2.231),
-        makeBooking("14:00", 53.025, -2.24),
-      ];
-
-      // durations[0] = user→base = 5min, durations[1] = user→booking1 = null (failed),
-      // durations[2] = user→booking2 = 12min
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5, null, 12]);
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["11:00", "15:00"],
-        bookings,
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      // 11:00 references booking@10:00 → durations[1]=null → falls back to haversine*2
-      const slot11 = scored.find((s) => s.slot === "11:00");
-      const haversineFallback = haversine(53.02, -2.23, 53.021, -2.231) * 2;
-      expect(slot11.travelMin).toBeCloseTo(haversineFallback, 1);
-
-      // 15:00 references booking@14:00 → durations[2]=12 → uses API
-      const slot15 = scored.find((s) => s.slot === "15:00");
-      expect(slot15.travelMin).toBe(12);
-    });
-
-    it("falls back to haversine for base when API returns null for base", async () => {
-      // durations[0] = user→base = null
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([null]);
-
-      const scored = await routeOptimizer.scoreSlots(
-        ["09:00"],
-        [],
-        userLocation,
-        INSTRUCTOR_BASE
-      );
-
-      const haversineFallback = haversine(53.02, -2.23, INSTRUCTOR_BASE.lat, INSTRUCTOR_BASE.long) * 2;
-      expect(scored[0].travelMin).toBeCloseTo(haversineFallback, 1);
-    });
-
-    it("higher API duration = lower score", async () => {
-      const bookings = [makeBooking("10:00", 53.021, -2.231)];
-
-      // Close user: 2 min travel
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5, 2]);
-      const scoredClose = await routeOptimizer.scoreSlots(
-        ["11:00"], bookings, userLocation, INSTRUCTOR_BASE
-      );
-
-      // Far user: 30 min travel
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5, 30]);
-      const scoredFar = await routeOptimizer.scoreSlots(
-        ["11:00"], bookings, userLocation, INSTRUCTOR_BASE
-      );
-
-      expect(scoredClose[0].score).toBeGreaterThan(scoredFar[0].score);
-    });
+  it("skips the date already being discussed", async () => {
+    Booking.find.mockResolvedValue([]);
+    calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["11:00"]);
+    const days = await routeOptimizer.suggestBestDays(
+      { ...INST, routeSettings: { lookAheadDays: 3 } },
+      { userLoc: { lat: 53.02, long: -2.22 }, excludeDate: "2025-06-18", limit: 5 }
+    );
+    expect(days.map((d) => d.date)).not.toContain("2025-06-18");
+    expect(days).toHaveLength(3);
   });
 
-  // ── filterAvailableSlotsByLocation with API durations ──────────────────
-
-  describe("filterAvailableSlotsByLocation with API durations", () => {
-    it("close user (API says 5min) gets all slots", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100001",
-        location: { latitude: 53.018, longitude: -2.22 },
-      });
-      Booking.find.mockResolvedValue([]);
-
-      // API: 5 min to base (well within 20min threshold)
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([5]);
-
-      const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100001"
-      );
-
-      expect(result.length).toBe(slots.length);
-    });
-
-    it("far user (API says 35min) gets top-3 fallback", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100002",
-        location: { latitude: 53.20, longitude: -2.45 },
-      });
-      Booking.find.mockResolvedValue([]);
-
-      // API: 35 min to base (above 20min threshold)
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([35]);
-
-      const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100002"
-      );
-
-      expect(result.length).toBe(3);
-    });
-
-    it("user near a booking (API: 8min) but far from base (API: 30min) still gets slots", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100003",
-        location: { latitude: 53.10, longitude: -2.30 },
-      });
-      Booking.find.mockResolvedValue([
-        makeBooking("10:00", 53.09, -2.29), // near the user
-      ]);
-
-      // durations[0] = user→base = 30min (far), durations[1] = user→booking = 8min (close)
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([30, 8]);
-
-      const slots = ["09:00", "11:00", "14:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100003"
-      );
-
-      // All slots reference the 10:00 booking at 8min → within 20min threshold
-      expect(result.length).toBe(3);
-    });
-
-    it("threshold boundary: exactly 20min returns slot as within threshold", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100004",
-        location: { latitude: 53.05, longitude: -2.25 },
-      });
-      Booking.find.mockResolvedValue([]);
-
-      // API: exactly 20 min to base
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([20]);
-
-      const slots = ["09:00", "10:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100004"
-      );
-
-      // 20 min <= 20 min threshold → within threshold
-      expect(result.length).toBe(2);
-    });
-
-    it("threshold boundary: 21min triggers top-3 fallback", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100005",
-        location: { latitude: 53.05, longitude: -2.25 },
-      });
-      Booking.find.mockResolvedValue([]);
-
-      // API: 21 min to base (just over threshold)
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([21]);
-
-      const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100005"
-      );
-
-      // 21 > 20 threshold → top-3 fallback
-      expect(result.length).toBe(3);
-    });
-
-    it("mixed API durations: some bookings close, some far → filters correctly", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100006",
-        location: { latitude: 53.05, longitude: -2.25 },
-      });
-      Booking.find.mockResolvedValue([
-        makeBooking("09:00", 53.04, -2.24),   // close to user
-        makeBooking("14:00", 53.30, -2.50),   // far from user
-      ]);
-
-      // durations[0] = user→base = 25min
-      // durations[1] = user→booking@09:00 = 5min (close)
-      // durations[2] = user→booking@14:00 = 40min (far)
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([25, 5, 40]);
-
-      const slots = ["10:00", "11:00", "15:00", "16:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100006"
-      );
-
-      // 10:00 and 11:00 reference 09:00 booking (5min) → within threshold
-      // 15:00 and 16:00 reference 14:00 booking (40min) → over threshold
-      // Only 10:00 and 11:00 pass the threshold
-      expect(result).toContain("10:00");
-      expect(result).toContain("11:00");
-      expect(result.length).toBe(2);
-    });
-
-    it("API total failure (all null) gracefully falls back to haversine for all", async () => {
-      User.findOne.mockResolvedValue({
-        phone: "447000100007",
-        location: { latitude: 53.018, longitude: -2.22 },
-      });
-      Booking.find.mockResolvedValue([]);
-
-      // API returns all nulls
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([null]);
-
-      const slots = ["09:00", "10:00", "11:00", "14:00", "15:00"];
-      const result = await routeOptimizer.filterAvailableSlotsByLocation(
-        slots, "2025-07-01",
-        { phoneNumberId: "inst-dm", baseLocation: { latitude: 53.0168, longitude: -2.2191 } },
-        "447000100007"
-      );
-
-      // Should still produce results (haversine fallback)
-      expect(result.length).toBeGreaterThan(0);
-    });
-  });
-
-  // ── Batch call verification ────────────────────────────────────────────
-
-  describe("Batch API call structure", () => {
-    it("makes exactly ONE getDrivingDurations call per scoreSlots invocation", async () => {
-      const bookings = [
-        makeBooking("09:00", 53.01, -2.21),
-        makeBooking("11:00", 53.03, -2.25),
-        makeBooking("14:00", 53.02, -2.23),
-      ];
-
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([10, 5, 8, 3]);
-
-      await routeOptimizer.scoreSlots(
-        ["10:00", "12:00", "15:00"],
-        bookings,
-        { lat: 53.02, long: -2.23 },
-        INSTRUCTOR_BASE
-      );
-
-      // Should be called exactly once (batch) not 4 times
-      expect(distanceMatrixService.getDrivingDurations).toHaveBeenCalledTimes(1);
-    });
-
-    it("passes correct number of destinations (base + 2 × N bookings)", async () => {
-      const bookings = [
-        makeBooking("09:00", 53.01, -2.21),
-        makeBooking("14:00", 53.02, -2.23),
-      ];
-
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([10, 5, 3, 4, 6]);
-
-      await routeOptimizer.scoreSlots(
-        ["10:00"],
-        bookings,
-        { lat: 53.02, long: -2.23 },
-        INSTRUCTOR_BASE
-      );
-
-      const call = distanceMatrixService.getDrivingDurations.mock.calls[0];
-      const destinations = call[2]; // 3rd argument
-      // base + 2 ends + 2 starts (each booking contributes both end and start
-      // for prev/next travel calculations)
-      expect(destinations).toHaveLength(5);
-    });
-
-    it("passes base as first destination, bookings in timeline order", async () => {
-      const bookings = [
-        makeBooking("14:00", 53.02, -2.23),  // added second, but earlier in time
-        makeBooking("09:00", 53.01, -2.21),  // added first
-      ];
-
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([10, 5, 8, 5, 8]);
-
-      await routeOptimizer.scoreSlots(
-        ["10:00"],
-        bookings,
-        { lat: 53.05, long: -2.25 },
-        INSTRUCTOR_BASE
-      );
-
-      const call = distanceMatrixService.getDrivingDurations.mock.calls[0];
-      const destinations = call[2];
-
-      // Layout: [base, end[0], end[1], start[0], start[1]]
-      // For makeBooking() (only legacy `location` set), start === end === location
-      expect(destinations[0]).toEqual({ lat: INSTRUCTOR_BASE.lat, lng: INSTRUCTOR_BASE.long });
-      // Timeline sorted: 09:00 booking first, then 14:00 booking
-      // ends:
-      expect(destinations[1]).toEqual({ lat: 53.01, lng: -2.21 });
-      expect(destinations[2]).toEqual({ lat: 53.02, lng: -2.23 });
-      // starts (same as ends for legacy bookings):
-      expect(destinations[3]).toEqual({ lat: 53.01, lng: -2.21 });
-      expect(destinations[4]).toEqual({ lat: 53.02, lng: -2.23 });
-    });
-
-    it("passes user location as origin", async () => {
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([10]);
-
-      await routeOptimizer.scoreSlots(
-        ["09:00"],
-        [],
-        { lat: 53.05, long: -2.25 },
-        INSTRUCTOR_BASE
-      );
-
-      const call = distanceMatrixService.getDrivingDurations.mock.calls[0];
-      expect(call[0]).toBe(53.05);  // originLat
-      expect(call[1]).toBe(-2.25);  // originLng
-    });
-
-    it("skips invalid-location bookings from destinations", async () => {
-      const bookings = [
-        makeBooking("09:00", 53.01, -2.21),
-        { time: "11:00", location: null, status: "confirmed" },     // invalid
-        makeBooking("14:00", 53.02, -2.23),
-      ];
-
-      distanceMatrixService.getDrivingDurations.mockResolvedValue([10, 5, 3, 5, 3]);
-
-      await routeOptimizer.scoreSlots(
-        ["10:00"],
-        bookings,
-        { lat: 53.02, long: -2.23 },
-        INSTRUCTOR_BASE
-      );
-
-      const destinations = distanceMatrixService.getDrivingDurations.mock.calls[0][2];
-      // base + 2 ends + 2 starts (invalid one filtered out)
-      expect(destinations).toHaveLength(5);
-    });
+  it("returns nothing when suggestions are turned off", async () => {
+    const days = await routeOptimizer.suggestBestDays(
+      { ...INST, routeSettings: { suggestOtherDays: false } },
+      { userLoc: { lat: 53.02, long: -2.22 } }
+    );
+    expect(days).toEqual([]);
+    expect(calendarService.getAvailableTimeSlotsForDate).not.toHaveBeenCalled();
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PHASE 1 TESTS — pickup/dropoff fallback + userLocationOverride
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("RouteOptimizer – pickup/dropoff fallback chain", () => {
-    beforeEach(() => {
-      jest.clearAllMocks();
-      // Default: all null → falls back to haversine
-      distanceMatrixService.getDrivingDurations.mockResolvedValue(
-        Array.from({ length: 20 }, () => null)
-      );
-    });
-
-    describe("hasValidLocation", () => {
-      it("accepts a booking with only pickupLocation", () => {
-        const b = {
-          time: "10:00",
-          pickupLocation: { latitude: 53.02, longitude: -2.22 },
-        };
-        expect(routeOptimizer.hasValidLocation(b)).toBe(true);
-      });
-
-      it("accepts a booking with only dropoffLocation", () => {
-        const b = {
-          time: "10:00",
-          dropoffLocation: { latitude: 53.02, longitude: -2.22 },
-        };
-        expect(routeOptimizer.hasValidLocation(b)).toBe(true);
-      });
-
-      it("accepts a booking with only legacy location", () => {
-        const b = {
-          time: "10:00",
-          location: { latitude: 53.02, longitude: -2.22 },
-        };
-        expect(routeOptimizer.hasValidLocation(b)).toBe(true);
-      });
-
-      it("rejects a booking with all three location fields invalid", () => {
-        const b = {
-          time: "10:00",
-          location: { latitude: NaN, longitude: -2.22 },
-          pickupLocation: null,
-          dropoffLocation: undefined,
-        };
-        expect(routeOptimizer.hasValidLocation(b)).toBe(false);
-      });
-    });
-
-    describe("scoreSlots reference points", () => {
-      it("uses prev booking's dropoffLocation as the 'from' point (not pickup)", async () => {
-        // Booking at 10:00 with pickup at A and dropoff at B (different locations)
-        const bookings = [
-          {
-            time: "10:00",
-            pickupLocation: { latitude: 53.01, longitude: -2.21 },  // "start"
-            dropoffLocation: { latitude: 53.05, longitude: -2.30 }, // "end"
-          },
-        ];
-
-        const userLoc = { lat: 53.02, long: -2.23 };
-
-        await routeOptimizer.scoreSlots(
-          ["11:00"], // AFTER 10:00 booking
-          bookings,
-          userLoc,
-          INSTRUCTOR_BASE
-        );
-
-        // Layout: [base, end[0], start[0]]
-        const destinations = distanceMatrixService.getDrivingDurations.mock.calls[0][2];
-        expect(destinations).toHaveLength(3);
-        // ends[0] = dropoff (53.05, -2.30)
-        expect(destinations[1]).toEqual({ lat: 53.05, lng: -2.30 });
-        // starts[0] = pickup (53.01, -2.21)
-        expect(destinations[2]).toEqual({ lat: 53.01, lng: -2.21 });
-      });
-
-      it("uses next booking's pickupLocation as the 'to' point (not dropoff)", async () => {
-        const bookings = [
-          {
-            time: "14:00",
-            pickupLocation: { latitude: 53.10, longitude: -2.40 },  // "start"
-            dropoffLocation: { latitude: 53.20, longitude: -2.50 }, // "end"
-          },
-        ];
-
-        const userLoc = { lat: 53.02, long: -2.23 };
-        // Force API durations to be deterministic
-        distanceMatrixService.getDrivingDurations.mockResolvedValue([10, 25, 5]);
-
-        const scored = await routeOptimizer.scoreSlots(
-          ["10:00"], // BEFORE 14:00 booking → uses travelToNext (→ booking.start)
-          bookings,
-          userLoc,
-          INSTRUCTOR_BASE
-        );
-
-        // travelMin should come from index 2 (start[0] = pickup), not index 1 (end[0])
-        expect(scored[0].travelMin).toBe(5);
-        expect(scored[0].reason).toMatch(/before 14:00 booking/);
-      });
-
-      it("falls back to legacy location when pickup/dropoff missing", async () => {
-        const bookings = [
-          {
-            time: "10:00",
-            location: { latitude: 53.03, longitude: -2.24 },
-            // no pickupLocation, no dropoffLocation
-          },
-        ];
-
-        await routeOptimizer.scoreSlots(
-          ["11:00"],
-          bookings,
-          { lat: 53.02, long: -2.23 },
-          INSTRUCTOR_BASE
-        );
-
-        const destinations = distanceMatrixService.getDrivingDurations.mock.calls[0][2];
-        // Both end and start fall back to legacy location
-        expect(destinations[1]).toEqual({ lat: 53.03, lng: -2.24 });
-        expect(destinations[2]).toEqual({ lat: 53.03, lng: -2.24 });
-      });
-
-      it("falls back to pickupLocation for end when dropoffLocation missing", async () => {
-        const bookings = [
-          {
-            time: "10:00",
-            pickupLocation: { latitude: 53.05, longitude: -2.30 },
-            // no dropoffLocation, no legacy location
-          },
-        ];
-
-        await routeOptimizer.scoreSlots(
-          ["11:00"],
-          bookings,
-          { lat: 53.02, long: -2.23 },
-          INSTRUCTOR_BASE
-        );
-
-        const destinations = distanceMatrixService.getDrivingDurations.mock.calls[0][2];
-        // end[0] falls back to pickup, start[0] uses pickup directly
-        expect(destinations[1]).toEqual({ lat: 53.05, lng: -2.30 });
-        expect(destinations[2]).toEqual({ lat: 53.05, lng: -2.30 });
-      });
-    });
-
-    describe("reason field uses 'after'/'before'", () => {
-      it("says 'after' when slot follows a booking", async () => {
-        const bookings = [makeBooking("10:00", 53.021, -2.231)];
-        distanceMatrixService.getDrivingDurations.mockResolvedValue([5, 2, 2]);
-
-        const scored = await routeOptimizer.scoreSlots(
-          ["11:00"],
-          bookings,
-          { lat: 53.02, long: -2.23 },
-          INSTRUCTOR_BASE
-        );
-
-        expect(scored[0].reason).toMatch(/after 10:00 booking/);
-      });
-
-      it("says 'before' when slot precedes the only booking", async () => {
-        const bookings = [makeBooking("14:00", 53.021, -2.231)];
-        distanceMatrixService.getDrivingDurations.mockResolvedValue([5, 2, 2]);
-
-        const scored = await routeOptimizer.scoreSlots(
-          ["10:00"],
-          bookings,
-          { lat: 53.02, long: -2.23 },
-          INSTRUCTOR_BASE
-        );
-
-        expect(scored[0].reason).toMatch(/before 14:00 booking/);
-      });
-    });
+describe("evaluateSlot", () => {
+  it("returns the added drive and reason for one slot", async () => {
+    Booking.find.mockResolvedValue([makeBooking("09:00", 53.03, -2.22)]);
+    const result = await routeOptimizer.evaluateSlot("2025-06-15", "10:00", INST, { lat: 53.031, long: -2.221 });
+    expect(result.feasible).toBe(true);
+    expect(result.reason).toMatch(/after your 09:00 lesson/);
   });
 
-describe("RouteOptimizer – filterAvailableSlotsByLocation userLocationOverride", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    distanceMatrixService.getDrivingDurations.mockResolvedValue(
-      Array.from({ length: 20 }, () => null)
-    );
+  it("returns null without a learner location", async () => {
+    expect(await routeOptimizer.evaluateSlot("2025-06-15", "10:00", INST, null)).toBeNull();
+  });
+});
+
+describe("checkServiceArea", () => {
+  it("everyone is inside when no area is set", () => {
+    expect(routeOptimizer.checkServiceArea(INST, USERS.charlie, "ST5 1AB").inside).toBe(true);
   });
 
-  it("uses override coordinates instead of profile location when provided", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000200001",
-      location: { latitude: 53.20, longitude: -2.45 }, // far from base
-    });
-    Booking.find.mockResolvedValue([]);
-
-    const override = { lat: 53.018, long: -2.22 }; // close to base
-
-    const slots = ["09:00", "10:00", "11:00"];
-    const result = await routeOptimizer.filterAvailableSlotsByLocation(
-      slots,
-      "2025-08-01",
-      INST_OBJ,
-      "447000200001",
-      override
-    );
-
-    // With override (close to base), all slots should pass the threshold
-    expect(result.length).toBe(slots.length);
-    // User.findOne should NOT have been queried because override was provided
-    expect(User.findOne).not.toHaveBeenCalled();
+  it("uses the radius from home", () => {
+    const inst = { ...INST, routeSettings: { serviceArea: { radiusMiles: 5 } } };
+    expect(routeOptimizer.checkServiceArea(inst, USERS.alice).inside).toBe(true);
+    const out = routeOptimizer.checkServiceArea(inst, USERS.charlie);
+    expect(out.inside).toBe(false);
+    expect(out.reason).toMatch(/miles away/);
   });
 
-  it("falls back to profile location when override is null", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000200002",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
-    Booking.find.mockResolvedValue([]);
-
-    await routeOptimizer.filterAvailableSlotsByLocation(
-      ["09:00"],
-      "2025-08-01",
-      INST_OBJ,
-      "447000200002",
-      null
-    );
-
-    expect(User.findOne).toHaveBeenCalledWith({ phone: "447000200002" });
+  it("works in km, and tells the learner in km", () => {
+    // 8 km ≈ 5 miles: same people inside/outside as the 5-mile test
+    const inst = { ...INST, routeSettings: { serviceArea: { radius: 8, unit: "km" } } };
+    expect(routeOptimizer.checkServiceArea(inst, USERS.alice).inside).toBe(true);
+    const out = routeOptimizer.checkServiceArea(inst, USERS.charlie);
+    expect(out.inside).toBe(false);
+    expect(out.reason).toMatch(/^about \d+ km away \(area is 8 km\)$/);
   });
 
-  it("falls back to profile location when override has invalid types", async () => {
-    User.findOne.mockResolvedValue({
-      phone: "447000200003",
-      location: { latitude: 53.018, longitude: -2.22 },
-    });
-    Booking.find.mockResolvedValue([]);
-
-    // override with string instead of number → should be rejected
-    await routeOptimizer.filterAvailableSlotsByLocation(
-      ["09:00"],
-      "2025-08-01",
-      INST_OBJ,
-      "447000200003",
-      { lat: "53.02", long: -2.23 }
-    );
-
-    expect(User.findOne).toHaveBeenCalled();
+  it("accepts listed postcode districts even outside the radius", () => {
+    const inst = { ...INST, routeSettings: { serviceArea: { radiusMiles: 1, postcodeDistricts: ["st5", "ST4"] } } };
+    expect(routeOptimizer.checkServiceArea(inst, USERS.charlie, "ST5 1AB").inside).toBe(true);
+    expect(routeOptimizer.checkServiceArea(inst, USERS.charlie, "CW1 2AB").inside).toBe(false);
   });
 });

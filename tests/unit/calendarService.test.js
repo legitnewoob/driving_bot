@@ -34,6 +34,10 @@ jest.mock("../../src/utils/logger-advanced", () => ({
 }));
 jest.mock("../../src/utils/emailNotifier", () => ({
   notifyInvalidGrant: jest.fn(),
+  notifyInstructorReauth: jest.fn(),
+}));
+jest.mock("../../src/models/instructorSchema", () => ({
+  findByIdAndUpdate: jest.fn().mockResolvedValue({}),
 }));
 
 const { oauth2Client, calendar } = require("../../src/config/google");
@@ -496,5 +500,33 @@ describe("deleteEvent", () => {
     ).rejects.toThrow("invalid_grant");
 
     expect(notifyInvalidGrant).toHaveBeenCalled();
+  });
+});
+
+describe("calendar ID", () => {
+  // Instructors who connect from the dashboard only have a refresh token
+  const connectedFromDashboard = { ...MOCK_INSTRUCTOR, googleCalendarId: undefined };
+
+  it("uses the instructor's primary calendar when no calendar ID is stored", async () => {
+    calendar.events.insert.mockResolvedValue({ data: { id: "evt-1" } });
+    calendar.events.list.mockResolvedValue({ data: { items: [] } });
+
+    await calendarService.createEvent({ date: "2025-07-15", time: "10:00", userPhone: "447000000001" }, connectedFromDashboard);
+    await calendarService.getEventsForDate("2025-07-15", connectedFromDashboard);
+
+    expect(calendar.events.insert).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "primary" }));
+    expect(calendar.events.list).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "primary" }));
+  });
+
+  it("never sends an attendee without an email (Google rejects the whole event)", async () => {
+    calendar.events.insert.mockResolvedValue({ data: { id: "evt-2" } });
+    calendar.events.update.mockResolvedValue({ data: { id: "evt-2" } });
+
+    await calendarService.createEvent({ date: "2025-07-15", time: "10:00", userPhone: "447000000001" }, connectedFromDashboard);
+    await calendarService.updateEvent("evt-2", { newDate: "2025-07-16", newTime: "11:00", userPhone: "447000000001" }, connectedFromDashboard);
+
+    for (const call of [...calendar.events.insert.mock.calls, ...calendar.events.update.mock.calls]) {
+      for (const attendee of call[0].resource.attendees || []) expect(attendee.email).toBeTruthy();
+    }
   });
 });

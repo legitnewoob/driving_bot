@@ -3,11 +3,13 @@ const logEnvironment = require("./src/utils/envLogger");
 const { startTokenRefreshSchedule } = require("./src/utils/refreshWhatsappToken");
 
 const app = require('./app');
+const { startReminderJob } = require("./src/jobs/reminders");
 
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
+    startReminderJob();
     const chalk = (await import("chalk")).default;
     const dim = chalk.dim;
     const bold = chalk.bold;
@@ -33,6 +35,9 @@ app.listen(PORT, async () => {
     console.log(line);
     console.log();
 
-    // Refresh WhatsApp token on startup and every 7 days
-    //startTokenRefreshSchedule();
+    // Refresh WhatsApp token on startup and every 7 days.
+    // Set WHATSAPP_TOKEN_REFRESH=false to turn it off for an environment.
+    if (process.env.WHATSAPP_TOKEN_REFRESH !== "false") {
+      startTokenRefreshSchedule();
+    }
 });

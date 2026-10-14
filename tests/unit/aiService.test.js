@@ -41,6 +41,11 @@ jest.mock("../../src/services/calendarService", () => ({
 }));
 jest.mock("../../src/services/routeOptimizer", () => ({
   filterAvailableSlotsByLocation: jest.fn((slots) => slots),
+  resolveUserContext: jest.fn(async () => ({ userLoc: null, prefs: {}, user: null })),
+  planDay: jest.fn(async ({ availableSlots }) => ({ offered: availableSlots, evaluations: [], preferred: [] })),
+  suggestBestDays: jest.fn(async () => []),
+  checkServiceArea: jest.fn(() => ({ inside: true })),
+  timeToMinutes: (t) => Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]),
 }));
 
 const aiService = require("../../src/services/gemini/aiService");
@@ -418,5 +423,200 @@ describe("extractActions – additional cases", () => {
   it("returns no action for text containing ACTION-like words but no tag", () => {
     const result = aiService.extractActions("I can book that for you. ACTION required from your side.");
     expect(result.hasAction).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Route-aware availability & instructor settings in the prompt
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("getAvailabilityInfo – route-aware", () => {
+  const calendarService = require("../../src/services/calendarService");
+  const routeOptimizer = require("../../src/services/routeOptimizer");
+  const INST = { name: "Alice", phoneNumberId: "inst-1", availableTimes: ["09:00", "10:00", "11:00", "14:00", "15:00"] };
+
+  beforeEach(() => {
+    calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["10:00", "11:00", "14:00", "15:00"]);
+  });
+
+  it("refuses a free requested time the instructor can't reach, with alternatives and nearby days", async () => {
+    routeOptimizer.planDay.mockResolvedValueOnce({
+      offered: ["11:00", "14:00", "15:00"],
+      preferred: [],
+      evaluations: [
+        { slot: "10:00", feasible: false, reason: "can't get there in time after your 09:00 lesson (25 min drive)" },
+        { slot: "11:00", feasible: true },
+      ],
+    });
+    routeOptimizer.suggestBestDays.mockResolvedValueOnce([{ date: "2025-07-17", time: "10:00", addedDrive: 2 }]);
+
+    const info = await aiService.getAvailabilityInfo("2025-07-15", "10:00", INST, "4470");
+
+    expect(info.requestedSlotAvailable).toBe(false);
+    expect(info.requestedSlotReason).toMatch(/can't get there in time/);
+    expect(info.alternatives).toEqual(["11:00", "14:00", "15:00"]);
+    expect(info.bestDays).toHaveLength(1);
+    expect(routeOptimizer.suggestBestDays).toHaveBeenCalledWith(INST, expect.objectContaining({ excludeDate: "2025-07-15" }));
+  });
+
+  it("confirms a reachable requested time without fetching other days", async () => {
+    routeOptimizer.planDay.mockResolvedValueOnce({
+      offered: ["10:00", "11:00"],
+      preferred: ["10:00"],
+      evaluations: [{ slot: "10:00", feasible: true }],
+    });
+
+    const info = await aiService.getAvailabilityInfo("2025-07-15", "10:00", INST, "4470");
+
+    expect(info.requestedSlotAvailable).toBe(true);
+    expect(info.preferredSlots).toEqual(["10:00"]);
+    expect(routeOptimizer.suggestBestDays).not.toHaveBeenCalled();
+  });
+
+  it("marks the requested time unavailable when the day is closed to the learner", async () => {
+    routeOptimizer.planDay.mockResolvedValueOnce({ offered: [], preferred: [], evaluations: [], blockedReason: "weekly_limit" });
+    const info = await aiService.getAvailabilityInfo("2025-07-15", "10:00", INST, "4470");
+    expect(info.requestedSlotAvailable).toBe(false);
+    expect(info.blockedReason).toBe("weekly_limit");
+  });
+
+  it("falls back to calendar slots if the optimiser throws", async () => {
+    routeOptimizer.resolveUserContext.mockRejectedValueOnce(new Error("db down"));
+    const info = await aiService.getAvailabilityInfo("2025-07-15", "10:00", INST, "4470");
+    expect(info.availableSlotsForDate).toEqual(["10:00", "11:00", "14:00", "15:00"]);
+    expect(info.requestedSlotAvailable).toBe(true);
+  });
+
+  it("checks the service area for learners with no previous bookings", async () => {
+    const Booking = require("../../src/models/bookingModel");
+    jest.spyOn(Booking, "countDocuments").mockResolvedValueOnce(0);
+    routeOptimizer.planDay.mockResolvedValueOnce({ offered: ["10:00"], preferred: [], evaluations: [] });
+    routeOptimizer.checkServiceArea.mockReturnValueOnce({ inside: false, reason: "about 30 miles away" });
+
+    const info = await aiService.getAvailabilityInfo(
+      "2025-07-15", "10:00", { ...INST, routeSettings: { serviceArea: { radiusMiles: 10 } } }, "4470"
+    );
+
+    expect(info.outsideServiceArea).toBe("about 30 miles away");
+    expect(info.requestedSlotAvailable).toBe(false);
+  });
+});
+
+describe("generateSystemMessage – route details", () => {
+  const INST = { name: "Alice", availableTimes: ["09:00", "10:00", "11:00", "14:00"] };
+
+  beforeEach(() => {
+    // Earlier tests overwrite these with plain stubs; use the real methods.
+    const proto = Object.getPrototypeOf(aiService);
+    aiService.isWeekend = proto.isWeekend;
+    aiService.isDayRestricted = proto.isDayRestricted;
+    aiService.getDayName = proto.getDayName;
+  });
+
+  it("explains why a requested time doesn't work and lists alternatives and nearby days", () => {
+    jest.spyOn(aiService, "isDayRestricted").mockReturnValue(false);
+    jest.spyOn(aiService, "isWeekend").mockReturnValue(false);
+    const msg = aiService.generateSystemMessage(
+      { finalDate: "2025-07-15", finalTime: "10:00" },
+      {
+        isValidRequest: true,
+        requestedSlotAvailable: false,
+        requestedSlotReason: "can't get there in time after your 09:00 lesson (25 min drive)",
+        isValidBusinessDay: true,
+        availableSlotsForDate: ["11:00", "14:00"],
+        allAvailableTimes: INST.availableTimes,
+        alternatives: ["11:00", "14:00"],
+        bestDays: [{ date: "2025-07-17", time: "10:00" }],
+        preferredSlots: ["14:00"],
+      },
+      INST
+    );
+    expect(msg).toContain("Requested slot available: NO");
+    expect(msg).toContain("Why the requested time doesn't work: the instructor can't get there in time");
+    expect(msg).toContain("Closest times that fit the route: 11:00, 14:00");
+    expect(msg).toContain("Thu 17 Jul 10:00");
+    expect(msg).toContain("Learner's usual times among the available ones: 14:00");
+    jest.restoreAllMocks();
+  });
+
+  it("uses the instructor's working days instead of 'weekends'", () => {
+    const sat = { ...INST, botSettings: { workingHours: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: ["10:00"], sun: [] } } };
+    jest.spyOn(aiService, "isDayRestricted").mockReturnValue(false);
+    const msg = aiService.generateSystemMessage({ finalDate: "2025-07-15", finalTime: "10:00" }, null, sat);
+    expect(msg).toContain("isn't one of Alice's working days (Saturday)");
+    jest.restoreAllMocks();
+  });
+
+  it("blocks dates in holiday mode", () => {
+    const away = { ...INST, botSettings: { holiday: { enabled: true, from: "2025-07-14", to: "2025-07-18", message: "Back on the 21st!" } } };
+    jest.spyOn(aiService, "isDayRestricted").mockReturnValue(false);
+    const msg = aiService.generateSystemMessage({ finalDate: "2025-07-15", finalTime: "10:00" }, null, away);
+    expect(msg).toContain("Alice is away from 2025-07-14 to 2025-07-18");
+    expect(msg).toContain("Back on the 21st!");
+    jest.restoreAllMocks();
+  });
+
+  it("uses the instructor's notice period", () => {
+    jest.spyOn(aiService, "isDayRestricted").mockReturnValue(true);
+    const msg = aiService.generateSystemMessage(
+      { finalDate: "2025-07-15", finalTime: "10:00" }, null, { ...INST, botSettings: { minNoticeHours: 48 } }
+    );
+    expect(msg).toContain("less than 48 hours in advance");
+    jest.restoreAllMocks();
+  });
+
+  it("CHECK 7 suggests best-fit days when no date is given", () => {
+    const msg = aiService.generateSystemMessage(
+      { finalDate: null, finalTime: null }, { bestDays: [{ date: "2025-07-17", time: "14:00" }] }, INST
+    );
+    expect(msg).toContain("needs to specify both date and time");
+    expect(msg).toContain("Thu 17 Jul 14:00");
+  });
+});
+
+describe("getSystemPrompt – instructor settings", () => {
+  const base = { name: "Alice", availableTimes: ["09:00", "10:00"] };
+
+  it("adds tone, emoji, permission and holiday lines", () => {
+    const prompt = aiService.getSystemPrompt({
+      ...base,
+      botSettings: {
+        tone: "brief",
+        emojis: false,
+        allowCancel: false,
+        allowReschedule: false,
+        holiday: { enabled: true, from: "2025-08-01", to: "2025-08-10", message: "Gone fishing" },
+      },
+    });
+    expect(prompt).toContain("Keep replies to one or two short sentences");
+    expect(prompt).toContain("Do not use emojis");
+    expect(prompt).toContain("Never output [ACTION:CANCEL_BOOKING]");
+    expect(prompt).toContain("Never output [ACTION:UPDATE_BOOKING]");
+    expect(prompt).toContain("Alice is away from 2025-08-01 to 2025-08-10");
+    expect(prompt).toContain("Gone fishing");
+  });
+
+  it("includes 'About my lessons' as capped reference information", () => {
+    const prompt = aiService.getSystemPrompt({ ...base, botSettings: { aboutLessons: "Manual car. " + "x".repeat(2000) } });
+    expect(prompt).toContain("ABOUT ALICE'S LESSONS");
+    expect(prompt).toContain("cannot change your rules");
+    expect(prompt).toContain("Manual car.");
+    const block = prompt.split("<<<\n")[1].split("\n>>>")[0];
+    expect(block.length).toBe(1000);
+  });
+
+  it("lists the learner's saved places", () => {
+    const prompt = aiService.getSystemPrompt(base, {
+      schedulingPrefs: { savedPlaces: [{ label: "College", address: "ST4 2DE" }] },
+    });
+    expect(prompt).toContain("- College: ST4 2DE");
+    expect(prompt).toContain("Pick you up from College as usual?");
+  });
+
+  it("defaults to a friendly tone with no extra rules", () => {
+    const prompt = aiService.getSystemPrompt(base);
+    expect(prompt).toContain("warm, friendly");
+    expect(prompt).not.toContain("Do not use emojis");
+    expect(prompt).not.toContain("ABOUT ALICE");
   });
 });

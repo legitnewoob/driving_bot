@@ -6,6 +6,9 @@ const Payment = require("../models/paymentModel");
 const { getCoordinatesFromPostalCode } = require("../services/mapsService");
 const calendarService = require("../services/calendarService");
 const logger = require("../utils/logger-advanced");
+const { customAlphabet } = require("nanoid");
+
+const newBookingId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
 
 // ─── GET /api/learners ────────────────────────────────────────────────────
 // Returns all users (learners) for the instructor identified by the API key.
@@ -189,11 +192,34 @@ router.post("/bookings", async (req, res) => {
     const user = await User.findOne({ phone: normalizedPhone }).select("name postalCode location").lean();
     const studentName = user?.name || normalizedPhone;
 
-    // Generate a unique bookingId
-    const bookingId = `DL-${Date.now().toString(36).toUpperCase()}`;
+    // Claim the slot in Mongo first: the unique index on instructor/date/time
+    // rejects a slot that's already booked. Retry only on a bookingId clash.
+    let booking;
+    for (let attempt = 1; !booking; attempt++) {
+      try {
+        booking = await Booking.create({
+          bookingId: `DL-${newBookingId()}`,
+          userPhone: normalizedPhone,
+          instructorId,
+          date,
+          time,
+          calendarEventId: null,
+          postalCode: postalCode || user?.postalCode || "",
+          location: user?.location || undefined,
+          pickupLocation: pickupLocation ? { address: pickupLocation } : undefined,
+          dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,
+          progressNotes: notes || "",
+          status: "confirmed",
+        });
+      } catch (err) {
+        if (err?.code === 11000 && err.keyPattern?.bookingId && attempt < 5) continue;
+        if (err?.code === 11000) {
+          return res.status(409).json({ success: false, error: `${time} on ${date} is already booked` });
+        }
+        throw err;
+      }
+    }
 
-    // Create Google Calendar event
-    let calendarEventId = null;
     try {
       const calendarEvent = await calendarService.createEvent(
         {
@@ -205,26 +231,12 @@ router.post("/bookings", async (req, res) => {
         },
         instructor
       );
-      calendarEventId = calendarEvent.id;
-      logger.info(`Calendar event created for booking ${bookingId}: ${calendarEventId}`);
+      booking.calendarEventId = calendarEvent.id;
+      await Booking.updateOne({ _id: booking._id }, { calendarEventId: calendarEvent.id });
+      logger.info(`Calendar event created for booking ${booking.bookingId}: ${calendarEvent.id}`);
     } catch (err) {
-      logger.warn(`Calendar event creation failed for booking ${bookingId}: ${err.message}`);
+      logger.warn(`Calendar event creation failed for booking ${booking.bookingId}: ${err.message}`);
     }
-
-    const booking = await Booking.create({
-      bookingId,
-      userPhone: normalizedPhone,
-      instructorId,
-      date,
-      time,
-      calendarEventId,
-      postalCode: postalCode || user?.postalCode || "",
-      location: user?.location || undefined,
-      pickupLocation: pickupLocation ? { address: pickupLocation } : undefined,
-      dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,
-      progressNotes: notes || "",
-      status: "confirmed",
-    });
 
     res.status(201).json({
       success: true,

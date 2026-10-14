@@ -134,6 +134,42 @@ describe("refreshAndUpdateAll", () => {
     });
   }
 
+  describe("fallback to WHATSAPP_TOKEN from the env", () => {
+    const saved = process.env.WHATSAPP_TOKEN;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.WHATSAPP_TOKEN;
+      else process.env.WHATSAPP_TOKEN = saved;
+    });
+
+    it("uses the env token when the stored one is rejected, and saves the result", async () => {
+      setupSuccessfulRefresh();
+      process.env.WHATSAPP_TOKEN = "fresh-env-token";
+      axios.get
+        .mockRejectedValueOnce({ response: { data: { error: { message: "Session has expired" } } } })
+        .mockResolvedValueOnce({ data: { access_token: "exchanged-from-env" } });
+
+      await refreshAndUpdateAll();
+
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(axios.get.mock.calls[1][0]).toContain("fb_exchange_token=fresh-env-token");
+      expect(Instructor.updateMany).toHaveBeenCalledWith(
+        { active: true },
+        { $set: { whatsappToken: "exchanged-from-env" } }
+      );
+    });
+
+    it("doesn't retry with the env token when it's the same one that failed", async () => {
+      setupSuccessfulRefresh();
+      process.env.WHATSAPP_TOKEN = "old-shared-token";
+      axios.get.mockRejectedValueOnce(new Error("expired"));
+
+      await refreshAndUpdateAll();
+
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      expect(Instructor.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   it("fetches token from any active instructor, exchanges, and updates all", async () => {
     setupSuccessfulRefresh();
 

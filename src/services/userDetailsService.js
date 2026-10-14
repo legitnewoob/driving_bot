@@ -6,23 +6,24 @@ const logger = require("../utils/logger-advanced");
 const steps = ["name", "age", "dob", "postalCode"];
 
 // sendFn defaults to real WhatsApp — in mock mode, pass this._send.bind(this)
-async function ensureUserDetails(from, messageContent, sendFn = null, instructorId = null) {
+async function ensureUserDetails(from, messageContent, sendFn = null, instructorId = null, greeting = "") {
   const send = sendFn || ((to, text) => whatsappService.sendTextMessage(to, text));
 
   // Handle data deletion request
   if (messageContent && messageContent.trim().toLowerCase() === "delete my data") {
-    await User.deleteOne({ phone: from });
+    await User.deleteOne({ phone: from, ...(instructorId && { instructorId }) });
     await send(from, "🗑️ Your data has been deleted.");
     return { inProgress: true, deleted: true };
   }
 
-  let user = await User.findOne({ phone: from });
+  let user = await User.findOne({ phone: from, ...(instructorId && { instructorId }) });
 
   // If new user → start flow
   if (!user) {
     user = new User({ phone: from, instructorId: instructorId, currentStep: steps[0] });
     await user.save();
-    await send(from, "👋 Hi! Let's get started.\nPlease tell me your *name*:");
+    const intro = greeting?.trim() ? greeting.trim() : "👋 Hi! Let's get started.";
+    await send(from, `${intro}\nPlease tell me your *name*:`);
     return { inProgress: true };
   }
 

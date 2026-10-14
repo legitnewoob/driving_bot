@@ -19,7 +19,7 @@ const axios = require("axios");
 // ─── Config ───────────────────────────────────────────────────────────────────
 const MOCK_PORT        = process.env.MOCK_PORT        || 4000;
 const APP_URL          = process.env.APP_URL          || "http://localhost:3000/mock-webhook";
-const PHONE_NUMBER_ID  = process.env.PHONE_NUMBER_ID  || "886622201206248";
+const DEFAULT_PHONE_ID = process.env.PHONE_NUMBER_ID  || "886622201206248";
 
 const app    = express();
 const server = http.createServer(app);
@@ -28,8 +28,33 @@ const io     = new Server(server, { cors: { origin: "*" } });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+// ─── Proxy endpoint for the UI to fetch instructors from the core app ────────
+app.get("/api/instructors", async (req, res) => {
+  try {
+    const { data } = await axios.get(APP_URL + "/instructors");
+    res.json(data);
+  } catch (err) {
+    console.error("[mock] Could not fetch instructors:", err.message);
+    res.json({ instructors: [] });
+  }
+});
+
 // ─── Mock WhatsApp payload factory ───────────────────────────────────────────
-function buildWhatsAppPayload(text, fromNumber = "917726877146") {
+// A typed message, a tapped button/list row, or a shared location.
+function buildMessage({ text, buttonId, buttonKind, location }) {
+  if (location) {
+    return { type: "location", location };
+  }
+  if (buttonId) {
+    const reply = { id: buttonId, title: text };
+    return buttonKind === "list"
+      ? { type: "interactive", interactive: { type: "list_reply", list_reply: reply } }
+      : { type: "interactive", interactive: { type: "button_reply", button_reply: reply } };
+  }
+  return { type: "text", text: { body: text } };
+}
+
+function buildWhatsAppPayload(input, fromNumber = "917726877146", phoneNumberId = DEFAULT_PHONE_ID) {
   const msgId = "wamid." + Math.random().toString(36).slice(2, 18).toUpperCase();
   const ts    = Math.floor(Date.now() / 1000).toString();
 
@@ -43,7 +68,7 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
           messaging_product: "whatsapp",
           metadata: {
             display_phone_number: "15550001234",
-            phone_number_id: PHONE_NUMBER_ID,
+            phone_number_id: phoneNumberId,
           },
           contacts: [{
             profile: { name: "Dev User" },
@@ -53,8 +78,7 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
             from:      fromNumber,
             id:        msgId,
             timestamp: ts,
-            type:      "text",
-            text:      { body: text },
+            ...buildMessage(input),
           }],
         },
       }],
@@ -66,10 +90,11 @@ function buildWhatsAppPayload(text, fromNumber = "917726877146") {
 io.on("connection", (socket) => {
   console.log("[mock] Dev UI connected:", socket.id);
 
-  socket.on("user_message", async ({ text, from }) => {
-    console.log(`[mock] → forwarding to app: "${text}" from ${from}`);
+  socket.on("user_message", async ({ text, from, phoneNumberId, buttonId, buttonKind, location }) => {
+    const pnid = phoneNumberId || DEFAULT_PHONE_ID;
+    console.log(`[mock] → forwarding to app: "${text || "(location)"}" from ${from} (instructor: ${pnid})`);
 
-    const payload = buildWhatsAppPayload(text, from);
+    const payload = buildWhatsAppPayload({ text, buttonId, buttonKind, location }, from, pnid);
 
     let response, data;
 
@@ -91,7 +116,11 @@ io.on("connection", (socket) => {
     const replies = Array.isArray(data.reply) ? data.reply : [data.reply];
 
     for (const reply of replies) {
-      if (reply) {
+      if (!reply) continue;
+      if (typeof reply === "object") {
+        console.log(`[mock] ← app replied (${reply.interactive?.type}): "${reply.text}"`);
+        socket.emit("bot_message", { text: reply.text, interactive: reply.interactive, to: from });
+      } else {
         console.log(`[mock] ← app replied: "${reply}"`);
         socket.emit("bot_message", { text: reply, to: from });
       }

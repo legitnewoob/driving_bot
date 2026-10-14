@@ -123,12 +123,13 @@ describe("cleanUpContexts", () => {
   });
 
   it("clears context for sessions older than context timeout", () => {
+    // Session keys are "phone::instructorId"; the controller gets both parts.
     const fifteenMinAgo = new Date(mockNow.getTime() - 15 * 60 * 1000);
-    mockUserSessions["447000000001"] = { lastActivity: fifteenMinAgo };
+    mockUserSessions["447000000001::inst-1"] = { lastActivity: fifteenMinAgo };
 
     cleanUpContexts();
 
-    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("447000000001");
+    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("447000000001", "inst-1");
   });
 
   it("does NOT clear context for recent sessions", () => {
@@ -145,13 +146,14 @@ describe("cleanUpContexts", () => {
     process.env.CONTEXT_TIMEOUT_MINUTES = "2"; // 2 minutes
 
     const threeMinAgo = new Date(mockNow.getTime() - 3 * 60 * 1000);
-    mockUserSessions["447000000001"] = { lastActivity: threeMinAgo };
+    mockUserSessions["447000000001::inst-1"] = { lastActivity: threeMinAgo };
 
-    cleanUpContexts();
-
-    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("447000000001");
-
-    process.env.CONTEXT_TIMEOUT_MINUTES = originalEnv;
+    try {
+      cleanUpContexts();
+      expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("447000000001", "inst-1");
+    } finally {
+      process.env.CONTEXT_TIMEOUT_MINUTES = originalEnv;
+    }
   });
 
   it("skips sessions with no lastActivity", () => {
@@ -173,14 +175,14 @@ describe("cleanUpContexts", () => {
     const fifteenMinAgo = new Date(mockNow.getTime() - 15 * 60 * 1000);
     const fiveMinAgo = new Date(mockNow.getTime() - 5 * 60 * 1000);
 
-    mockUserSessions["expired-1"] = { lastActivity: fifteenMinAgo };
-    mockUserSessions["active-1"] = { lastActivity: fiveMinAgo };
-    mockUserSessions["expired-2"] = { lastActivity: fifteenMinAgo };
+    mockUserSessions["expired-1::inst-1"] = { lastActivity: fifteenMinAgo };
+    mockUserSessions["active-1::inst-1"] = { lastActivity: fiveMinAgo };
+    mockUserSessions["expired-2::inst-2"] = { lastActivity: fifteenMinAgo };
 
     cleanUpContexts();
 
     expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledTimes(2);
-    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("expired-1");
-    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("expired-2");
+    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("expired-1", "inst-1");
+    expect(WebhookController.clearUserConversationHistoryAndContext).toHaveBeenCalledWith("expired-2", "inst-2");
   });
 });

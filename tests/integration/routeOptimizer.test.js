@@ -743,3 +743,333 @@ describe("checkServiceArea", () => {
     expect(routeOptimizer.checkServiceArea(inst, USERS.charlie, "CW1 2AB").inside).toBe(false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Calendar rules across days, earliest slot, clock change, edge locations
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("days considered for suggestions and 'next available'", () => {
+  // "Now" is Monday 2025-06-16 08:00 UTC (09:00 London). With 24h notice the
+  // first bookable day is Wednesday 18th; Tuesday 17th starts within 24 hours.
+  const realNow = Date.now;
+  beforeAll(() => { Date.now = () => new Date("2025-06-16T08:00:00Z").getTime(); });
+  afterAll(() => { Date.now = realNow; });
+
+  const NEAR = { lat: 53.021, long: -2.216 };
+  const datesSuggested = async (instructor, opts = {}) => {
+    Booking.find.mockResolvedValue([]);
+    calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["10:00"]);
+    const days = await routeOptimizer.suggestBestDays(instructor, { userLoc: NEAR, limit: 20, ...opts });
+    return days.map((d) => d.date).sort();
+  };
+
+  it("never suggests holiday dates", async () => {
+    const dates = await datesSuggested({
+      ...INST,
+      routeSettings: { lookAheadDays: 6 },
+      botSettings: { holiday: { enabled: true, from: "2025-06-19", to: "2025-06-20" } },
+    });
+    expect(dates).not.toContain("2025-06-19");
+    expect(dates).not.toContain("2025-06-20");
+    expect(dates[0]).toBe("2025-06-18");
+  });
+
+  it("only suggests the instructor's working days", async () => {
+    const dates = await datesSuggested({
+      ...INST,
+      routeSettings: { lookAheadDays: 4 },
+      botSettings: { workingHours: { mon: [], tue: [], wed: ["10:00"], thu: [], fri: ["10:00"], sat: [], sun: [] } },
+    });
+    expect(dates).toEqual(["2025-06-18", "2025-06-20", "2025-06-25", "2025-06-27"]); // Weds and Fris
+  });
+
+  it("respects the minimum notice", async () => {
+    const dates = await datesSuggested({ ...INST, routeSettings: { lookAheadDays: 3 }, botSettings: { minNoticeHours: 72 } });
+    expect(dates[0]).toBe("2025-06-20"); // Thu 19th starts within 72 hours
+  });
+
+  it("stays inside the booking window", async () => {
+    const dates = await datesSuggested({ ...INST, routeSettings: { lookAheadDays: 20 }, botSettings: { bookingWindowDays: 7 } });
+    expect(dates.every((d) => d <= "2025-06-23")).toBe(true);
+  });
+
+  it("skips weeks where the learner has hit their weekly lesson limit", async () => {
+    mockUser(NEAR.lat, NEAR.long);
+    Booking.countDocuments = jest.fn(async (q) => (q.date.$gte === "2025-06-16" ? 1 : 0));
+    const dates = await datesSuggested(
+      { ...INST, routeSettings: { lookAheadDays: 6 } },
+      { prefs: { maxLessonsPerWeek: 1 }, userPhone: "447000000001" }
+    );
+    expect(dates.length).toBeGreaterThan(0);
+    expect(dates.every((d) => d >= "2025-06-23")).toBe(true); // nothing this week
+  });
+
+  describe("findEarliestOfferedSlot", () => {
+    it("returns the best-fitting slot on the first day with anything offered", async () => {
+      mockUser(NEAR.lat, NEAR.long);
+      Booking.find.mockResolvedValue([]);
+      calendarService.getAvailableTimeSlotsForDate.mockImplementation(async (date) =>
+        date === "2025-06-18" ? [] : ["09:00", "14:00"]
+      );
+      const slot = await routeOptimizer.findEarliestOfferedSlot(INST, "447000000001");
+      expect(slot.date).toBe("2025-06-19"); // Wed was fully booked on the calendar
+      expect(["09:00", "14:00"]).toContain(slot.time);
+    });
+
+    it("skips a day that's at the daily lesson limit", async () => {
+      mockUser(NEAR.lat, NEAR.long);
+      Booking.find.mockImplementation(async ({ date }) => (date === "2025-06-18" ? [makeBooking("09:00", 53.02, -2.22)] : []));
+      calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["11:00", "14:00"]);
+      const slot = await routeOptimizer.findEarliestOfferedSlot(
+        { ...INST, botSettings: { maxLessonsPerDay: 1 } }, "447000000001"
+      );
+      expect(slot.date).toBe("2025-06-19");
+    });
+
+    it("jumps past a holiday", async () => {
+      mockUser(NEAR.lat, NEAR.long);
+      Booking.find.mockResolvedValue([]);
+      calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["10:00"]);
+      const slot = await routeOptimizer.findEarliestOfferedSlot(
+        { ...INST, botSettings: { holiday: { enabled: true, from: "2025-06-18", to: "2025-06-24" } } }, "447000000001"
+      );
+      expect(slot.date).toBe("2025-06-25");
+    });
+
+    it("without a learner location, offers the first free time unscored", async () => {
+      mockUser(undefined);
+      Booking.find.mockResolvedValue([]);
+      calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["15:00", "09:00"]);
+      const slot = await routeOptimizer.findEarliestOfferedSlot(INST, "447000000001");
+      expect(slot).toEqual({ date: "2025-06-18", time: "09:00" });
+      expect(distanceMatrixService.getDrivingMatrix).not.toHaveBeenCalled();
+    });
+
+    it("returns null when nothing is free in range", async () => {
+      mockUser(NEAR.lat, NEAR.long);
+      Booking.find.mockResolvedValue([]);
+      calendarService.getAvailableTimeSlotsForDate.mockResolvedValue([]);
+      expect(await routeOptimizer.findEarliestOfferedSlot(INST, "447000000001")).toBeNull();
+    });
+  });
+});
+
+describe("UK clock change", () => {
+  // Clocks go back at 02:00 on Sunday 26 Oct 2025 (BST → GMT)
+  const departureFor = async (date) => {
+    Booking.find.mockResolvedValue([makeBooking("09:00", 53.02, -2.22)]);
+    await routeOptimizer.planDay({
+      date, instructor: INST, availableSlots: ["10:00", "14:00"], userLoc: { lat: 53.021, long: -2.216 },
+    });
+    return distanceMatrixService.getDrivingMatrix.mock.calls.at(-1)[2];
+  };
+
+  it("asks for traffic at the right moment in summer time", async () => {
+    expect((await departureFor("2025-10-24")).toISOString()).toBe("2025-10-24T09:00:00.000Z"); // 10:00 BST
+  });
+
+  it("and after the clocks go back", async () => {
+    expect((await departureFor("2025-10-27")).toISOString()).toBe("2025-10-27T10:00:00.000Z"); // 10:00 GMT
+  });
+});
+
+describe("existing lessons with a different drop-off", () => {
+  it("measures the drive to the next learner from where the last lesson ended", async () => {
+    const far = { latitude: 53.2, longitude: -2.45 };
+    const near = { latitude: 53.022, longitude: -2.217 };
+    const learner = { lat: 53.021, long: -2.216 };
+
+    const endsNear = { ...makeBooking("09:00", far.latitude, far.longitude), location: undefined, pickupLocation: far, dropoffLocation: near };
+    const endsFar = { ...makeBooking("09:00", far.latitude, far.longitude), location: undefined, pickupLocation: far, dropoffLocation: far };
+
+    const [a] = await routeOptimizer.scoreSlots(["10:00"], [endsNear], learner, BASE, route({ homeLegWeight: 0 }));
+    const [b] = await routeOptimizer.scoreSlots(["10:00"], [endsFar], learner, BASE, route({ homeLegWeight: 0 }));
+
+    expect(a.feasible).toBe(true);
+    expect(a.addedDrive).toBeLessThan(b.addedDrive);
+  });
+});
+
+describe("service area edge cases", () => {
+  const withArea = (serviceArea, extra = {}) => ({ ...INST, ...extra, routeSettings: { serviceArea } });
+
+  it("lets a learner through when their location is unknown (we can't measure, so we don't refuse)", () => {
+    expect(routeOptimizer.checkServiceArea(withArea({ radiusMiles: 5 }), null, null).inside).toBe(true);
+  });
+
+  it("uses the postcode when there's no location: a listed district is inside", () => {
+    expect(routeOptimizer.checkServiceArea(withArea({ radiusMiles: 5, postcodeDistricts: ["ST4"] }), null, "ST4 2RT").inside).toBe(true);
+  });
+
+  it("an unlisted postcode with no location is outside when districts are set", () => {
+    const r = routeOptimizer.checkServiceArea(withArea({ postcodeDistricts: ["ST4"] }), null, "CW1 2AB");
+    expect(r).toEqual({ inside: false, reason: "postcode is outside the instructor's area" });
+  });
+
+  it("can't measure a radius without the instructor's home, so lets them through", () => {
+    const noHome = { phoneNumberId: "inst-1", routeSettings: { serviceArea: { radiusMiles: 1 } } };
+    expect(routeOptimizer.checkServiceArea(noHome, USERS.charlie).inside).toBe(true);
+  });
+
+  it("treats the radius edge as inside", () => {
+    const miles = haversine(BASE.lat, BASE.long, USERS.bob.lat, USERS.bob.long) / 1.609344;
+    expect(routeOptimizer.checkServiceArea(withArea({ radiusMiles: miles + 0.01 }), USERS.bob).inside).toBe(true);
+    expect(routeOptimizer.checkServiceArea(withArea({ radiusMiles: miles - 0.01 }), USERS.bob).inside).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// How settings shape the result, robustness, and cost
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("settings change the result in the expected direction", () => {
+  const P = { lat: 53.03, long: -2.22 };   // existing lesson
+  const NEAR = { lat: 53.035, long: -2.225 };
+  const SLOTS = ["08:00", "10:00", "12:00", "14:00", "16:00"];
+  const offeredFor = async (preset, learner) => {
+    Booking.find.mockResolvedValue([makeBooking("09:00", P.lat, P.long), makeBooking("13:00", P.lat, P.long)]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: { ...INST, routeSettings: { preset } }, availableSlots: SLOTS, userLoc: learner,
+    });
+    return day.offered;
+  };
+
+  it.each([["near", { lat: 53.035, long: -2.225 }], ["mid", USERS.bob], ["far", USERS.eve]])(
+    "tighter presets never offer more than looser ones (%s learner)",
+    async (_label, learner) => {
+      const relaxed = await offeredFor("relaxed", learner);
+      const balanced = await offeredFor("balanced", learner);
+      const tight = await offeredFor("tight", learner);
+      // Tighter presets may fall back to the 3 best, but never offer a slot a looser preset rejected
+      expect(balanced.every((s) => relaxed.includes(s)) || balanced.length <= 3).toBe(true);
+      expect(tight.every((s) => balanced.includes(s)) || tight.length <= 3).toBe(true);
+      expect(tight.length).toBeLessThanOrEqual(relaxed.length);
+    }
+  );
+
+  it("'off' offers every free slot regardless of distance", async () => {
+    expect(await offeredFor("off", USERS.charlie)).toEqual(SLOTS.filter((s) => !["09:00", "13:00"].includes(s)));
+  });
+
+  it("longer lessons block more of the day", async () => {
+    const booked = [makeBooking("11:00", P.lat, P.long)];
+    const hour = await routeOptimizer.scoreSlots(["10:00"], booked, NEAR, BASE, route({ lessonDurationMin: 60 }));
+    const twoHours = await routeOptimizer.scoreSlots(["10:00"], booked, NEAR, BASE, route({ lessonDurationMin: 120 }));
+    expect(hour[0].feasible).toBe(true);
+    expect(twoHours[0]).toMatchObject({ feasible: false, reason: "overlaps your 11:00 lesson" });
+  });
+
+  it("home-leg weighting scales the drive from and to home", async () => {
+    const drive = async (homeLegWeight) =>
+      (await routeOptimizer.scoreSlots(["10:00"], [], USERS.bob, BASE, route({ homeLegWeight })))[0].addedDrive;
+    const off = await drive(0);
+    const half = await drive(0.5);
+    const full = await drive(1);
+    expect(off).toBe(0);
+    expect(full).toBeGreaterThan(0);
+    expect(half).toBeCloseTo(full / 2, 5);
+  });
+
+  it("with the gap penalty off, stranding another slot costs nothing", async () => {
+    const far = { lat: 53.2, long: -2.45 };
+    const A = { lat: 53.06, long: -2.25 };
+    mockMatrix({ [leg(far, A)]: 90, [leg(BASE, far)]: 5, [leg(far, BASE)]: 5 });
+    const run = (fragmentationPenaltyMin) =>
+      routeOptimizer.scoreSlots(["09:00", "10:00"], [makeBooking("12:00", A.lat, A.long)], far, BASE, route({ fragmentationPenaltyMin }));
+    const withPenalty = (await run(15)).find((s) => s.slot === "09:00");
+    const without = (await run(0)).find((s) => s.slot === "09:00");
+    expect(withPenalty.score).toBeGreaterThan(without.score);
+    expect(without.newlyStranded).toBe(0);
+  });
+
+  it("priority learners skip the drive limit but never get unreachable slots", async () => {
+    mockUser(USERS.charlie.lat, USERS.charlie.long, { priority: true });
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15",
+      instructor: { ...INST, routeSettings: { preset: "tight", travelGraceMin: 0 } },
+      availableSlots: ["10:00", "12:00"],
+      userLoc: USERS.charlie,
+      prefs: { priority: true },
+    });
+    const unreachable = day.evaluations.filter((e) => !e.feasible).map((e) => e.slot);
+    expect(day.offered.some((s) => unreachable.includes(s))).toBe(false);
+  });
+});
+
+describe("real drive times override straight-line estimates", () => {
+  it("a long real drive makes a slot unreachable even when it looks close on the map", async () => {
+    const lesson = { lat: 53.03, long: -2.22 };
+    const learner = { lat: 53.031, long: -2.221 }; // ~0.1 km away
+    mockMatrix({ [leg(lesson, learner)]: 45 }); // e.g. a river or one-way system in between
+    const [slot] = await routeOptimizer.scoreSlots(["10:00"], [makeBooking("09:00", lesson.lat, lesson.long)], learner, BASE, route({ travelGraceMin: 10 }));
+    expect(slot.feasible).toBe(false);
+    expect(slot.reason).toMatch(/can't get there in time after your 09:00 lesson \(45 min drive\)/);
+  });
+
+  it("a learner at the same spot as the lesson before adds no driving", async () => {
+    const spot = { lat: 53.03, long: -2.22 };
+    const [slot] = await routeOptimizer.scoreSlots(["10:00"], [makeBooking("09:00", spot.lat, spot.long)], spot, null, ROUTE);
+    expect(slot).toMatchObject({ feasible: true, addedDrive: 0, adjacent: true });
+  });
+
+  it("a learner who lives at the instructor's base adds no driving on an empty day", async () => {
+    const [slot] = await routeOptimizer.scoreSlots(["10:00"], [], BASE, BASE, ROUTE);
+    expect(slot.addedDrive).toBe(0);
+    expect(slot.reason).toBe("+0 min drive from home");
+  });
+});
+
+describe("robustness", () => {
+  it("ignores booking records without a time instead of crashing", async () => {
+    Booking.find.mockResolvedValue([{ date: "2025-06-15", status: "confirmed" }, makeBooking("09:00", 53.03, -2.22)]);
+    const day = await routeOptimizer.planDay({
+      date: "2025-06-15", instructor: INST, availableSlots: ["10:00", "14:00"], userLoc: USERS.alice,
+    });
+    expect(day.offered.length).toBeGreaterThan(0);
+  });
+
+  it("treats a lesson with broken coordinates as having no location", async () => {
+    const bad = { time: "09:00", location: { latitude: "abc", longitude: null } };
+    const scored = await routeOptimizer.scoreSlots(["09:00", "11:00"], [bad], USERS.alice, BASE, ROUTE);
+    expect(scored.find((s) => s.slot === "09:00").feasible).toBe(false); // still blocks its time
+    expect(scored.find((s) => s.slot === "11:00").feasible).toBe(true);
+  });
+
+  it("gives the same answer every time for the same day", async () => {
+    Booking.find.mockResolvedValue([makeBooking("09:00", 53.03, -2.22), makeBooking("13:00", 53.06, -2.25)]);
+    const args = { date: "2025-06-15", instructor: INST, availableSlots: ["10:00", "11:00", "14:00", "15:00"], userLoc: USERS.bob };
+    const first = await routeOptimizer.planDay(args);
+    const second = await routeOptimizer.planDay(args);
+    expect(second.offered).toEqual(first.offered);
+    expect(second.evaluations.map((e) => e.slot)).toEqual(first.evaluations.map((e) => e.slot));
+  });
+});
+
+describe("cost: Google calls stay bounded", () => {
+  it("a busy day (8 lessons, 14 free slots) is planned with one Routes call, quickly", async () => {
+    const lessons = ["07:00", "09:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00"].map((t, i) =>
+      makeBooking(t, 53.0 + i * 0.01, -2.2 - i * 0.01)
+    );
+    Booking.find.mockResolvedValue(lessons);
+    const slots = Array.from({ length: 14 }, (_, i) => `${String(7 + i).padStart(2, "0")}:00`);
+
+    const started = Date.now();
+    await routeOptimizer.planDay({ date: "2025-06-15", instructor: INST, availableSlots: slots, userLoc: USERS.bob });
+
+    expect(distanceMatrixService.getDrivingMatrix).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("suggesting days makes one Routes call per day checked", async () => {
+    const realNow = Date.now;
+    Date.now = () => new Date("2025-06-16T08:00:00Z").getTime();
+    try {
+      Booking.find.mockResolvedValue([makeBooking("09:00", 53.03, -2.22)]);
+      calendarService.getAvailableTimeSlotsForDate.mockResolvedValue(["10:00", "14:00"]);
+      await routeOptimizer.suggestBestDays({ ...INST, routeSettings: { lookAheadDays: 5 } }, { userLoc: USERS.alice });
+      expect(distanceMatrixService.getDrivingMatrix).toHaveBeenCalledTimes(5);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});

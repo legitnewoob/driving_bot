@@ -72,6 +72,17 @@ router.post("/google-signup", async (req, res) => {
     let isNew = false;
     let plaintextApiKey = null;
 
+    if (instructor?.suspended) {
+      return res.status(403).json({ success: false, error: "This account has been suspended. Contact support@donnadrive.co.uk." });
+    }
+
+    // A deleted account (older deletions only switched it off): finish deleting it
+    // so this sign-in starts a fresh account instead of bringing the old one back
+    if (instructor && !instructor.active) {
+      await require("../services/accountDeletion").deleteAccount(instructor);
+      instructor = null;
+    }
+
     if (!instructor) {
       // New instructor — generate API key and placeholder phoneNumberId
       isNew = true;
@@ -93,15 +104,6 @@ router.post("/google-signup", async (req, res) => {
       // Existing instructor — update googleId if missing
       if (!instructor.googleId) {
         instructor.googleId = googleId;
-      }
-
-      if (instructor.suspended) {
-        return res.status(403).json({ success: false, error: "This account has been suspended. Contact support@donnadrive.co.uk." });
-      }
-
-      // Reactivate if previously soft-deleted
-      if (!instructor.active) {
-        instructor.active = true;
       }
 
       // Always generate a fresh API key on login so the portal has a working key
@@ -351,31 +353,19 @@ router.post("/delete-account", jwtAuth, async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
-    // Cancel Stripe subscription if active
-    if (instructor.subscriptionId && instructor.stripeCustomerId) {
-      try {
-        const Stripe = require("stripe");
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-        await stripe.subscriptions.cancel(instructor.subscriptionId);
-      } catch (stripeErr) {
-        console.error("[authGoogle] Stripe cancel error during account deletion:", stripeErr.message);
+    if (require("../services/permissions").isSuperAdmin(instructor)) {
+      return res.status(403).json({ success: false, error: "A super admin account can't be deleted" });
+    }
+    if (instructor.schoolRole === "owner") {
+      const others = await Instructor.countDocuments({ schoolId: instructor.schoolId, schoolRole: { $in: ["member", "manager"] }, active: true });
+      if (others > 0) {
+        return res.status(409).json({ success: false, error: "Remove your school's instructors first, then delete your account." });
       }
     }
 
-    // Release phone number back to pool
-    const phoneNumberService = require("../services/phoneNumberService");
-    if (phoneNumberService.isFullyProvisioned(instructor)) {
-      const PhoneNumber = require("../models/phoneNumberModel");
-      const pn = await PhoneNumber.findOne({ assignedTo: instructor._id, status: "assigned" });
-      if (pn) {
-        await phoneNumberService.revokeNumber(pn._id);
-      }
-    }
-
-    // Soft-delete
-    instructor.active = false;
-    instructor.apiKey = null;
-    await instructor.save();
+    // Cancels billing, releases the number and removes their identity, so signing
+    // in again with the same Google account starts a new account
+    await require("../services/accountDeletion").deleteAccount(instructor);
 
     res.json({ success: true });
   } catch (err) {

@@ -128,6 +128,7 @@ async function overview() {
 
 function statusOf(i) {
   if (i.suspended) return "suspended";
+  if (i.deletedAt || i.active === false) return "deleted";
   if (i.comp?.plan && (!i.comp.until || new Date(i.comp.until) > new Date())) return "comped";
   if (SCHOOL_SEATS.includes(i.schoolRole)) return "school";
   if (i.plan === "pdi" || !i.subscriptionStatus) return "free";
@@ -181,6 +182,7 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
     case "comped": and.push(compActive()); break;
     case "school": q.schoolRole = { $in: SCHOOL_SEATS }; break;
     case "suspended": q.suspended = true; break;
+    case "deleted": q.deletedAt = { $ne: null }; break;
     default: break;
   }
   if (and.length) q.$and = and;

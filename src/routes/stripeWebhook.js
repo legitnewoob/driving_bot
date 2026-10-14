@@ -1,3 +1,4 @@
+const { syncMembersSubscription, syncSeatsFromSubscription } = require("../services/schoolService");
 const Stripe = require("stripe");
 const Instructor = require("../models/instructorSchema");
 const ProcessedEvent = require("../models/processedEventModel");
@@ -49,6 +50,7 @@ async function stripeWebhookHandler(req, res) {
             instructor.stripeCustomerId = session.customer;
             if (plan) instructor.plan = plan;
             await instructor.save();
+            await syncMembersSubscription(instructor);
             console.log(`[stripeWebhook] Subscription ${subStatus} for instructor ${instructorId}, plan: ${plan}`);
           }
         }
@@ -64,6 +66,8 @@ async function stripeWebhookHandler(req, res) {
           instructor.subscriptionStatus = subscription.status;
           instructor.subscriptionId = subscription.id;
           await instructor.save();
+          await syncMembersSubscription(instructor);
+          await syncSeatsFromSubscription(instructor, subscription);
           console.log(`[stripeWebhook] Subscription updated for ${instructor.email}: ${subscription.status}`);
         }
         break;
@@ -77,6 +81,7 @@ async function stripeWebhookHandler(req, res) {
         if (instructor) {
           instructor.subscriptionStatus = "canceled";
           await instructor.save();
+          await syncMembersSubscription(instructor);
           console.log(`[stripeWebhook] Subscription canceled for ${instructor.email}`);
         }
         break;
@@ -90,6 +95,7 @@ async function stripeWebhookHandler(req, res) {
         if (instructor) {
           instructor.subscriptionStatus = "past_due";
           await instructor.save();
+          await syncMembersSubscription(instructor);
           console.log(`[stripeWebhook] Payment failed for ${instructor.email}`);
         }
         break;
@@ -103,6 +109,7 @@ async function stripeWebhookHandler(req, res) {
         if (instructor && instructor.subscriptionStatus === "past_due") {
           instructor.subscriptionStatus = "active";
           await instructor.save();
+          await syncMembersSubscription(instructor);
           console.log(`[stripeWebhook] Payment recovered for ${instructor.email}`);
         }
         break;
@@ -117,6 +124,7 @@ async function stripeWebhookHandler(req, res) {
           if (instructor && !instructor.subscriptionId) {
             instructor.plan = "pdi";
             await instructor.save();
+            await syncMembersSubscription(instructor);
             console.log(`[stripeWebhook] Checkout expired, reverted plan for instructor ${instructorId}`);
           }
         }

@@ -89,6 +89,9 @@ const instructorSchema = new mongoose.Schema({
   active: { type: Boolean, default: true },
   apiKey: { type: String, unique: true, sparse: true, index: true },
   plan: { type: String, enum: ["pdi", "adi", "driving-school"], default: "pdi" },
+  // Driving schools: the owner manages; members are the school's instructors
+  schoolId: { type: mongoose.Schema.Types.ObjectId, ref: "School", default: null, index: true },
+  schoolRole: { type: String, enum: ["owner", "member", null], default: null },
   stripeCustomerId: { type: String, unique: true, sparse: true },
   subscriptionId: { type: String },
   subscriptionStatus: {

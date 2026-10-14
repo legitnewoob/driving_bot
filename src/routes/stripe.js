@@ -20,7 +20,8 @@ const PAID_PLANS = ["adi", "driving-school"];
  */
 router.post("/create-checkout-session", async (req, res) => {
   try {
-    const { plan } = req.body;
+    // embedded: true → Stripe's checkout shown in a modal on the dashboard
+    const { plan, embedded } = req.body;
 
     if (!plan || !PAID_PLANS.includes(plan)) {
       return res.status(400).json({ success: false, error: "Invalid plan. Must be 'adi' or 'driving-school'" });
@@ -105,7 +106,8 @@ router.post("/create-checkout-session", async (req, res) => {
     const portalUrl = process.env.PORTAL_URL || "http://localhost:5174";
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:8080";
 
-    const successUrl = `${frontendUrl}/get-onboard?auth_code=${authCode}`;
+    // session_id lets the sign-in step check with Stripe that checkout really finished
+    const successUrl = `${frontendUrl}/get-onboard?auth_code=${authCode}&session_id={CHECKOUT_SESSION_ID}`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -119,8 +121,13 @@ router.post("/create-checkout-session", async (req, res) => {
       // An active sale's coupon, or a box for promo codes (Stripe allows one or the other)
       ...(await pricing.checkoutDiscount(plan)),
       subscription_data: planConfig.trialDays > 0 ? { trial_period_days: planConfig.trialDays } : {},
-      success_url: successUrl,
-      cancel_url: `${frontendUrl}/#pricing`,
+      ...(embedded
+        ? { ui_mode: "embedded_page", return_url: successUrl }
+        : {
+            success_url: successUrl,
+            // Backing out returns to the dashboard, which stays locked behind the plan picker until they pay
+            cancel_url: `${frontendUrl}/get-onboard`,
+          }),
       client_reference_id: instructor._id.toString(),
       metadata: {
         plan,
@@ -132,7 +139,7 @@ router.post("/create-checkout-session", async (req, res) => {
     instructor.plan = plan;
     await instructor.save();
 
-    res.json({ success: true, url: session.url });
+    res.json({ success: true, url: session.url || null, clientSecret: session.client_secret || null });
   } catch (err) {
     console.error("[stripe] create-checkout-session error:", err);
     res.status(500).json({ success: false, error: "Failed to create checkout session" });
@@ -185,7 +192,7 @@ router.post("/create-portal-session", async (req, res) => {
       return_url: portalUrl,
     });
 
-    res.json({ success: true, url: session.url });
+    res.json({ success: true, url: session.url || null, clientSecret: session.client_secret || null });
   } catch (err) {
     console.error("[stripe] create-portal-session error:", err);
     res.status(500).json({ success: false, error: "Failed to create portal session" });

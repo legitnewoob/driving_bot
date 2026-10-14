@@ -53,6 +53,7 @@ async function stripeWebhookHandler(req, res) {
             instructor.canceledAt = null;
             instructor.stripeCustomerId = session.customer;
             if (plan) instructor.plan = plan;
+            instructor.planSelected = true;
             await instructor.save();
             await syncMembersSubscription(instructor);
             console.log(`[stripeWebhook] Subscription ${subStatus} for instructor ${instructorId}, plan: ${plan}`);

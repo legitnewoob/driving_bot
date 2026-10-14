@@ -101,6 +101,10 @@ const instructorSchema = new mongoose.Schema({
     until: { type: Date, default: null },
     note: { type: String, default: "" },
   },
+  // New sign-ups start false and can't use the dashboard, Portal or Donna until they
+  // pick a plan (free, finished checkout, joined a school or comped). Left unset on
+  // older accounts, which counts as chosen.
+  planSelected: { type: Boolean },
   // Admin suspension: blocks sign-in (signing in again doesn't reactivate)
   suspended: { type: Boolean, default: false },
   trialEndsAt: { type: Date, default: null },

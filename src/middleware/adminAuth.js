@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const { verifyToken } = require("./jwtAuth");
 const Instructor = require("../models/instructorSchema");
-const { staffRoleOf, permissionsOf, STAFF_PERMISSIONS } = require("../services/permissions");
+const { staffRoleOf, permissionsOf, isSuperAdmin, STAFF_PERMISSIONS } = require("../services/permissions");
 
 function validAdminKey(key) {
   const expected = process.env.ADMIN_API_KEY;
@@ -16,7 +16,7 @@ function validAdminKey(key) {
  */
 async function adminAuth(req, res, next) {
   if (validAdminKey(req.headers["x-admin-key"])) {
-    req.staff = { email: "admin-key", role: "admin", permissions: STAFF_PERMISSIONS.admin };
+    req.staff = { email: "admin-key", role: "admin", superAdmin: false, permissions: STAFF_PERMISSIONS.admin };
     return next();
   }
 
@@ -28,7 +28,7 @@ async function adminAuth(req, res, next) {
       const role = staffRoleOf(person);
       if (role) {
         req.user = payload;
-        req.staff = { email: person.email, id: String(person._id), role, permissions: permissionsOf(person).filter((p) => p.startsWith("admin.")) };
+        req.staff = { email: person.email, id: String(person._id), role, superAdmin: isSuperAdmin(person), permissions: permissionsOf(person).filter((p) => p.startsWith("admin.")) };
         return next();
       }
     } catch {

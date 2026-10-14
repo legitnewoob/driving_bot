@@ -21,6 +21,7 @@ const basicAuth = require("express-basic-auth");
 const jwtAuth = require("./src/middleware/jwtAuth");
 const apiKeyAuth = require("./src/middleware/apiKeyAuth");
 const adminAuth = require("./src/middleware/adminAuth");
+const requirePlan = require("./src/middleware/requirePlan");
 
 
 
@@ -124,11 +125,11 @@ app.use('/api/stripe', jwtAuth, stripeRoutes);
 app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', adminAuth, bookingRoutes);
-app.use('/api/dashboard', jwtAuth, dashboardRoutes);
+app.use('/api/dashboard', jwtAuth, requirePlan, dashboardRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/pricing', pricingRoutes); // public: plans and the active sale for the website // public invite lookup inside; everything else needs JWT
-app.use('/api/learners', apiKeyAuth, learnerRoutes);
-app.use('/api/phone-numbers', jwtAuth, phoneNumberRoutes);
+app.use('/api/learners', apiKeyAuth, requirePlan, learnerRoutes);
+app.use('/api/phone-numbers', jwtAuth, requirePlan, phoneNumberRoutes);
 app.use('/api/admin', adminAuth, adminRoutes);
 
 // Mock Route (development only)

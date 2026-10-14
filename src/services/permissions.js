@@ -43,6 +43,11 @@ function staffRoleOf(person) {
   return STAFF_PERMISSIONS[person.staffRole] ? person.staffRole : null;
 }
 
+/** Signed up but hasn't picked a plan yet (staff never need one). */
+function needsPlan(person) {
+  return !!person && person.planSelected === false && !staffRoleOf(person);
+}
+
 function permissionsOf(person) {
   const staff = STAFF_PERMISSIONS[staffRoleOf(person)] || [];
   const school = (person?.schoolId && SCHOOL_PERMISSIONS[person.schoolRole]) || [];
@@ -61,5 +66,6 @@ module.exports = {
   isSuperAdmin,
   staffRoleOf,
   permissionsOf,
+  needsPlan,
   can,
 };

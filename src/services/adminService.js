@@ -29,6 +29,9 @@ const compActive = () => ({ "comp.plan": { $ne: null }, $or: [{ "comp.until": nu
 /** Customers who pay us directly (school instructors are covered by their owner). */
 const billedSelf = { schoolRole: { $nin: SCHOOL_SEATS } };
 
+/** Super admins run Donna Drive; they aren't customers, so they're left out of the numbers. */
+const notOwners = () => ({ email: { $nin: superAdminEmails() } });
+
 function isoDay(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
@@ -45,21 +48,21 @@ async function overview() {
     withNumber, withCalendar, donnaOff, suspended, plans, schools, seatAgg, numbersRaw,
     lessonsNext7, lessons30, learners, recent, trialsEnding,
   ] = await Promise.all([
-    Instructor.countDocuments({ active: true }),
-    Instructor.aggregate([{ $match: { active: true } }, { $group: { _id: "$plan", n: { $sum: 1 } } }]),
-    Instructor.find({ active: true, subscriptionStatus: { $in: PAYING }, ...billedSelf }, { plan: 1, schoolId: 1, schoolRole: 1 }).lean(),
-    Instructor.countDocuments({ active: true, subscriptionStatus: "trialing", ...billedSelf }),
-    Instructor.countDocuments({ active: true, subscriptionStatus: "past_due", ...billedSelf }),
-    Instructor.countDocuments({ active: true, ...compActive() }),
-    Instructor.countDocuments({ canceledAt: { $gte: since30 } }),
+    Instructor.countDocuments({ ...notOwners(), active: true }),
+    Instructor.aggregate([{ $match: { active: true, ...notOwners() } }, { $group: { _id: "$plan", n: { $sum: 1 } } }]),
+    Instructor.find({ ...notOwners(), active: true, subscriptionStatus: { $in: PAYING }, ...billedSelf }, { plan: 1, schoolId: 1, schoolRole: 1 }).lean(),
+    Instructor.countDocuments({ ...notOwners(), active: true, subscriptionStatus: "trialing", ...billedSelf }),
+    Instructor.countDocuments({ ...notOwners(), active: true, subscriptionStatus: "past_due", ...billedSelf }),
+    Instructor.countDocuments({ ...notOwners(), active: true, ...compActive() }),
+    Instructor.countDocuments({ ...notOwners(), canceledAt: { $gte: since30 } }),
     Instructor.aggregate([
-      { $match: { createdAt: { $gte: since30 } } },
+      { $match: { createdAt: { $gte: since30 }, ...notOwners() } },
       { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }, n: { $sum: 1 } } },
     ]),
-    Instructor.countDocuments({ active: true, ...hasNumber }),
-    Instructor.countDocuments({ active: true, googleRefreshToken: { $nin: [null, ""] } }),
-    Instructor.countDocuments({ active: true, "botSettings.donnaEnabled": false }),
-    Instructor.countDocuments({ suspended: true }),
+    Instructor.countDocuments({ ...notOwners(), active: true, ...hasNumber }),
+    Instructor.countDocuments({ ...notOwners(), active: true, googleRefreshToken: { $nin: [null, ""] } }),
+    Instructor.countDocuments({ ...notOwners(), active: true, "botSettings.donnaEnabled": false }),
+    Instructor.countDocuments({ ...notOwners(), suspended: true }),
     pricing.getPlans(),
     School.countDocuments({}),
     School.aggregate([{ $group: { _id: null, limit: { $sum: "$seatLimit" }, extra: { $sum: "$extraSeats" } } }]),
@@ -67,8 +70,8 @@ async function overview() {
     Booking.countDocuments({ status: { $in: ["confirmed", "rescheduled"] }, date: { $gte: today, $lte: in7 } }),
     Booking.countDocuments({ status: { $in: ["confirmed", "rescheduled", "completed"] }, date: { $gte: ago30, $lte: today } }),
     User.countDocuments({ detailsCompleted: true }),
-    Instructor.find({}).sort({ createdAt: -1 }).limit(8).lean(),
-    Instructor.find({ subscriptionStatus: "trialing", trialEndsAt: { $gte: now, $lte: new Date(+now + 7 * DAY) } })
+    Instructor.find(notOwners()).sort({ createdAt: -1 }).limit(8).lean(),
+    Instructor.find({ ...notOwners(), subscriptionStatus: "trialing", trialEndsAt: { $gte: now, $lte: new Date(+now + 7 * DAY) } })
       .sort({ trialEndsAt: 1 }).limit(10).lean(),
   ]);
 
@@ -91,7 +94,7 @@ async function overview() {
 
   const byPlan = Object.fromEntries(byPlanRaw.map((r) => [r._id || "pdi", r.n]));
   const numbers = Object.fromEntries(numbersRaw.map((r) => [r._id, r.n]));
-  const membersInSchools = await Instructor.countDocuments({ active: true, schoolRole: { $in: SCHOOL_SEATS } });
+  const membersInSchools = await Instructor.countDocuments({ ...notOwners(), active: true, schoolRole: { $in: SCHOOL_SEATS } });
 
   return {
     instructors: { total, byPlan, suspended },
@@ -166,6 +169,8 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
     and.push({ $or: [{ name: re }, { email: re }, { phone: re }] });
   }
   if (plan) q.plan = plan;
+  // Super admins only show up when looking at staff
+  if (staff !== "true") and.push(notOwners());
   if (staff === "true") and.push({ $or: [{ staffRole: { $in: ["admin", "support"] } }, { email: { $in: superAdminEmails() } }] });
   switch (status) {
     case "paying": Object.assign(q, { subscriptionStatus: { $in: PAYING } }, billedSelf); break;
@@ -249,6 +254,7 @@ async function setComp(id, { plan, until, note }, actor) {
   if (SCHOOL_SEATS.includes(i.schoolRole)) throw adminError("Their driving school covers them. Comp the school owner instead.");
   i.comp = { plan, until: untilDate, note: String(note || "").slice(0, 200) };
   i.plan = plan;
+  i.planSelected = true;
   await i.save();
   invalidateInstructorCache(i.phoneNumberId);
   if (plan === "driving-school") await require("./schoolService").schoolFor(i.toObject());

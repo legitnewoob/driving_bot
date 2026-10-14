@@ -9,6 +9,7 @@ const Instructor = require("../models/instructorSchema");
 const Payment = require("../models/paymentModel");
 const LessonType = require("../models/lessonTypeModel");
 const { getSetupStatus } = require("../services/setupStatus");
+const schoolService = require("../services/schoolService");
 const Notification = require("../models/notificationModel");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
@@ -36,7 +37,14 @@ async function resolveInstructor(req) {
     if (!req.user?.email) return null;
 
     const instructor = await Instructor.findOne({ email: req.user.email, active: true }).lean();
-    return instructor || null;
+    if (!instructor) return null;
+
+    // A school owner can look at one of their instructors (?instructor=<id>), read-only:
+    // only GETs switch; anything that changes data always applies to the signed-in instructor.
+    if (req.method === "GET" && req.query.instructor) {
+      return schoolService.viewableInstructor(instructor, req.query.instructor);
+    }
+    return instructor;
   }
 
   // Dev fallback: allow an instructorId query parameter in development only.

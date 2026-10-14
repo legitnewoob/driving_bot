@@ -6,6 +6,7 @@ const healthRoutes = require('./src/routes/status');
 const logRoutes = require('./src/routes/fetchLogs');
 const bookingRoutes = require('./src/routes/bookings');
 const dashboardRoutes = require('./src/routes/dashboard');
+const schoolRoutes = require('./src/routes/school');
 const learnerRoutes = require('./src/routes/learners');
 const stripeRoutes = require('./src/routes/stripe');
 const stripeWebhookHandler = require('./src/routes/stripeWebhook');
@@ -123,6 +124,7 @@ app.use('/api/status', healthRoutes);
 app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', adminAuth, bookingRoutes);
 app.use('/api/dashboard', jwtAuth, dashboardRoutes);
+app.use('/api/school', schoolRoutes); // public invite lookup inside; everything else needs JWT
 app.use('/api/learners', apiKeyAuth, learnerRoutes);
 app.use('/api/phone-numbers', jwtAuth, phoneNumberRoutes);
 app.use('/api/admin', adminAuth, adminRoutes);

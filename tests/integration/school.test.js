@@ -125,7 +125,7 @@ describe("joining a school", () => {
     SchoolInvite.findOne.mockResolvedValue(inv);
     const result = await schoolService.acceptInvite(sam(), "tok");
     expect(Instructor.findByIdAndUpdate).toHaveBeenCalledWith("sam-1", {
-      schoolId: SCHOOL_ID, schoolRole: "member", plan: "driving-school", subscriptionStatus: "active",
+      schoolId: SCHOOL_ID, schoolRole: "member", plan: "driving-school", planSelected: true, subscriptionStatus: "active",
     });
     expect(inv.status).toBe("accepted");
     expect(result.schoolName).toBe("Shah Driving School");

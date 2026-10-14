@@ -68,7 +68,7 @@ describe("who gets in", () => {
   it("the super admin's Google account gets in with full access", async () => {
     const me = await call("/me", { headers: as("agrawalraj918@gmail.com") });
     expect(me.status).toBe(200);
-    expect(me.body.data).toMatchObject({ role: "admin", email: "agrawalraj918@gmail.com" });
+    expect(me.body.data).toMatchObject({ role: "admin", email: "agrawalraj918@gmail.com", superAdmin: true });
     expect(me.body.data.permissions).toEqual(expect.arrayContaining(["admin.pricing", "admin.roles", "admin.sales"]));
     expect((await call("/overview", { headers: as("agrawalraj918@gmail.com") })).status).toBe(200);
   });
@@ -215,5 +215,26 @@ describe("customer actions", () => {
     expect(s({ plan: "adi", comp: { plan: "adi", until: null } })).toBe("comped");
     expect(s({ plan: "adi", comp: { plan: "adi", until: new Date(Date.now() - 1000) }, subscriptionStatus: "canceled" })).toBe("canceled");
     expect(s({ plan: "adi", suspended: true, subscriptionStatus: "active" })).toBe("suspended");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("super admins aren't customers", () => {
+  const chain = (rows) => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: async () => rows }) }) }) });
+
+  it("they're left out of the customer list unless looking at staff", async () => {
+    Instructor.find.mockReturnValue(chain([]));
+    Instructor.countDocuments.mockResolvedValue(0);
+    await adminService.listCustomers({});
+    expect(Instructor.find.mock.calls[0][0].$and).toContainEqual({ email: { $nin: ["agrawalraj918@gmail.com"] } });
+
+    Instructor.find.mockClear();
+    await adminService.listCustomers({ staff: "true" });
+    expect(Instructor.find.mock.calls[0][0].$and).not.toContainEqual({ email: { $nin: ["agrawalraj918@gmail.com"] } });
+  });
+
+  it("a support member isn't a super admin", async () => {
+    const me = await call("/me", { headers: as("sue@donnadrive.co.uk") });
+    expect(me.body.data).toMatchObject({ role: "support", superAdmin: false });
   });
 });

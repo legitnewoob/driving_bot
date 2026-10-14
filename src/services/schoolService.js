@@ -219,6 +219,7 @@ async function acceptInvite(instructor, token) {
     schoolId: school._id,
     schoolRole: "member",
     plan: "driving-school",
+    planSelected: true,
     subscriptionStatus: owner?.subscriptionStatus || "active",
   });
   invite.status = "accepted";

@@ -3,27 +3,54 @@ const PhoneNumber = require("../models/phoneNumberModel");
 const Instructor = require("../models/instructorSchema");
 const { invalidateInstructorCache } = require("../models/instructorModel");
 
+// Everything stored per instructor is keyed by their phoneNumberId, which changes
+// when a number is assigned (from a temporary signup_… id) or revoked. Move it
+// along so lesson types, learners, bookings etc. created before aren't orphaned.
+const KEYED_BY_INSTRUCTOR = [
+  "../models/lessonTypeModel",
+  "../models/bookingModel",
+  "../models/userModel",
+  "../models/paymentModel",
+  "../models/notificationModel",
+  "../models/waitlistEntryModel",
+  "../models/conversationSessionModel",
+];
+
+async function moveInstructorData(fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return;
+  for (const path of KEYED_BY_INSTRUCTOR) {
+    const Model = require(path);
+    await Model.updateMany({ instructorId: fromId }, { $set: { instructorId: toId } });
+  }
+}
+
 async function assignNumber(instructorId, { region = "GB" } = {}) {
   const existing = await PhoneNumber.findOne({ assignedTo: instructorId, status: "assigned" }).lean();
   if (existing) return existing;
 
-  const phoneNumber = await PhoneNumber.findOneAndUpdate(
-    { status: "available", region },
-    { status: "assigned", assignedTo: instructorId, assignedAt: new Date() },
-    { new: true, sort: { createdAt: 1 } }
-  );
+  const claim = (filter) =>
+    PhoneNumber.findOneAndUpdate(
+      { status: "available", ...filter },
+      { status: "assigned", assignedTo: instructorId, assignedAt: new Date() },
+      { new: true, sort: { createdAt: 1 } }
+    );
+  // Prefer the instructor's region, but any free number beats none
+  const phoneNumber = (await claim({ region })) || (await claim({}));
 
   if (!phoneNumber) return null;
 
+  const instructor = await Instructor.findById(instructorId).lean();
   const updateFields = {
     phoneNumberId: phoneNumber.phoneNumberId,
     phone: phoneNumber.phoneNumber,
   };
-  if (phoneNumber.whatsappToken) {
-    updateFields.whatsappToken = phoneNumber.whatsappToken;
-  }
+  // The weekly refresh keeps the pool's token current; the env token is only a fallback
+  const token = phoneNumber.whatsappToken || process.env.WHATSAPP_TOKEN;
+  if (token) updateFields.whatsappToken = token;
 
   await Instructor.findByIdAndUpdate(instructorId, updateFields);
+  await moveInstructorData(instructor?.phoneNumberId, phoneNumber.phoneNumberId);
+  if (instructor?.phoneNumberId) invalidateInstructorCache(instructor.phoneNumberId);
   invalidateInstructorCache(phoneNumber.phoneNumberId);
 
   return phoneNumber;
@@ -46,10 +73,12 @@ async function revokeNumber(phoneNumberDocId) {
   await phoneNumber.save();
 
   if (instructorId) {
+    const placeholderId = `signup_${new mongoose.Types.ObjectId()}`;
     await Instructor.findByIdAndUpdate(instructorId, {
-      phoneNumberId: `signup_${new mongoose.Types.ObjectId()}`,
+      phoneNumberId: placeholderId,
       whatsappToken: null,
     });
+    await moveInstructorData(oldPhoneNumberId, placeholderId);
     invalidateInstructorCache(oldPhoneNumberId);
   }
 
@@ -72,4 +101,4 @@ function isFullyProvisioned(instructor) {
   return instructor.phoneNumberId && !instructor.phoneNumberId.startsWith("signup_");
 }
 
-module.exports = { assignNumber, getAssignedNumber, revokeNumber, addToPool, isFullyProvisioned };
+module.exports = { assignNumber, getAssignedNumber, revokeNumber, addToPool, isFullyProvisioned, moveInstructorData };

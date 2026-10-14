@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const phoneNumberService = require("../services/phoneNumberService");
 const Instructor = require("../models/instructorSchema");
+const { getSetupStatus } = require("../services/setupStatus");
 
 router.get("/my-number", async (req, res) => {
   try {
@@ -39,6 +40,17 @@ router.post("/request", async (req, res) => {
     const instructor = await Instructor.findOne({ email: req.user.email, active: true });
     if (!instructor) {
       return res.status(404).json({ success: false, error: "Instructor not found" });
+    }
+
+    // Donna needs these before she can take bookings on a real number
+    const setup = await getSetupStatus(instructor);
+    if (!setup.complete && !setup.hasNumber) {
+      return res.status(400).json({
+        success: false,
+        error: `Finish setting up Donna first: ${setup.missing.join(", ").toLowerCase()}.`,
+        code: "SETUP_INCOMPLETE",
+        setup,
+      });
     }
 
     const region = req.body.region || "GB";

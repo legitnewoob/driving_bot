@@ -8,6 +8,7 @@ const ChatLog = require("../models/chatLogModel");
 const Instructor = require("../models/instructorSchema");
 const Payment = require("../models/paymentModel");
 const LessonType = require("../models/lessonTypeModel");
+const { getSetupStatus } = require("../services/setupStatus");
 const Notification = require("../models/notificationModel");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
@@ -872,11 +873,23 @@ router.get("/notifications", async (req, res) => {
   }
 });
 
+// What's still needed before the instructor can request a WhatsApp number
+router.get("/setup-status", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    res.json({ success: true, data: await getSetupStatus(instructor) });
+  } catch (err) {
+    logger.error(`Dashboard /setup-status error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to load setup status" });
+  }
+});
+
 router.get("/settings", async (req, res) => {
   try {
     const instructor = await resolveInstructor(req);
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
-    res.json({ success: true, data: settingsPayload(instructor) });
+    res.json({ success: true, data: { ...settingsPayload(instructor), setup: await getSetupStatus(instructor) } });
   } catch (err) {
     logger.error(`Dashboard /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to load settings" });
@@ -932,7 +945,8 @@ router.patch("/settings", async (req, res) => {
     await doc.save();
     invalidateInstructorCache(doc.phoneNumberId);
 
-    res.json({ success: true, data: settingsPayload(doc.toObject()) });
+    const saved = doc.toObject();
+    res.json({ success: true, data: { ...settingsPayload(saved), setup: await getSetupStatus(saved) } });
   } catch (err) {
     logger.error(`Dashboard PATCH /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to save settings" });

@@ -79,6 +79,8 @@ function parseIncoming(message) {
 class WebhookController {
   // learner::number → when we last said "this number isn't linked"
   _noInstructorReplies = new Map();
+  // learner::instructor → when we last said "Donna is switched off"
+  _donnaOffReplies = new Map();
 
   /* ========== PER-MESSAGE CONTEXT ========== */
 
@@ -156,6 +158,31 @@ class WebhookController {
     } catch (err) {
       logger.warn(`Couldn't send the not-linked reply to ${from}: ${err.message}`);
     }
+  }
+
+  async _donnaOff(ctx, messageContent, extra = {}) {
+    const { from, instructor } = ctx;
+    const key = `${from}::${ctx.instructorId}`;
+    const last = this._donnaOffReplies.get(key);
+    if (!last || Date.now() - last >= NO_INSTRUCTOR_REPLY_GAP_MS) {
+      this._donnaOffReplies.set(key, Date.now());
+      await ctx.send(
+        `Sorry, ${instructor.name || "your instructor"} isn't taking bookings through Donna right now. ` +
+        `Please contact them directly.`
+      );
+    }
+
+    if (ctx.isMock) return;
+    const user = isDbReady() ? await User.findOne({ phone: from, instructorId: ctx.instructorId }).catch(() => null) : null;
+    notifyInstructorLearnerMessage(instructor, user || { phone: from }, messageContent, { reason: "off" }).catch(() => {});
+    notifications
+      .notify(instructor, {
+        type: "paused_message",
+        message: `${user?.name || from}: "${String(messageContent).slice(0, 120)}" (Donna is switched off)`,
+        clientId: `notif-off-${from}-${extra.messageId || Date.now()}`,
+        learnerPhone: from,
+      })
+      .catch(() => {});
   }
 
   // Instructor may have switched off cancelling/moving through Donna
@@ -692,6 +719,13 @@ class WebhookController {
     await sessionStore.load(from, ctx.instructorId);
 
     try {
+      // Instructor has switched Donna off (e.g. an emergency): tell the learner to
+      // contact them directly, and pass the message on to the instructor.
+      if (!ctx.bot.donnaEnabled) {
+        await this._donnaOff(ctx, messageContent, extra);
+        return;
+      }
+
       if (extra.unsupportedType) {
         await ctx.send("Sorry, I can only read text messages and shared locations for now. Could you type that for me? 🙂");
         return;

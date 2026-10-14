@@ -149,10 +149,7 @@ router.get("/calendar/connect", jwtAuth, async (req, res) => {
     const { oauth2Client } = require("../config/google");
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
-      scope: [
-        "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/spreadsheets",
-      ],
+      scope: ["https://www.googleapis.com/auth/calendar"],
       prompt: "consent",
       state: `email:${instructor.email}`,
     });

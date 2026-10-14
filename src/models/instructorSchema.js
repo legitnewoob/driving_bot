@@ -108,6 +108,8 @@ const instructorSchema = new mongoose.Schema({
   // Admin suspension: blocks sign-in (signing in again doesn't reactivate)
   suspended: { type: Boolean, default: false },
   trialEndsAt: { type: Date, default: null },
+  // Set when the instructor deletes their account (identity removed, see accountDeletion)
+  deletedAt: { type: Date, default: null },
   canceledAt: { type: Date, default: null },
   stripeCustomerId: { type: String, unique: true, sparse: true },
   subscriptionId: { type: String },

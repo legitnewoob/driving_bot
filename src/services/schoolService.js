@@ -118,6 +118,9 @@ async function overview(instructor) {
     pricing.getPlan("driving-school"),
   ]);
 
+  const summaries = await Promise.all(members.map(memberSummary));
+  const schoolDonnaOn = school.donnaEnabled !== false;
+
   return {
     school: {
       id: String(school._id),
@@ -131,12 +134,38 @@ async function overview(instructor) {
     },
     role: person.schoolRole,
     roleLabel: SCHOOL_ROLE_LABELS[person.schoolRole] || null,
-    permissions: ["school.view", "school.invite", "school.remove", "school.viewAll", "school.billing", "school.roles", "school.rename"].filter((p) => can(person, p)),
+    permissions: ["school.view", "school.invite", "school.remove", "school.viewAll", "school.billing", "school.roles", "school.rename", "school.donna"].filter((p) => can(person, p)),
     owner: owner ? { name: owner.name, email: owner.email } : null,
+    // The school-wide switch: off stops Donna for every instructor
+    donnaEnabled: schoolDonnaOn,
     seats,
-    members: await Promise.all(members.map(memberSummary)),
+    members: summaries.map((m) => ({ ...m, donnaEnabled: m.donnaEnabled && schoolDonnaOn })),
     invites: invites.map((i) => ({ id: String(i._id), email: i.email, sentAt: i.createdAt, expiresAt: i.expiresAt, link: inviteLink(i.token) })),
+    onboarding: schoolOnboarding(seats, summaries),
   };
+}
+
+/**
+ * A school is onboarded once at least one instructor has joined and set Donna up
+ * completely (settings, WhatsApp number and calendar). The owner doesn't set Donna
+ * up themselves.
+ */
+function schoolOnboarding(seats, members) {
+  const ready = members.filter((m) => m.setup?.complete && m.phoneNumber && m.calendarConnected);
+  const steps = {
+    invited: seats.used > 0,
+    joined: seats.members > 0,
+    ready: ready.length > 0,
+  };
+  return { ...steps, complete: steps.joined && steps.ready, readyCount: ready.length };
+}
+
+/** The owner (or a manager) switches Donna on or off for the whole school. */
+async function setSchoolDonna(requester, enabled) {
+  const { school } = await requireSchool(requester, "school.donna", "Only the school owner or a manager can do that");
+  await School.findByIdAndUpdate(school._id, { donnaEnabled: !!enabled });
+  require("./donnaStatus").clearSchoolDonnaCache(school._id);
+  await audit(requester.email, enabled ? "school.donna.on" : "school.donna.off", String(school._id));
 }
 
 function inviteLink(token) {
@@ -339,6 +368,8 @@ async function viewableInstructor(requester, instructorId) {
 }
 
 module.exports = {
+  setSchoolDonna,
+  schoolOnboarding,
   schoolFor,
   overview,
   invite,

@@ -114,7 +114,7 @@ describe("create-checkout-session", () => {
     expect(res.body).toMatchObject({ success: true, clientSecret: "cs_secret_1" });
     const params = mockStripe.checkout.sessions.create.mock.calls[0][0];
     expect(params.ui_mode).toBe("embedded_page");
-    expect(params.return_url).toMatch(/\/get-onboard\?auth_code=[a-f0-9]+&session_id=\{CHECKOUT_SESSION_ID\}$/);
+    expect(params.return_url).toMatch(/\/dashboard\?auth_code=[a-f0-9]+&session_id=\{CHECKOUT_SESSION_ID\}$/);
     expect(params.success_url).toBeUndefined();
     expect(params.cancel_url).toBeUndefined();
   });
@@ -123,7 +123,7 @@ describe("create-checkout-session", () => {
     mockStripe.subscriptions.list.mockResolvedValue({ data: [] });
     await checkout();
     const params = mockStripe.checkout.sessions.create.mock.calls[0][0];
-    expect(params.cancel_url).toMatch(/\/get-onboard$/);
+    expect(params.cancel_url).toMatch(/\/dashboard$/);
     expect(params.success_url).toContain("session_id={CHECKOUT_SESSION_ID}");
   });
 });

@@ -11,6 +11,7 @@ const sessionStore = require("./sessionStore");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 const { isDbReady } = require("../utils/db");
+const { schoolAllowsDonna } = require("./donnaStatus");
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -45,7 +46,7 @@ async function join(instructor, phone, { fromDate, toDate, preferredTimes } = {}
  */
 async function offerSlot(instructor, date, time, excludePhone = null) {
   if (!isDbReady() || !instructor) return [];
-  if (!settings.resolveBotSettings(instructor).donnaEnabled) return [];
+  if (!settings.resolveBotSettings(instructor).donnaEnabled || !(await schoolAllowsDonna(instructor))) return [];
   if (settings.isWithinNotice(instructor, date)) return [];
 
   const candidates = (await WaitlistEntry.find({ instructorId: instructor.phoneNumberId, status: "waiting" }).lean())

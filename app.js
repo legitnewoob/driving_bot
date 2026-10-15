@@ -1,5 +1,6 @@
 const express = require('express');
 const authRoutes = require('./src/routes/auth');
+const contactRoutes = require('./src/routes/contact');
 const authGoogleRoutes = require('./src/routes/authGoogle');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
@@ -65,6 +66,15 @@ const authLimiter = rateLimit({
   },
 });
 
+// Public contact form: a handful per visitor is plenty
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many messages. Please try again later or email us." },
+});
+
 // Basic Auth 
 const logAuth = basicAuth({
   users: {
@@ -127,6 +137,7 @@ app.use('/api/logs', logAuth, logLimiter, logRoutes);
 app.use('/api/bookings', adminAuth, bookingRoutes);
 app.use('/api/dashboard', jwtAuth, requirePlan, dashboardRoutes);
 app.use('/api/school', schoolRoutes);
+app.use('/api/contact', contactLimiter, contactRoutes); // public: website contact form
 app.use('/api/pricing', pricingRoutes); // public: plans and the active sale for the website // public invite lookup inside; everything else needs JWT
 app.use('/api/learners', apiKeyAuth, requirePlan, learnerRoutes);
 app.use('/api/phone-numbers', jwtAuth, requirePlan, phoneNumberRoutes);

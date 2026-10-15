@@ -10,6 +10,8 @@ const schoolSchema = new mongoose.Schema(
     // seatLimit = INCLUDED_SEATS (3, in the £20 plan) + extraSeats (£10/month each)
     seatLimit: { type: Number, default: 3 },
     extraSeats: { type: Number, default: 0 },
+    // The owner's master switch: off stops Donna for every instructor in the school
+    donnaEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

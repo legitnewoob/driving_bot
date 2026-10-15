@@ -194,7 +194,7 @@ async function notifyInstructorReauth(instructor) {
   if (!email) return false;
 
   const dashboardUrl = process.env.DASHBOARD_URL || process.env.BASE_URL || "http://localhost:8080";
-  const reconnectUrl = `${dashboardUrl}/get-onboard`;
+  const reconnectUrl = `${dashboardUrl}/dashboard`;
 
   const subject = `⚠️ Action needed — reconnect your Google Calendar`;
 

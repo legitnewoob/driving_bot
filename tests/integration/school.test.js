@@ -397,3 +397,55 @@ describe("school roles: owner, manager, instructor", () => {
     expect(asInstructor.members).toEqual([]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("the school-wide Donna switch", () => {
+  const db = require("../../src/utils/db");
+  const { schoolAllowsDonna, clearSchoolDonnaCache } = require("../../src/services/donnaStatus");
+  const leanSchool = (extra) => ({ select: () => ({ lean: async () => school(extra) }) });
+  beforeEach(() => clearSchoolDonnaCache());
+  afterEach(() => db.isDbReady.mockReturnValue(false));
+
+  it("the owner can switch Donna off for everyone", async () => {
+    await schoolService.setSchoolDonna(owner(), false);
+    expect(School.findByIdAndUpdate).toHaveBeenCalledWith(SCHOOL_ID, { donnaEnabled: false });
+  });
+
+  it("an instructor in the school can't", async () => {
+    const member = { _id: "m1", email: "sam@x.com", schoolId: SCHOOL_ID, schoolRole: "member" };
+    await expect(schoolService.setSchoolDonna(member, false)).rejects.toMatchObject({ status: 403 });
+    expect(School.findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it("Donna follows the school's switch for its instructors", async () => {
+    db.isDbReady.mockReturnValue(true);
+    School.findById.mockReturnValue(leanSchool({ donnaEnabled: false }));
+    expect(await schoolAllowsDonna({ schoolId: SCHOOL_ID })).toBe(false);
+    clearSchoolDonnaCache(SCHOOL_ID);
+    School.findById.mockReturnValue(leanSchool({}));
+    expect(await schoolAllowsDonna({ schoolId: SCHOOL_ID })).toBe(true); // older schools: on
+  });
+
+  it("instructors outside a school aren't affected", async () => {
+    db.isDbReady.mockReturnValue(true);
+    expect(await schoolAllowsDonna({ schoolId: null })).toBe(true);
+    expect(School.findById).not.toHaveBeenCalled();
+  });
+});
+
+describe("school onboarding", () => {
+  const ready = { setup: { complete: true }, phoneNumber: "+44 7700 900123", calendarConnected: true };
+  it("starts with nothing done", () => {
+    expect(schoolService.schoolOnboarding({ used: 0, members: 0 }, [])).toMatchObject({ invited: false, joined: false, ready: false, complete: false });
+  });
+  it("an invite sent but not accepted is step one only", () => {
+    expect(schoolService.schoolOnboarding({ used: 1, members: 0 }, [])).toMatchObject({ invited: true, joined: false, complete: false });
+  });
+  it("a joined instructor who hasn't finished Donna isn't enough", () => {
+    const halfway = { ...ready, calendarConnected: false };
+    expect(schoolService.schoolOnboarding({ used: 1, members: 1 }, [halfway])).toMatchObject({ joined: true, ready: false, complete: false });
+  });
+  it("is complete once one instructor has Donna fully set up", () => {
+    expect(schoolService.schoolOnboarding({ used: 2, members: 2 }, [ready, {}])).toMatchObject({ complete: true, readyCount: 1 });
+  });
+});

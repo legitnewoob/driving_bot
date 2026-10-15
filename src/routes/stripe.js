@@ -107,7 +107,7 @@ router.post("/create-checkout-session", async (req, res) => {
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:8080";
 
     // session_id lets the sign-in step check with Stripe that checkout really finished
-    const successUrl = `${frontendUrl}/get-onboard?auth_code=${authCode}&session_id={CHECKOUT_SESSION_ID}`;
+    const successUrl = `${frontendUrl}/dashboard?auth_code=${authCode}&session_id={CHECKOUT_SESSION_ID}`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -126,7 +126,7 @@ router.post("/create-checkout-session", async (req, res) => {
         : {
             success_url: successUrl,
             // Backing out returns to the dashboard, which stays locked behind the plan picker until they pay
-            cancel_url: `${frontendUrl}/get-onboard`,
+            cancel_url: `${frontendUrl}/dashboard`,
           }),
       client_reference_id: instructor._id.toString(),
       metadata: {

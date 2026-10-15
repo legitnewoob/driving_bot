@@ -44,6 +44,19 @@ router.get("/", async (req, res) => {
   }
 });
 
+// The school-wide Donna switch
+router.put("/donna", async (req, res) => {
+  try {
+    const instructor = await me(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ success: false, error: "enabled must be true or false" });
+    await schoolService.setSchoolDonna(instructor, req.body.enabled);
+    res.json({ success: true, data: await schoolService.overview(instructor) });
+  } catch (err) {
+    fail(res, err, "change Donna for the school");
+  }
+});
+
 router.patch("/", async (req, res) => {
   try {
     const instructor = await me(req);

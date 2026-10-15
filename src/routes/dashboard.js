@@ -9,6 +9,7 @@ const Instructor = require("../models/instructorSchema");
 const Payment = require("../models/paymentModel");
 const LessonType = require("../models/lessonTypeModel");
 const { getSetupStatus } = require("../services/setupStatus");
+const { schoolAllowsDonna } = require("../services/donnaStatus");
 const schoolService = require("../services/schoolService");
 const Notification = require("../models/notificationModel");
 const timezoneUtils = require("../utils/timezoneUtils");
@@ -895,10 +896,13 @@ router.get("/setup-status", async (req, res) => {
 
 // Settings plus setup progress. Donna only counts as on once setup is finished:
 // until then she can't really work, so the switch shows off rather than a false "on".
-function withSetup(payload, setup) {
+// Their driving school can also switch her off for everyone.
+async function withSetup(payload, setup, instructor) {
+  const schoolOff = !(await schoolAllowsDonna(instructor));
   return {
     ...payload,
-    botSettings: { ...payload.botSettings, donnaEnabled: payload.botSettings.donnaEnabled && setup.complete },
+    botSettings: { ...payload.botSettings, donnaEnabled: payload.botSettings.donnaEnabled && setup.complete && !schoolOff },
+    donnaOffBySchool: schoolOff,
     setup,
   };
 }
@@ -907,7 +911,7 @@ router.get("/settings", async (req, res) => {
   try {
     const instructor = await resolveInstructor(req);
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
-    res.json({ success: true, data: withSetup(settingsPayload(instructor), await getSetupStatus(instructor)) });
+    res.json({ success: true, data: await withSetup(settingsPayload(instructor), await getSetupStatus(instructor), instructor) });
   } catch (err) {
     logger.error(`Dashboard /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to load settings" });
@@ -960,7 +964,14 @@ router.patch("/settings", async (req, res) => {
       doc.botSettings = { ...cur, ...botSettings, holiday, notifications };
     }
 
-    // Turning Donna on needs the basics filled in first
+    // Turning Donna on needs the basics filled in first, and the school's switch on
+    if (botSettings?.donnaEnabled === true && !(await schoolAllowsDonna(doc))) {
+      return res.status(409).json({
+        success: false,
+        code: "SCHOOL_DONNA_OFF",
+        error: "Your driving school has switched Donna off for everyone. Ask your school to turn her back on.",
+      });
+    }
     if (botSettings?.donnaEnabled === true) {
       const setup = await getSetupStatus(doc);
       if (!setup.complete) {
@@ -978,7 +989,7 @@ router.patch("/settings", async (req, res) => {
     invalidateInstructorCache(doc.phoneNumberId);
 
     const saved = doc.toObject();
-    res.json({ success: true, data: withSetup(settingsPayload(saved), await getSetupStatus(saved)) });
+    res.json({ success: true, data: await withSetup(settingsPayload(saved), await getSetupStatus(saved), saved) });
   } catch (err) {
     logger.error(`Dashboard PATCH /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to save settings" });

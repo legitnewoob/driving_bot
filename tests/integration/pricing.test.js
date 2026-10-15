@@ -294,7 +294,7 @@ describe("promo codes", () => {
     await pricing.createPromoCode({ code: "diwali25", percentOff: 25, maxRedemptions: 50, expiresAt: expires.toISOString() }, "raj");
     expect(mockStripe.coupons.create).toHaveBeenCalledWith(expect.objectContaining({ percent_off: 25, duration: "once" }));
     expect(mockStripe.promotionCodes.create).toHaveBeenCalledWith({
-      coupon: "coupon_1", code: "DIWALI25", max_redemptions: 50, expires_at: Math.floor(expires.getTime() / 1000),
+      promotion: { type: "coupon", coupon: "coupon_1" }, code: "DIWALI25", max_redemptions: 50, expires_at: Math.floor(expires.getTime() / 1000),
     });
     expect(PromoCode.create).toHaveBeenCalledWith(expect.objectContaining({ code: "DIWALI25", stripePromotionCodeId: "promo_1" }));
   });

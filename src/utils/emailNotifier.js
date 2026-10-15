@@ -7,6 +7,13 @@
 //   NOTIFY_EMAIL_USER     - Gmail address to send from (e.g. yourbot@gmail.com)
 //   NOTIFY_EMAIL_PASS     - Gmail App Password (16 chars, from Google Account > Security > App Passwords)
 //   NOTIFY_EMAIL_TO       - Recipient email (your personal Gmail)
+//
+// Optional, and preferred in production:
+//   RESEND_API_KEY        - send through Resend's HTTPS API instead of Gmail SMTP.
+//                           Railway blocks outbound SMTP on most plans, so Gmail
+//                           can't connect from there; HTTPS always can.
+//   EMAIL_FROM            - sender for Resend, e.g. "Donna Drive <hello@donnadrive.co.uk>"
+//                           (the domain must be verified in Resend)
 
 const nodemailer = require("nodemailer");
 const logger = require("./logger-advanced");
@@ -32,9 +39,35 @@ function getTransporter() {
   _transporter = nodemailer.createTransport({
     service: "gmail",
     auth: { user, pass },
+    // Fail fast instead of hanging the request when SMTP is blocked (as on Railway)
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 
   return _transporter;
+}
+
+/** Send through Resend's HTTPS API (works where SMTP ports are blocked). */
+async function sendViaResend({ to, subject, html, replyTo }) {
+  const from = process.env.EMAIL_FROM || "Donna Drive <onboarding@resend.dev>";
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: [to], subject, html, ...(replyTo && { reply_to: replyTo }) }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      logger.error(`Email (Resend) failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      return false;
+    }
+    logger.info(`Email sent: ${subject}`);
+    return true;
+  } catch (err) {
+    logger.error(`Email (Resend) failed: ${err.message}`);
+    return false;
+  }
 }
 
 /**
@@ -45,7 +78,7 @@ function getTransporter() {
  * @param {string} [dedupeKey] - Optional key to prevent duplicate emails within cooldown
  * @returns {Promise<boolean>} true if sent, false if skipped/failed
  */
-async function sendNotification(subject, html, dedupeKey = null, toOverride = null) {
+async function sendNotification(subject, html, dedupeKey = null, toOverride = null, replyTo = null) {
   // Dedupe check
   if (dedupeKey) {
     const lastSent = _sentRecently.get(dedupeKey);
@@ -55,13 +88,19 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
     }
   }
 
+  const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
+
+  if (process.env.RESEND_API_KEY) {
+    const sent = await sendViaResend({ to, subject, html, replyTo });
+    if (sent && dedupeKey) _sentRecently.set(dedupeKey, Date.now());
+    return sent;
+  }
+
   const transporter = getTransporter();
   if (!transporter) {
     logger.warn("Email notification skipped: NOTIFY_EMAIL_USER or NOTIFY_EMAIL_PASS not set");
     return false;
   }
-
-  const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
 
   try {
     await transporter.sendMail({
@@ -69,6 +108,7 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
       to,
       subject,
       html,
+      ...(replyTo && { replyTo }),
     });
 
     if (dedupeKey) {
@@ -239,6 +279,21 @@ async function sendSchoolInvite({ to, schoolName, ownerName, link }) {
   return sendNotification(subject, html, null, to);
 }
 
+/** A website "Contact us" message, to the team; replying goes straight to the person. */
+async function sendContactRequest({ name, email, message }) {
+  const subject = `Contact us: ${name}${message ? ` — ${message.slice(0, 60)}` : ""}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="margin: 0 0 12px;">New message from the website</h2>
+      <p><strong>Name:</strong> ${escapeHtml(name)}<br/>
+      <strong>Email:</strong> <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></p>
+      <p style="white-space: pre-wrap; background: #f6f6f6; padding: 12px; border-radius: 8px;">${escapeHtml(message || "(no message)")}</p>
+      <p style="color: #555; font-size: 13px;">Reply to this email to answer them directly.</p>
+    </div>
+  `;
+  return sendNotification(subject, html, null, process.env.CONTACT_EMAIL_TO || null, email);
+}
+
 /** Tell ops the WhatsApp number pool ran out while an instructor was waiting for one. */
 async function sendPriceChangeNotice({ to, name, planName, what, fromAmount, toAmount, effectiveAt }) {
   const gbp = (p) => `£${(p / 100).toFixed(p % 100 ? 2 : 0)}`;
@@ -289,6 +344,7 @@ module.exports = {
   notifyInstructorReauth,
   notifyInstructorLearnerMessage,
   sendSchoolInvite,
+  sendContactRequest,
   notifyNumberPoolEmpty,
   clearCooldowns,
   resetTransporter,

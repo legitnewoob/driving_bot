@@ -508,7 +508,8 @@ async function createPromoCode(input, actor) {
   const stripe = getStripe();
   const stripeCouponId = await createCoupon(stripe, d, `Code ${code}`);
   const promo = await stripe.promotionCodes.create({
-    coupon: stripeCouponId,
+    // Current Stripe API: the coupon goes inside `promotion` (a top-level `coupon` is rejected)
+    promotion: { type: "coupon", coupon: stripeCouponId },
     code,
     ...(maxRedemptions && { max_redemptions: maxRedemptions }),
     ...(expiresAt && { expires_at: Math.floor(expiresAt.getTime() / 1000) }),

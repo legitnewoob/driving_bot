@@ -67,10 +67,11 @@ describe("sendNotification", () => {
     const result = await sendNotification("Test Subject", "<p>Hello</p>");
 
     expect(result).toBe(true);
-    expect(nodemailer.createTransport).toHaveBeenCalledWith({
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
       service: "gmail",
       auth: { user: "bot@gmail.com", pass: "test-app-password" },
-    });
+      connectionTimeout: 10000,
+    }));
     expect(mockSendMail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "admin@gmail.com",
@@ -233,5 +234,41 @@ describe("Cooldown", () => {
 
     await sendNotification("A", "<p>2</p>", "key-x");
     expect(mockSendMail).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Resend (HTTPS) — used instead of SMTP when RESEND_API_KEY is set
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("sendNotification via Resend", () => {
+  const realFetch = global.fetch;
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.EMAIL_FROM = "Donna Drive <hello@donnadrive.co.uk>";
+  });
+  afterEach(() => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.EMAIL_FROM;
+    global.fetch = realFetch;
+  });
+
+  it("posts to Resend and skips SMTP", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+    const ok = await sendNotification("Hi", "<p>x</p>", null, "someone@example.com", "reply@example.com");
+    expect(ok).toBe(true);
+    expect(nodemailer.createTransport).not.toHaveBeenCalled();
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe("https://api.resend.com/emails");
+    expect(opts.headers.Authorization).toBe("Bearer re_test");
+    expect(JSON.parse(opts.body)).toEqual({
+      from: "Donna Drive <hello@donnadrive.co.uk>", to: ["someone@example.com"], subject: "Hi", html: "<p>x</p>", reply_to: "reply@example.com",
+    });
+  });
+
+  it("returns false when Resend rejects it", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "domain not verified" });
+    expect(await sendNotification("Hi", "<p>x</p>", null, "someone@example.com")).toBe(false);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("domain not verified"));
   });
 });

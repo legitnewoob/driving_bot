@@ -893,11 +893,21 @@ router.get("/setup-status", async (req, res) => {
   }
 });
 
+// Settings plus setup progress. Donna only counts as on once setup is finished:
+// until then she can't really work, so the switch shows off rather than a false "on".
+function withSetup(payload, setup) {
+  return {
+    ...payload,
+    botSettings: { ...payload.botSettings, donnaEnabled: payload.botSettings.donnaEnabled && setup.complete },
+    setup,
+  };
+}
+
 router.get("/settings", async (req, res) => {
   try {
     const instructor = await resolveInstructor(req);
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
-    res.json({ success: true, data: { ...settingsPayload(instructor), setup: await getSetupStatus(instructor) } });
+    res.json({ success: true, data: withSetup(settingsPayload(instructor), await getSetupStatus(instructor)) });
   } catch (err) {
     logger.error(`Dashboard /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to load settings" });
@@ -950,11 +960,25 @@ router.patch("/settings", async (req, res) => {
       doc.botSettings = { ...cur, ...botSettings, holiday, notifications };
     }
 
+    // Turning Donna on needs the basics filled in first
+    if (botSettings?.donnaEnabled === true) {
+      const setup = await getSetupStatus(doc);
+      if (!setup.complete) {
+        return res.status(409).json({
+          success: false,
+          code: "SETUP_INCOMPLETE",
+          error: "Finish setting up before turning Donna on.",
+          missing: setup.missing,
+          required: setup.required,
+        });
+      }
+    }
+
     await doc.save();
     invalidateInstructorCache(doc.phoneNumberId);
 
     const saved = doc.toObject();
-    res.json({ success: true, data: { ...settingsPayload(saved), setup: await getSetupStatus(saved) } });
+    res.json({ success: true, data: withSetup(settingsPayload(saved), await getSetupStatus(saved)) });
   } catch (err) {
     logger.error(`Dashboard PATCH /settings error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to save settings" });

@@ -90,10 +90,14 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
 
   const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
 
+  // Resend first; if it refuses (e.g. the domain isn't verified yet), fall back to
+  // Gmail, which works locally even though Railway blocks it
   if (process.env.RESEND_API_KEY) {
     const sent = await sendViaResend({ to, subject, html, replyTo });
-    if (sent && dedupeKey) _sentRecently.set(dedupeKey, Date.now());
-    return sent;
+    if (sent) {
+      if (dedupeKey) _sentRecently.set(dedupeKey, Date.now());
+      return true;
+    }
   }
 
   const transporter = getTransporter();

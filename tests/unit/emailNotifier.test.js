@@ -266,9 +266,16 @@ describe("sendNotification via Resend", () => {
     });
   });
 
-  it("returns false when Resend rejects it", async () => {
+  it("falls back to Gmail when Resend rejects it", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "domain not verified" });
-    expect(await sendNotification("Hi", "<p>x</p>", null, "someone@example.com")).toBe(false);
+    expect(await sendNotification("Hi", "<p>x</p>", null, "someone@example.com")).toBe(true);
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("domain not verified"));
+    expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({ to: "someone@example.com" }));
+  });
+
+  it("returns false when neither can send", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "nope" });
+    mockSendMail.mockRejectedValueOnce(new Error("Connection timeout"));
+    expect(await sendNotification("Hi", "<p>x</p>", null, "someone@example.com")).toBe(false);
   });
 });

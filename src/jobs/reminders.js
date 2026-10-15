@@ -17,6 +17,7 @@ const sessionStore = require("../services/sessionStore");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 const { isDbReady } = require("../utils/db");
+const { schoolAllowsDonna } = require("../services/donnaStatus");
 
 const ACTIVE_STATUSES = ["confirmed", "rescheduled"];
 const RUN_EVERY_MS = 15 * 60 * 1000;
@@ -107,7 +108,7 @@ async function runOnce(now = Date.now()) {
     const bot = settings.resolveBotSettings(instructor);
     const mode = bot.reminders;
     // Donna switched off (e.g. an emergency): hold reminders; they go out if she's back on in time
-    if (mode === "off" || !bot.donnaEnabled) continue;
+    if (mode === "off" || !bot.donnaEnabled || !(await schoolAllowsDonna(instructor))) continue;
 
     const hours = hoursUntil(booking, now);
     let kind = null;

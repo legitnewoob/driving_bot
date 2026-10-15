@@ -24,6 +24,7 @@ const { notifyInstructorLearnerMessage } = require("../utils/emailNotifier");
 const { runExclusive } = require("../utils/keyedQueue");
 const { to12h } = require("../utils/timeFormat");
 const { isDbReady } = require("../utils/db");
+const { schoolAllowsDonna } = require("../services/donnaStatus");
 
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
 const HISTORY_LENGTH = 10;
@@ -721,7 +722,8 @@ class WebhookController {
     try {
       // Instructor has switched Donna off (e.g. an emergency): tell the learner to
       // contact them directly, and pass the message on to the instructor.
-      if (!ctx.bot.donnaEnabled) {
+      // (or their driving school has switched her off for everyone)
+      if (!ctx.bot.donnaEnabled || !(await schoolAllowsDonna(instructor))) {
         await this._donnaOff(ctx, messageContent, extra);
         return;
       }

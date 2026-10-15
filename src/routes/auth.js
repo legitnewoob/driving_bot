@@ -58,7 +58,7 @@ router.get('/oauth2callback', async (req, res) => {
             if (!instructor) {
                 logger.warn(`OAuth callback: no instructor found for email ${email}`);
                 const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:8080';
-                return res.redirect(`${dashboardUrl}/get-onboard?calendar=error&reason=not_found`);
+                return res.redirect(`${dashboardUrl}/dashboard?calendar=error&reason=not_found`);
             }
         } else {
             // Phone flow — strip "phone:" prefix if present (backward compat)
@@ -87,7 +87,7 @@ router.get('/oauth2callback', async (req, res) => {
 
         if (isDashboardFlow) {
             const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:8080';
-            return res.redirect(`${dashboardUrl}/get-onboard?calendar=connected`);
+            return res.redirect(`${dashboardUrl}/dashboard?calendar=connected`);
         }
 
         res.send(`✅ Google Calendar linked for ${instructor.name}! Refresh token has been saved to the database.`);

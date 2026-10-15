@@ -24,7 +24,8 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
  */
 router.post("/google-signup", async (req, res) => {
   try {
-    const { credential, plan } = req.body;
+    // signInOnly: the Portal's sign-in, which must never create an account
+    const { credential, plan, signInOnly } = req.body;
 
     if (!credential) {
       return res.status(400).json({ success: false, error: "Missing Google credential" });
@@ -71,6 +72,15 @@ router.post("/google-signup", async (req, res) => {
 
     let isNew = false;
     let plaintextApiKey = null;
+
+    // The Portal is for instructors who've already signed up on the website
+    if (signInOnly && (!instructor || !instructor.active)) {
+      return res.status(404).json({
+        success: false,
+        code: "NOT_REGISTERED",
+        error: "There's no Donna Drive instructor account for this Google account yet.",
+      });
+    }
 
     if (instructor?.suspended) {
       return res.status(403).json({ success: false, error: "This account has been suspended. Contact support@donnadrive.co.uk." });
@@ -384,6 +394,32 @@ router.post("/delete-account", jwtAuth, async (req, res) => {
 });
 
 /**
+ * POST /api/auth/handoff
+ * JWT protected — a one-time code that signs the same instructor in on another
+ * Donna Drive site (the Portal's "dashboard" button opens the website, which has
+ * its own storage, and an installed Portal app opens it in a separate browser).
+ */
+router.post("/handoff", jwtAuth, async (req, res) => {
+  try {
+    const instructor = await Instructor.findOne({ email: req.user?.email, active: true });
+    if (!instructor) return res.status(404).json({ success: false, error: "Instructor not found" });
+
+    const AuthCode = require("../models/authCodeModel");
+    const code = crypto.randomBytes(32).toString("hex");
+    await AuthCode.create({
+      code,
+      instructorId: instructor._id,
+      token: req.headers.authorization.slice("Bearer ".length).trim(),
+      expiresAt: new Date(Date.now() + 2 * 60 * 1000),
+    });
+    res.json({ success: true, code });
+  } catch (err) {
+    console.error("[authGoogle] handoff error:", err);
+    res.status(500).json({ success: false, error: "Couldn't create a sign-in link" });
+  }
+});
+
+/**
  * POST /api/auth/exchange-code
  * Public — exchanges a one-time auth code for JWT + API key.
  * Used after Stripe checkout redirect.
@@ -428,7 +464,7 @@ router.post("/exchange-code", async (req, res) => {
     res.json({
       success: true,
       token: authCode.token,
-      apiKey: authCode.apiKey,
+      apiKey: authCode.apiKey || null,
       instructor: instructor ? {
         name: instructor.name,
         email: instructor.email,

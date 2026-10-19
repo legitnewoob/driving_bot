@@ -120,6 +120,17 @@ router.put("/seats", async (req, res) => {
   }
 });
 
+// Every learner across the school's instructors
+router.get("/learners", async (req, res) => {
+  try {
+    const instructor = await me(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    res.json({ success: true, data: await schoolService.schoolLearners(instructor) });
+  } catch (err) {
+    fail(res, err, "load the school's learners");
+  }
+});
+
 // Owner without a subscription: pay for seats through Stripe Checkout
 router.post("/seats/checkout", async (req, res) => {
   try {

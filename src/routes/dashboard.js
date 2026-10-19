@@ -20,6 +20,7 @@ const settings = require("../services/instructorSettings");
 const { validateSettingsUpdate, validatePreferencesUpdate } = require("../services/settingsValidation");
 const { getCoordinatesFromPostalCode } = require("../services/mapsService");
 const { invalidateInstructorCache } = require("../models/instructorModel");
+const { learnerSummaries } = require("../services/learnerSummary");
 
 const DEFAULT_LESSON_RATE = parseFloat(process.env.DEFAULT_LESSON_RATE) || 50;
 const MONTHLY_REVENUE_TARGET = parseFloat(process.env.MONTHLY_REVENUE_TARGET) || 3000;
@@ -29,6 +30,9 @@ const MONTHLY_REVENUE_TARGET = parseFloat(process.env.MONTHLY_REVENUE_TARGET) ||
 function getInstructorTimezone(instructor) {
   return instructor?.timezone || timezoneUtils.timezone || "Europe/London";
 }
+
+// What a school owner or manager may change for one of their instructors
+const MANAGEABLE_PATHS = [/^\/lesson-types(\/[^/]+)?$/, /^\/learners\/[^/]+\/notes$/];
 
 async function resolveInstructor(req) {
   const jwtSecret = process.env.JWT_SECRET;
@@ -40,10 +44,20 @@ async function resolveInstructor(req) {
     const instructor = await Instructor.findOne({ email: req.user.email, active: true }).lean();
     if (!instructor) return null;
 
-    // A school owner can look at one of their instructors (?instructor=<id>), read-only:
-    // only GETs switch; anything that changes data always applies to the signed-in instructor.
-    if (req.method === "GET" && req.query.instructor) {
-      return schoolService.viewableInstructor(instructor, req.query.instructor);
+    // A school owner can look at one of their instructors (?instructor=<id>). They
+    // can also change that instructor's lesson types and prices and learner notes;
+    // every other change always applies to the signed-in instructor.
+    if (req.query.instructor) {
+      if (req.method === "GET") return schoolService.viewableInstructor(instructor, req.query.instructor);
+      if (MANAGEABLE_PATHS.some((r) => r.test(req.path))) {
+        const member = await schoolService.manageableInstructor(instructor, req.query.instructor);
+        if (member && String(member._id) !== String(instructor._id)) {
+          require("../services/auditLog")
+            .audit(instructor.email, "school.manage", member.email, { method: req.method, path: req.path })
+            .catch(() => {});
+        }
+        return member;
+      }
     }
     return instructor;
   }
@@ -578,58 +592,7 @@ router.get("/learners", async (req, res) => {
     const instructor = await resolveInstructor(req);
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
 
-    const instructorId = instructor.phoneNumberId;
-    const rate = instructor.rates?.basic || DEFAULT_LESSON_RATE;
-    const today = moment.tz(getInstructorTimezone(instructor)).format("YYYY-MM-DD");
-
-    const [users, bookings, payments] = await Promise.all([
-      User.find({ instructorId }).lean(),
-      Booking.find({ instructorId }).lean(),
-      Payment.find({ instructorId }).lean(),
-    ]);
-
-    const learners = users
-      .filter((u) => u.detailsCompleted)
-      .map((u) => {
-        const userBookings = bookings.filter((b) => b.userPhone === u.phone);
-        const userPayments = payments.filter((p) => p.userPhone === u.phone);
-
-        const completed = userBookings.filter((b) => b.status === "completed");
-        const lessonsCompleted = completed.length;
-
-        const nextBooking = userBookings
-          .filter((b) => b.date >= today && (b.status === "confirmed" || b.status === "rescheduled"))
-          .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0];
-
-        const totalPaid = userPayments.reduce((sum, p) => sum + p.amount, 0);
-        const totalCharged = completed.reduce((sum, b) => sum + (b.price ?? rate), 0);
-        const outstanding = Math.max(0, totalCharged - totalPaid);
-        // Paid ahead, e.g. a block of lessons bought upfront
-        const credit = Math.max(0, totalPaid - totalCharged);
-
-        let progressLevel = "new";
-        if (lessonsCompleted >= 7) progressLevel = "test-ready";
-        else if (lessonsCompleted > 0) progressLevel = "active";
-
-        return {
-          phone: u.phone,
-          name: u.name || null,
-          age: u.age || null,
-          postalCode: u.postalCode || null,
-          instructorNotes: u.instructorNotes || "",
-          createdAt: u.createdAt || null,
-          lessonsCompleted,
-          nextLesson: nextBooking ? { date: nextBooking.date, time: nextBooking.time } : null,
-          totalPaid,
-          totalCharged,
-          outstanding,
-          credit,
-          paymentStatus: outstanding <= 0 ? "paid" : "owes",
-          progressLevel,
-          priority: !!u.schedulingPrefs?.priority,
-          donnaPaused: !!u.schedulingPrefs?.donnaPaused,
-        };
-      });
+    const learners = await learnerSummaries(instructor);
 
     const search = (req.query.search || "").toLowerCase();
     const filtered = search

@@ -469,6 +469,26 @@ async function syncMembersSubscription(owner) {
  * For read-only views: an instructor the requester may look at — themselves, an
  * instructor in their school (owner or manager), or anyone (Donna Drive staff).
  */
+/** One of the requester's instructors that they may make changes for (owner or manager). */
+async function manageableInstructor(requester, instructorId) {
+  if (!instructorId || String(instructorId) === String(requester._id)) return requester;
+  if (!requester.schoolId || !can(requester, "school.manage")) return null;
+  return Instructor.findOne({ _id: instructorId, schoolId: requester.schoolId, schoolRole: { $in: SEAT_ROLES }, active: true }).lean();
+}
+
+/** Every learner across the school's instructors, with whose learner they are. */
+async function schoolLearners(requester) {
+  const { school } = await requireSchool(requester, "school.viewAll", "Only the school owner or a manager can see all learners");
+  const members = await Instructor.find({ schoolId: school._id, schoolRole: { $in: SEAT_ROLES }, active: true }).lean();
+  const { learnerSummaries } = require("./learnerSummary");
+  const lists = await Promise.all(
+    members.map(async (m) =>
+      (await learnerSummaries(m)).map((l) => ({ ...l, instructor: { id: String(m._id), name: m.name } }))
+    )
+  );
+  return lists.flat();
+}
+
 async function viewableInstructor(requester, instructorId) {
   if (!instructorId || String(instructorId) === String(requester._id)) return requester;
   if (can(requester, "admin.view")) return Instructor.findOne({ _id: instructorId }).lean().catch(() => null);
@@ -478,6 +498,8 @@ async function viewableInstructor(requester, instructorId) {
 
 module.exports = {
   setSchoolDonna,
+  manageableInstructor,
+  schoolLearners,
   seatsCheckout,
   recoverSubscription,
   schoolOnboarding,

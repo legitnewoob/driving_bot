@@ -12,6 +12,7 @@ jest.mock("../../src/models/instructorSchema");
 jest.mock("../../src/models/bookingModel");
 jest.mock("../../src/models/userModel");
 jest.mock("../../src/models/phoneNumberModel");
+jest.mock("../../src/models/lessonTypeModel");
 const mockStripe = {
   subscriptions: { retrieve: jest.fn(), list: jest.fn() },
   customers: { create: jest.fn() },
@@ -257,6 +258,31 @@ describe("dashboard API: owner's view is read-only", () => {
     });
     expect(Instructor.findById).toHaveBeenCalledWith("owner-1");
     expect(schoolService.viewableInstructor).not.toHaveBeenCalled();
+  });
+
+  it("the owner can change an instructor's lesson types and prices", async () => {
+    const LessonType = require("../../src/models/lessonTypeModel");
+    LessonType.findOneAndUpdate.mockResolvedValue({ _id: "lt1", price: 45 });
+    jest.spyOn(schoolService, "manageableInstructor").mockImplementation(async (me, id) => (id === "sam-1" ? member : null));
+    const res = await fetch(`${base}/lesson-types/lt1?instructor=sam-1`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: 45 }),
+    });
+    expect(res.status).toBe(200);
+    expect(LessonType.findOneAndUpdate).toHaveBeenCalledWith({ _id: "lt1", instructorId: "real-1" }, { price: 45 }, { new: true });
+  });
+
+  it("but not for an instructor outside their school", async () => {
+    jest.spyOn(schoolService, "manageableInstructor").mockResolvedValue(null);
+    const res = await fetch(`${base}/lesson-types/lt1?instructor=stranger`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: 45 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("an instructor can't manage another instructor", async () => {
+    const real = jest.requireActual("../../src/services/schoolService");
+    const sam = { _id: "sam-1", schoolId: SCHOOL_ID, schoolRole: "member" };
+    expect(await real.manageableInstructor(sam, "jo-2")).toBeNull();
   });
 });
 

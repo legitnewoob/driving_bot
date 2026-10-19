@@ -114,7 +114,8 @@ async function overview(instructor) {
       ? SchoolInvite.find({ schoolId: school._id, status: "pending", expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 }).lean()
       : [],
     pricing.includedSeats(),
-    pricing.extraSeatPriceId(),
+    // Owners can buy seats: make sure there's a price to buy them at
+    isOwner ? pricing.ensureExtraSeatPrice().catch(() => null) : pricing.extraSeatPriceId(),
     pricing.getPlan("driving-school"),
   ]);
 
@@ -131,6 +132,8 @@ async function overview(instructor) {
       planAmount: plan?.amount ?? 2000,
       extraSeatAmount: plan?.extraSeatAmount ?? 1000,
       canBuySeats: !!seatPrice && !!(isOwner && instructor.subscriptionId),
+      // Why an owner can't add seats themselves (the page explains it)
+      seatsUnavailable: !isOwner ? null : !instructor.subscriptionId ? "no_subscription" : !seatPrice ? "not_set_up" : null,
     },
     role: person.schoolRole,
     roleLabel: SCHOOL_ROLE_LABELS[person.schoolRole] || null,
@@ -297,7 +300,7 @@ async function setMemberRole(requester, memberId, role) {
 async function setExtraSeats(owner, requested) {
   const { school } = await requireSchool(owner, "school.billing", "Only the school owner can change seats");
   const [included, plan] = await Promise.all([pricing.includedSeats(), pricing.getPlan("driving-school")]);
-  const seatPrice = plan?.extraSeatPriceId || process.env.STRIPE_PRICE_SCHOOL_EXTRA_SEAT;
+  const seatPrice = await pricing.ensureExtraSeatPrice().catch(() => null);
 
   const extra = Number(requested);
   if (!Number.isInteger(extra) || extra < 0 || extra > MAX_EXTRA_SEATS) {

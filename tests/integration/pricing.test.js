@@ -313,3 +313,23 @@ describe("promo codes", () => {
     expect(promo.active).toBe(false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("extra seat price", () => {
+  beforeEach(() => { process.env.STRIPE_SECRET_KEY = "sk_test"; });
+  afterEach(() => { delete process.env.STRIPE_SECRET_KEY; });
+
+  it("uses the plan's seat price when it has one", async () => {
+    expect(await pricing.ensureExtraSeatPrice()).toBe("price_seat_10");
+    expect(mockStripe.prices.create).not.toHaveBeenCalled();
+  });
+
+  it("creates the seat price in Stripe the first time, and saves it on the plan", async () => {
+    plans([pdi(), adi(), school({ extraSeatPriceId: null, extraSeatProductId: null })]);
+    mockStripe.products.create.mockResolvedValue({ id: "prod_seat_new" });
+    Plan.updateOne.mockResolvedValue({});
+    expect(await pricing.ensureExtraSeatPrice()).toBe("price_new");
+    expect(mockStripe.prices.create).toHaveBeenCalledWith(expect.objectContaining({ product: "prod_seat_new", unit_amount: 1000, currency: "gbp", recurring: { interval: "month" } }));
+    expect(Plan.updateOne).toHaveBeenCalledWith({ _id: "p-school" }, { $set: { extraSeatProductId: "prod_seat_new", extraSeatPriceId: "price_new" } });
+  });
+});

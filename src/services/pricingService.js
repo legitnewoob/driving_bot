@@ -115,6 +115,29 @@ async function extraSeatPriceId() {
   return plan?.extraSeatPriceId || process.env.STRIPE_PRICE_SCHOOL_EXTRA_SEAT || null;
 }
 
+/**
+ * The Stripe price for an extra instructor seat, created (and saved on the plan)
+ * the first time it's needed, so seats work without anyone setting it up by hand.
+ */
+async function ensureExtraSeatPrice() {
+  const existing = await extraSeatPriceId();
+  if (existing) return existing;
+  const plan = await getPlan("driving-school");
+  if (!plan?._id || !(plan.extraSeatAmount > 0) || !process.env.STRIPE_SECRET_KEY) return null;
+  const stripe = getStripe();
+  const productId = await productFor(stripe, plan.extraSeatProductId, null, "Extra instructor seat");
+  const priceId = await newStripePrice(stripe, {
+    productId,
+    amount: plan.extraSeatAmount,
+    currency: plan.currency || "gbp",
+    interval: plan.interval || "month",
+    nickname: `Extra instructor seat £${(plan.extraSeatAmount / 100).toFixed(2)}/${plan.interval || "month"}`,
+  });
+  await Plan.updateOne({ _id: plan._id }, { $set: { extraSeatProductId: productId, extraSeatPriceId: priceId } });
+  clearCache();
+  return priceId;
+}
+
 /** Is this subscription item the plan's base price (current or older)? */
 function isBaseItem(item, plan) {
   const id = item?.price?.id;
@@ -577,6 +600,7 @@ module.exports = {
   getPlan,
   includedSeats,
   extraSeatPriceId,
+  ensureExtraSeatPrice,
   isBaseItem,
   isSeatItem,
   publicPricing,

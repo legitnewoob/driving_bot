@@ -13,7 +13,9 @@ jest.mock("../../src/models/bookingModel");
 jest.mock("../../src/models/userModel");
 jest.mock("../../src/models/phoneNumberModel");
 const mockStripe = {
-  subscriptions: { retrieve: jest.fn() },
+  subscriptions: { retrieve: jest.fn(), list: jest.fn() },
+  customers: { create: jest.fn() },
+  checkout: { sessions: { create: jest.fn() } },
   subscriptionItems: { create: jest.fn(), update: jest.fn(), del: jest.fn() },
   invoices: { create: jest.fn(), finalizeInvoice: jest.fn(), pay: jest.fn(), voidInvoice: jest.fn() },
   invoiceItems: { create: jest.fn() },
@@ -490,5 +492,53 @@ describe("school onboarding", () => {
   });
   it("is complete once one instructor has Donna fully set up", () => {
     expect(schoolService.schoolOnboarding({ used: 2, members: 2 }, [ready, {}])).toMatchObject({ complete: true, readyCount: 1 });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("owners without a subscription on record", () => {
+  const EXTRA = "price_extra_seat";
+  beforeEach(() => {
+    process.env.STRIPE_PRICE_SCHOOL_EXTRA_SEAT = EXTRA;
+    process.env.STRIPE_SECRET_KEY = "sk_test";
+    process.env.STRIPE_PRICE_SCHOOL = "price_school";
+    mockStripe.checkout.sessions.create.mockResolvedValue({ url: "https://checkout.stripe.test/s1" });
+    mockStripe.subscriptions.list.mockResolvedValue({ data: [] });
+  });
+  afterAll(() => {
+    delete process.env.STRIPE_PRICE_SCHOOL_EXTRA_SEAT;
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_PRICE_SCHOOL;
+  });
+
+  it("finds a subscription the webhook missed, and saves it", async () => {
+    mockStripe.subscriptions.list.mockResolvedValue({ data: [{ id: "sub_9", status: "trialing", trial_end: 1800000000 }] });
+    const o = owner({ subscriptionId: null, stripeCustomerId: "cus_1" });
+    expect(await schoolService.recoverSubscription(o)).toBe("sub_9");
+    expect(Instructor.findByIdAndUpdate).toHaveBeenCalledWith("owner-1", expect.objectContaining({ subscriptionId: "sub_9", subscriptionStatus: "trialing" }));
+    expect(o.subscriptionId).toBe("sub_9");
+  });
+
+  it("a school with no subscription can buy seats with the plan through checkout", async () => {
+    const { url } = await schoolService.seatsCheckout(owner({ subscriptionId: null, stripeCustomerId: "cus_1" }), 2);
+    expect(url).toBe("https://checkout.stripe.test/s1");
+    const params = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(params.customer).toBe("cus_1");
+    expect(params.line_items).toEqual([{ price: expect.any(String), quantity: 1 }, { price: EXTRA, quantity: 2 }]);
+    expect(params.metadata).toMatchObject({ plan: "driving-school", kind: "school-seats", extraSeats: "2" });
+  });
+
+  it("a comped school pays for the seats only", async () => {
+    mockStripe.customers.create.mockResolvedValue({ id: "cus_new" });
+    const comped = owner({ subscriptionId: null, stripeCustomerId: null, comp: { plan: "driving-school", until: null } });
+    await schoolService.seatsCheckout(comped, 1);
+    expect(mockStripe.customers.create).toHaveBeenCalled();
+    expect(mockStripe.checkout.sessions.create.mock.calls[0][0].line_items).toEqual([{ price: EXTRA, quantity: 1 }]);
+  });
+
+  it("sends an owner who turns out to have a subscription back to the normal flow", async () => {
+    mockStripe.subscriptions.list.mockResolvedValue({ data: [{ id: "sub_9", status: "active" }] });
+    await expect(schoolService.seatsCheckout(owner({ subscriptionId: null, stripeCustomerId: "cus_1" }), 1)).rejects.toMatchObject({ code: "HAS_SUBSCRIPTION" });
+    expect(mockStripe.checkout.sessions.create).not.toHaveBeenCalled();
   });
 });

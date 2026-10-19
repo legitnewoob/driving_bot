@@ -120,6 +120,17 @@ router.put("/seats", async (req, res) => {
   }
 });
 
+// Owner without a subscription: pay for seats through Stripe Checkout
+router.post("/seats/checkout", async (req, res) => {
+  try {
+    const instructor = await me(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    res.json({ success: true, data: await schoolService.seatsCheckout(instructor, req.body?.extraSeats) });
+  } catch (err) {
+    fail(res, err, "start checkout for seats");
+  }
+});
+
 // Owner: make an instructor a manager (or back)
 router.put("/members/:id/role", async (req, res) => {
   try {

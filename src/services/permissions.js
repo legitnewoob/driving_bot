@@ -17,9 +17,10 @@ const STAFF_PERMISSIONS = {
 const SCHOOL_PERMISSIONS = {
   owner: [
     "school.view", "school.invite", "school.remove", "school.viewAll",
-    "school.billing", "school.roles", "school.rename", "school.donna",
+    "school.billing", "school.roles", "school.rename", "school.donna", "school.manage",
   ],
-  manager: ["school.view", "school.invite", "school.remove", "school.viewAll", "school.donna"],
+  // school.manage: change an instructor's lesson types and prices, and learner notes
+  manager: ["school.view", "school.invite", "school.remove", "school.viewAll", "school.donna", "school.manage"],
   member: ["school.view"],
 };
 

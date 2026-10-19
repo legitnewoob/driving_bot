@@ -56,6 +56,11 @@ async function stripeWebhookHandler(req, res) {
             instructor.planSelected = true;
             await instructor.save();
             await syncMembersSubscription(instructor);
+            // Seats bought at checkout raise the school's seat limit straight away
+            if (session.subscription) {
+              const sub = await stripe.subscriptions.retrieve(session.subscription);
+              await syncSeatsFromSubscription(instructor, sub);
+            }
             console.log(`[stripeWebhook] Subscription ${subStatus} for instructor ${instructorId}, plan: ${plan}`);
           }
         }

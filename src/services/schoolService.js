@@ -98,10 +98,65 @@ async function requireSchool(instructor, permission, message = "You don't have p
   return { school, person, isOwner };
 }
 
+/**
+ * The owner's live Stripe subscription, found in Stripe if our records missed it
+ * (the webhook that saves it never arrived). Saves it, and updates `owner` too.
+ */
+async function recoverSubscription(owner) {
+  if (owner.subscriptionId || !owner.stripeCustomerId || !process.env.STRIPE_SECRET_KEY) return owner.subscriptionId || null;
+  const subs = await getStripe().subscriptions.list({ customer: owner.stripeCustomerId, status: "all", limit: 20 });
+  const live = subs.data.find((s) => ["active", "trialing", "past_due"].includes(s.status));
+  if (!live) return null;
+  const trialEndsAt = live.trial_end ? new Date(live.trial_end * 1000) : null;
+  await Instructor.findByIdAndUpdate(owner._id, { subscriptionId: live.id, subscriptionStatus: live.status, trialEndsAt });
+  Object.assign(owner, { subscriptionId: live.id, subscriptionStatus: live.status, trialEndsAt });
+  return live.id;
+}
+
+/** A comped Driving School plan (given free by an admin) that's still running. */
+const compedSchool = (owner) =>
+  owner?.comp?.plan === "driving-school" && (!owner.comp.until || new Date(owner.comp.until) > new Date());
+
+/**
+ * Owner without a subscription: Stripe Checkout to pay for seats. A comped school
+ * pays only for the seats; otherwise it starts the plan with the seats.
+ */
+async function seatsCheckout(owner, requested) {
+  const { school } = await requireSchool(owner, "school.billing", "Only the school owner can add seats");
+  const extra = Number(requested);
+  if (!Number.isInteger(extra) || extra < 1 || extra > MAX_EXTRA_SEATS) throw schoolError(`Extra seats must be a whole number from 1 to ${MAX_EXTRA_SEATS}`);
+  if (await recoverSubscription(owner)) throw schoolError("Your subscription is active now. Refresh the page to add seats.", 409, { code: "HAS_SUBSCRIPTION" });
+
+  const [plan, seatPrice] = await Promise.all([pricing.getPlan("driving-school"), pricing.ensureExtraSeatPrice()]);
+  if (!seatPrice) throw schoolError("Adding seats isn't available right now. Please try again later.", 503);
+  const seatsOnly = compedSchool(owner);
+  if (!seatsOnly && !plan?.stripePriceId) throw schoolError("Adding seats isn't available right now. Please try again later.", 503);
+
+  const stripe = getStripe();
+  let customer = owner.stripeCustomerId;
+  if (!customer) {
+    customer = (await stripe.customers.create({ email: owner.email, name: owner.name, metadata: { instructorId: String(owner._id) } })).id;
+    await Instructor.findByIdAndUpdate(owner._id, { stripeCustomerId: customer });
+  }
+  const base = (process.env.FRONTEND_URL || "http://localhost:8080").replace(/\/+$/, "");
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer,
+    line_items: [...(seatsOnly ? [] : [{ price: plan.stripePriceId, quantity: 1 }]), { price: seatPrice, quantity: extra }],
+    success_url: `${base}/team?seats=added`,
+    cancel_url: `${base}/team`,
+    client_reference_id: String(owner._id),
+    metadata: { plan: "driving-school", kind: "school-seats", schoolId: String(school._id), extraSeats: String(extra) },
+  });
+  return { url: session.url };
+}
+
 async function overview(instructor) {
   const school = await schoolFor(instructor);
   if (!school) return null;
   const isOwner = String(school.ownerId) === String(instructor._id);
+  // Our records may have missed the owner's subscription: check with Stripe
+  if (isOwner && !instructor.subscriptionId) await recoverSubscription(instructor).catch(() => null);
   const person = { ...instructor, schoolId: school._id, schoolRole: isOwner ? "owner" : instructor.schoolRole };
   const seeTeam = can(person, "school.viewAll");
   const manageInvites = can(person, "school.invite");
@@ -136,6 +191,8 @@ async function overview(instructor) {
       trialEndsAt: isOwner && instructor.subscriptionStatus === "trialing" ? instructor.trialEndsAt || null : null,
       // Why an owner can't add seats themselves (the page explains it)
       seatsUnavailable: !isOwner ? null : !instructor.subscriptionId ? "no_subscription" : !seatPrice ? "not_set_up" : null,
+      // No subscription: seats are bought through checkout (a comped school pays for the seats only)
+      seatsCheckout: isOwner && !instructor.subscriptionId ? (compedSchool(instructor) ? "seats_only" : "plan_and_seats") : null,
     },
     role: person.schoolRole,
     roleLabel: SCHOOL_ROLE_LABELS[person.schoolRole] || null,
@@ -317,6 +374,7 @@ async function setExtraSeats(owner, requested) {
     );
   }
   if (!seatPrice) throw schoolError("Adding seats isn't set up yet. Please contact support.", 503);
+  await recoverSubscription(owner).catch(() => null);
   if (!owner.subscriptionId) throw schoolError("Start your Driving School subscription first, then add seats.", 409, { code: "NO_SUBSCRIPTION" });
 
   const stripe = getStripe();
@@ -420,6 +478,8 @@ async function viewableInstructor(requester, instructorId) {
 
 module.exports = {
   setSchoolDonna,
+  seatsCheckout,
+  recoverSubscription,
   schoolOnboarding,
   schoolFor,
   overview,

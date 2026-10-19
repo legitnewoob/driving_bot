@@ -156,6 +156,8 @@ router.post("/google-signup", async (req, res) => {
       // Staff land on the admin panel instead of the instructor dashboard
       access: accessInfo(instructor),
       needsPlan: needsPlan(instructor),
+      // Their driving school, so the website opens the right home straight away
+      school: isNew ? null : await schoolInfo(instructor).catch(() => null),
       isNew,
     });
   } catch (err) {
@@ -247,7 +249,10 @@ async function schoolInfo(instructor) {
   const school = await schoolFor(instructor, { create: false });
   if (!school) return instructor.plan === "driving-school" && !SEAT_ROLES.includes(instructor.schoolRole) ? { role: "owner", name: null } : null;
   const role = String(school.ownerId) === String(instructor._id) ? "owner" : instructor.schoolRole === "manager" ? "manager" : "member";
-  return { role, name: school.name };
+  if (role === "owner") return { role, name: school.name };
+  // Instructors see who runs their school, and whether the school has Donna on
+  const owner = await Instructor.findById(school.ownerId).select("name email").lean().catch(() => null);
+  return { role, name: school.name, ownerName: owner?.name || null, ownerEmail: owner?.email || null, donnaEnabled: school.donnaEnabled !== false };
 }
 
 

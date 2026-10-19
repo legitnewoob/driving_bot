@@ -132,6 +132,8 @@ async function overview(instructor) {
       planAmount: plan?.amount ?? 2000,
       extraSeatAmount: plan?.extraSeatAmount ?? 1000,
       canBuySeats: !!seatPrice && !!(isOwner && instructor.subscriptionId),
+      // On the free trial, new seats are charged now; the monthly payment starts at the trial's end
+      trialEndsAt: isOwner && instructor.subscriptionStatus === "trialing" ? instructor.trialEndsAt || null : null,
       // Why an owner can't add seats themselves (the page explains it)
       seatsUnavailable: !isOwner ? null : !instructor.subscriptionId ? "no_subscription" : !seatPrice ? "not_set_up" : null,
     },
@@ -320,22 +322,68 @@ async function setExtraSeats(owner, requested) {
   const stripe = getStripe();
   const subscription = await stripe.subscriptions.retrieve(owner.subscriptionId);
   const item = subscription.items.data.find((i) => pricing.isSeatItem(i, { ...plan, extraSeatPriceId: seatPrice }));
+
+  // On the free trial nothing is billed yet, so new seats are paid for now (once),
+  // and join the monthly payment from the first one after the trial. Removing a
+  // seat during the trial just drops it from that payment.
+  const onTrial = subscription.status === "trialing";
+  const added = extra - (item ? item.quantity || 0 : 0);
+  if (onTrial && added > 0) {
+    await chargeSeatsNow(stripe, subscription, added, plan?.extraSeatAmount || 1000, school);
+  }
+  const proration = onTrial ? "none" : "create_prorations";
+
   if (item && extra === 0) {
-    await stripe.subscriptionItems.del(item.id, { proration_behavior: "create_prorations" });
+    await stripe.subscriptionItems.del(item.id, { proration_behavior: proration });
   } else if (item) {
-    await stripe.subscriptionItems.update(item.id, { quantity: extra, proration_behavior: "create_prorations" });
+    await stripe.subscriptionItems.update(item.id, { quantity: extra, proration_behavior: proration });
   } else if (extra > 0) {
     await stripe.subscriptionItems.create({
       subscription: subscription.id,
       price: seatPrice,
       quantity: extra,
-      proration_behavior: "create_prorations",
+      proration_behavior: proration,
     });
   }
 
   await School.findByIdAndUpdate(school._id, { extraSeats: extra, seatLimit: included + extra });
   await audit(owner.email, "school.seats", String(school._id), { extraSeats: extra });
   return { extraSeats: extra, seatLimit: included + extra };
+}
+
+/**
+ * Charge for seats added during the free trial, on the card given at checkout.
+ * Throws (and charges nothing) if the payment doesn't go through.
+ */
+async function chargeSeatsNow(stripe, subscription, count, seatAmount, school) {
+  const customer = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
+  const invoice = await stripe.invoices.create({
+    customer,
+    collection_method: "charge_automatically",
+    auto_advance: false,
+    pending_invoice_items_behavior: "exclude",
+    ...(subscription.default_payment_method && {
+      default_payment_method: typeof subscription.default_payment_method === "string" ? subscription.default_payment_method : subscription.default_payment_method.id,
+    }),
+    description: `Extra instructor seat${count === 1 ? "" : "s"} during your free trial`,
+    metadata: { schoolId: String(school._id), kind: "trial-seats" },
+  });
+  await stripe.invoiceItems.create({
+    customer,
+    invoice: invoice.id,
+    amount: seatAmount * count,
+    currency: "gbp",
+    description: `${count} extra instructor seat${count === 1 ? "" : "s"} (free trial period)`,
+  });
+  try {
+    await stripe.invoices.finalizeInvoice(invoice.id);
+    await stripe.invoices.pay(invoice.id);
+  } catch (err) {
+    try {
+      await stripe.invoices.voidInvoice(invoice.id);
+    } catch { /* already gone */ }
+    throw schoolError("We couldn't take the payment for the new seat. Check your card in Account → Billing and try again.", 402, { code: "SEAT_PAYMENT_FAILED" });
+  }
 }
 
 /** Keep the seat limit in line with the Stripe subscription (e.g. changed in Stripe directly). */

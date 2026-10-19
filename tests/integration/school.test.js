@@ -15,6 +15,8 @@ jest.mock("../../src/models/phoneNumberModel");
 const mockStripe = {
   subscriptions: { retrieve: jest.fn() },
   subscriptionItems: { create: jest.fn(), update: jest.fn(), del: jest.fn() },
+  invoices: { create: jest.fn(), finalizeInvoice: jest.fn(), pay: jest.fn(), voidInvoice: jest.fn() },
+  invoiceItems: { create: jest.fn() },
 };
 jest.mock("stripe", () => jest.fn(() => mockStripe));
 jest.mock("../../src/services/phoneNumberService", () => ({
@@ -306,6 +308,47 @@ describe("paying for extra instructor seats (£10/month each)", () => {
 
   it.each([[-1], [1.5], ["two"], [51]])("rejects %p", async (value) => {
     await expect(schoolService.setExtraSeats(paying(), value)).rejects.toThrow("whole number from 0 to 50");
+  });
+
+  describe("on the free trial", () => {
+    const trialSub = (items = []) => ({ ...sub(items), status: "trialing", customer: "cus_1", default_payment_method: "pm_card" });
+    beforeEach(() => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(trialSub());
+      mockStripe.invoices.create.mockResolvedValue({ id: "in_1" });
+      mockStripe.invoices.pay.mockResolvedValue({ status: "paid" });
+    });
+
+    it("charges £10 per new seat now, and adds them to the monthly payment from the trial's end", async () => {
+      await schoolService.setExtraSeats(paying(), 2);
+      expect(mockStripe.invoices.create).toHaveBeenCalledWith(expect.objectContaining({ customer: "cus_1", default_payment_method: "pm_card", collection_method: "charge_automatically" }));
+      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith(expect.objectContaining({ customer: "cus_1", invoice: "in_1", amount: 2000, currency: "gbp" }));
+      expect(mockStripe.invoices.pay).toHaveBeenCalledWith("in_1");
+      // No proration on top: the trial isn't billed
+      expect(mockStripe.subscriptionItems.create).toHaveBeenCalledWith({ subscription: "sub_1", price: EXTRA, quantity: 2, proration_behavior: "none" });
+      expect(School.findByIdAndUpdate).toHaveBeenCalledWith(SCHOOL_ID, { extraSeats: 2, seatLimit: 5 });
+    });
+
+    it("only charges for the seats being added", async () => {
+      mockStripe.subscriptions.retrieve.mockResolvedValue(trialSub([{ id: "si_extra", price: { id: EXTRA }, quantity: 2 }]));
+      await schoolService.setExtraSeats(paying(), 3);
+      expect(mockStripe.invoiceItems.create).toHaveBeenCalledWith(expect.objectContaining({ amount: 1000 }));
+    });
+
+    it("removing a seat charges nothing", async () => {
+      seats({ members: 3 });
+      mockStripe.subscriptions.retrieve.mockResolvedValue(trialSub([{ id: "si_extra", price: { id: EXTRA }, quantity: 1 }]));
+      await schoolService.setExtraSeats(paying(), 0);
+      expect(mockStripe.invoices.create).not.toHaveBeenCalled();
+      expect(mockStripe.subscriptionItems.del).toHaveBeenCalledWith("si_extra", { proration_behavior: "none" });
+    });
+
+    it("a declined card adds no seat", async () => {
+      mockStripe.invoices.pay.mockRejectedValue(new Error("card_declined"));
+      await expect(schoolService.setExtraSeats(paying(), 1)).rejects.toMatchObject({ code: "SEAT_PAYMENT_FAILED", status: 402 });
+      expect(mockStripe.invoices.voidInvoice).toHaveBeenCalledWith("in_1");
+      expect(mockStripe.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(School.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
   });
 
   it("the seat limit follows the subscription when it's changed in Stripe", async () => {

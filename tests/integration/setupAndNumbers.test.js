@@ -111,6 +111,22 @@ describe("POST /api/phone-numbers/request", () => {
     expect(PhoneNumber.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
+  it("refuses a driving school owner (their instructors each get a number)", async () => {
+    Instructor.findOne.mockResolvedValue(ready({ plan: "driving-school", schoolRole: "owner" }));
+    const res = await request();
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("SCHOOL_OWNER");
+    expect(PhoneNumber.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still gives an instructor in a school their own number", async () => {
+    Instructor.findOne.mockResolvedValue(ready({ plan: "driving-school", schoolRole: "member" }));
+    Instructor.findById.mockReturnValue({ lean: async () => ready() });
+    PhoneNumber.findOne.mockReturnValue({ lean: async () => null });
+    PhoneNumber.findOneAndUpdate.mockResolvedValue({ phoneNumber: "+15556393643", phoneNumberId: "1091956790670453", whatsappToken: "pool-token" });
+    expect((await request()).status).toBe(200);
+  });
+
   it("assigns a number once setup is complete", async () => {
     Instructor.findOne.mockResolvedValue(ready());
     Instructor.findById.mockReturnValue({ lean: async () => ready() });

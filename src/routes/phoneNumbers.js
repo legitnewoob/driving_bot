@@ -43,6 +43,16 @@ router.post("/request", async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
+    // School owners don't run Donna themselves: each of their instructors gets a number
+    const owner = instructor.schoolRole === "owner" || (instructor.plan === "driving-school" && !["member", "manager"].includes(instructor.schoolRole));
+    if (owner) {
+      return res.status(400).json({
+        success: false,
+        code: "SCHOOL_OWNER",
+        error: "As the school owner you don't need a number. Each instructor gets their own when they set Donna up.",
+      });
+    }
+
     // Donna needs these before she can take bookings on a real number
     const setup = await getSetupStatus(instructor);
     if (!setup.complete && !setup.hasNumber) {

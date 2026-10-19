@@ -97,6 +97,9 @@ async function stripeWebhookHandler(req, res) {
       case "invoice.payment_failed": {
         const invoice = event.data.object;
         const customerId = invoice.customer;
+        // A declined one-off charge for trial seats isn't a failed subscription
+        // payment: the seat just isn't added, and the school keeps working
+        if (invoice.metadata?.kind === "trial-seats") break;
 
         const instructor = await Instructor.findOne({ stripeCustomerId: customerId });
         if (instructor) {

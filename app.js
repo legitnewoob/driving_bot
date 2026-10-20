@@ -1,6 +1,7 @@
 const express = require('express');
 const authRoutes = require('./src/routes/auth');
 const contactRoutes = require('./src/routes/contact');
+const waitlistRoutes = require('./src/routes/waitlist');
 const authGoogleRoutes = require('./src/routes/authGoogle');
 const webhookRoutes = require('./src/routes/webhook');
 const healthRoutes = require('./src/routes/status');
@@ -138,6 +139,7 @@ app.use('/api/bookings', adminAuth, bookingRoutes);
 app.use('/api/dashboard', jwtAuth, requirePlan, dashboardRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/contact', contactLimiter, contactRoutes); // public: website contact form
+app.use('/api', waitlistRoutes); // public: /api/launch and /api/waitlist (launch waitlist)
 app.use('/api/pricing', pricingRoutes); // public: plans and the active sale for the website // public invite lookup inside; everything else needs JWT
 app.use('/api/learners', apiKeyAuth, requirePlan, learnerRoutes);
 app.use('/api/phone-numbers', jwtAuth, requirePlan, phoneNumberRoutes);
@@ -148,6 +150,12 @@ if (process.env.NODE_ENV === 'development') {
   const mockWebhookRoutes = require('./src/routes/mockWebhook.js');
   app.use('/mock-webhook', mockWebhookRoutes);
   console.log('🧪 Mock webhook route enabled at POST /mock-webhook');
+}
+
+// Local email outbox (EMAIL_OUTBOX=local): never in production
+if (process.env.NODE_ENV !== 'production' && process.env.EMAIL_OUTBOX === 'local') {
+  app.use('/dev/outbox', require('./src/routes/devOutbox'));
+  console.log('📬 Email outbox at /dev/outbox (emails are kept, not sent)');
 }
 
 // Logs Viewer Page

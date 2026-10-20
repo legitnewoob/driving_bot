@@ -14,9 +14,45 @@
 //                           can't connect from there; HTTPS always can.
 //   EMAIL_FROM            - sender for Resend, e.g. "Donna Drive <hello@donnadrive.co.uk>"
 //                           (the domain must be verified in Resend)
+//
+// Local testing:
+//   EMAIL_OUTBOX=local    - don't send anything: write each email to .outbox/ as an
+//                           HTML file instead (see GET /dev/outbox). Ignored in production.
 
+const fs = require("fs");
+const path = require("path");
 const nodemailer = require("nodemailer");
 const logger = require("./logger-advanced");
+
+const OUTBOX_DIR = path.join(__dirname, "../../.outbox");
+
+function outboxEnabled() {
+  return process.env.EMAIL_OUTBOX === "local" && process.env.NODE_ENV !== "production";
+}
+
+/** Local testing: keep the email as a file instead of sending it. */
+function writeToOutbox({ to, subject, html, replyTo, from, headers }) {
+  try {
+    fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+    const slug = subject.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+    const file = path.join(OUTBOX_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}-${slug}.html`);
+    const meta = { to, from, subject, replyTo: replyTo || null, headers: headers || null, at: new Date().toISOString() };
+    fs.writeFileSync(file, `<!-- ${JSON.stringify(meta).replace(/--/g, "- -")} -->\n${html}`);
+    logger.info(`Email kept in outbox (EMAIL_OUTBOX=local): ${subject} → ${to} (${file})`);
+    return true;
+  } catch (err) {
+    logger.error(`Email outbox write failed: ${err.message}`);
+    return false;
+  }
+}
+
+/** EMAIL_FROM with a different display name, e.g. "Raj from Donna Drive <hello@...>". */
+function fromWithName(name) {
+  const base = process.env.EMAIL_FROM || "Donna Drive <onboarding@resend.dev>";
+  if (!name) return base;
+  const address = (base.match(/<([^>]+)>/) || [null, base])[1].trim();
+  return `${name} <${address}>`;
+}
 
 // Rate-limit: don't spam the same error repeatedly
 const _sentRecently = new Map();
@@ -49,13 +85,12 @@ function getTransporter() {
 }
 
 /** Send through Resend's HTTPS API (works where SMTP ports are blocked). */
-async function sendViaResend({ to, subject, html, replyTo }) {
-  const from = process.env.EMAIL_FROM || "Donna Drive <onboarding@resend.dev>";
+async function sendViaResend({ to, subject, html, replyTo, from = fromWithName(null), headers }) {
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [to], subject, html, ...(replyTo && { reply_to: replyTo }) }),
+      body: JSON.stringify({ from, to: [to], subject, html, ...(replyTo && { reply_to: replyTo }), ...(headers && { headers }) }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) {
@@ -76,9 +111,12 @@ async function sendViaResend({ to, subject, html, replyTo }) {
  * @param {string} subject - Email subject line
  * @param {string} html    - Email body (HTML)
  * @param {string} [dedupeKey] - Optional key to prevent duplicate emails within cooldown
+ * @param {string} [toOverride] - Recipient (defaults to the team's address)
+ * @param {string} [replyTo]
+ * @param {{ fromName?: string, headers?: Object }} [options] - sender display name, extra headers (e.g. List-Unsubscribe)
  * @returns {Promise<boolean>} true if sent, false if skipped/failed
  */
-async function sendNotification(subject, html, dedupeKey = null, toOverride = null, replyTo = null) {
+async function sendNotification(subject, html, dedupeKey = null, toOverride = null, replyTo = null, options = {}) {
   // Dedupe check
   if (dedupeKey) {
     const lastSent = _sentRecently.get(dedupeKey);
@@ -89,11 +127,18 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
   }
 
   const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
+  const from = fromWithName(options.fromName);
+
+  if (outboxEnabled()) {
+    const kept = writeToOutbox({ to: to || "(team)", subject, html, replyTo, from, headers: options.headers });
+    if (kept && dedupeKey) _sentRecently.set(dedupeKey, Date.now());
+    return kept;
+  }
 
   // Resend first; if it refuses (e.g. the domain isn't verified yet), fall back to
   // Gmail, which works locally even though Railway blocks it
   if (process.env.RESEND_API_KEY) {
-    const sent = await sendViaResend({ to, subject, html, replyTo });
+    const sent = await sendViaResend({ to, subject, html, replyTo, from, headers: options.headers });
     if (sent) {
       if (dedupeKey) _sentRecently.set(dedupeKey, Date.now());
       return true;
@@ -113,6 +158,7 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
       subject,
       html,
       ...(replyTo && { replyTo }),
+      ...(options.headers && { headers: options.headers }),
     });
 
     if (dedupeKey) {
@@ -342,6 +388,8 @@ function resetTransporter() {
 }
 
 module.exports = {
+  OUTBOX_DIR,
+  outboxEnabled,
   sendPriceChangeNotice,
   sendNotification,
   notifyInvalidGrant,
@@ -349,6 +397,7 @@ module.exports = {
   notifyInstructorLearnerMessage,
   sendSchoolInvite,
   sendContactRequest,
+  escapeHtml,
   notifyNumberPoolEmpty,
   clearCooldowns,
   resetTransporter,

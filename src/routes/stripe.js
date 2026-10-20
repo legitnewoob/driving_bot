@@ -118,8 +118,9 @@ router.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      // An active sale's coupon, or a box for promo codes (Stripe allows one or the other)
-      ...(await pricing.checkoutDiscount(plan)),
+      // Their waitlist invite's launch perk, else an active sale's coupon, else a box
+      // for promo codes (Stripe allows one discount per checkout)
+      ...((await require("../services/launchService").checkoutPerk(instructor, plan).catch(() => null)) || (await pricing.checkoutDiscount(plan))),
       subscription_data: planConfig.trialDays > 0 ? { trial_period_days: planConfig.trialDays } : {},
       ...(embedded
         ? { ui_mode: "embedded_page", return_url: successUrl }

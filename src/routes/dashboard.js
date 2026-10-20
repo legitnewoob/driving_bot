@@ -870,6 +870,21 @@ async function withSetup(payload, setup, instructor) {
   };
 }
 
+/**
+ * GET /api/dashboard/referral
+ * Their "give a month, get a month" link and how it's going.
+ */
+router.get("/referral", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+    res.json({ success: true, data: await require("../services/launchService").referralFor(instructor) });
+  } catch (err) {
+    logger.error(`Dashboard /referral error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to load your referral link" });
+  }
+});
+
 router.get("/settings", async (req, res) => {
   try {
     const instructor = await resolveInstructor(req);

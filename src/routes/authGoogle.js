@@ -25,7 +25,8 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 router.post("/google-signup", async (req, res) => {
   try {
     // signInOnly: the Portal's sign-in, which must never create an account
-    const { credential, plan, signInOnly } = req.body;
+    // invite: a launch-waitlist invite token; ref: a referral code from a ?ref= link
+    const { credential, plan, signInOnly, invite, ref } = req.body;
 
     if (!credential) {
       return res.status(400).json({ success: false, error: "Missing Google credential" });
@@ -93,6 +94,29 @@ router.post("/google-signup", async (req, res) => {
       instructor = null;
     }
 
+    // While the launch waitlist is on, new accounts need an invite. Nothing is
+    // created; the website turns this into "join the waitlist" (or "you're #142").
+    let waitlistEntry = null;
+    if (!instructor) {
+      const launch = require("../services/launchService");
+      const gate = await launch.signupAllowed({ email, inviteToken: invite });
+      if (!gate.allowed) {
+        return res.status(403).json({
+          success: false,
+          code: "WAITLIST",
+          error: gate.onList
+            ? "You're on the waitlist. We'll email you as soon as it's your turn."
+            : "We're not open yet. Join the waitlist and we'll email you.",
+          onList: gate.onList,
+          place: gate.place,
+          status: gate.status,
+          name: name || "",
+          email,
+        });
+      }
+      waitlistEntry = gate.entry;
+    }
+
     if (!instructor) {
       // New instructor — generate API key and placeholder phoneNumberId
       isNew = true;
@@ -119,6 +143,8 @@ router.post("/google-signup", async (req, res) => {
       if (previous.length) {
         await require("../services/auditLog").audit(email, "account.rejoined", email, { previousAccountIds: previous.map(String) });
       }
+      // Their waitlist place is used up; their referral code and referrer carry over
+      await require("../services/launchService").onSignup(instructor, { entry: waitlistEntry, ref });
     } else {
       // Existing instructor — update googleId if missing
       if (!instructor.googleId) {

@@ -9,8 +9,9 @@
  *   node scripts/seedDevData.js          # interactive confirmation
  *   node scripts/seedDevData.js --force  # skip confirmation
  *
- * NOTE: This does NOT touch the Instructors collection.
- *       Use `npm run instructor:add` for that.
+ * Instructors: seeds learners and lessons for the dev instructors in
+ * TARGET_EMAILS, creating an active account for any that's missing. Other
+ * instructors are untouched (`npm run instructor:add` adds more).
  */
 
 require("../src/config/env");
@@ -222,12 +223,29 @@ async function run() {
   console.log(`   Database: ${mongoose.connection.name}`);
   console.log(`   Host: ${mongoose.connection.host}`);
 
-  // Look up instructors — seed for all active ones
-  const TARGET_EMAILS = ["agrawalraj918@gmail.com", "chessforlife.18@gmail.com"];
-  let instructors = await Instructor.find({ email: { $in: TARGET_EMAILS }, active: true }).lean();
-  if (instructors.length === 0) {
-    instructors = await Instructor.find({ active: true }).lean();
+  // The dev instructors who get seed data. The first gets the real WhatsApp
+  // number (if set in the env). The super admin is left out: they always land
+  // on the admin panel, so seed data on their account would never be seen.
+  const TARGET_EMAILS = ["rajmineshagrawal@gmail.com", "chessforlife.18@gmail.com"];
+
+  // Missing (e.g. deleted while testing)? Create a fresh active account for that
+  // email; signing in with that Google account then picks it up.
+  for (const email of TARGET_EMAILS) {
+    if (await Instructor.exists({ email, active: true })) continue;
+    const name = email.split("@")[0].replace(/[._\d]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase()) || "Dev Instructor";
+    await Instructor.create({
+      email,
+      name,
+      phoneNumberId: `temp_seed_${new mongoose.Types.ObjectId()}`,
+      plan: "adi",
+      planSelected: true,
+      subscriptionStatus: "active",
+      active: true,
+    });
+    console.log(`   ➕ Created dev instructor ${email}`);
   }
+
+  let instructors = await Instructor.find({ email: { $in: TARGET_EMAILS }, active: true }).lean();
   // Keep TARGET_EMAILS order so the first one gets the real WhatsApp number below
   instructors.sort((a, b) => {
     const rank = (e) => (TARGET_EMAILS.indexOf(e) === -1 ? TARGET_EMAILS.length : TARGET_EMAILS.indexOf(e));

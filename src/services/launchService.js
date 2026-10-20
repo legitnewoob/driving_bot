@@ -193,7 +193,7 @@ async function join(input = {}) {
       await LaunchSignup.updateOne({ _id: existing._id }, { "emails.confirmationSentAt": new Date() });
       emails.sendWaitlistConfirmation(existing, { place: await rankOf(existing), launchDate: (await publicLaunch().catch(() => ({}))).date }).catch(() => {});
     }
-    return { created: false, entry: { name: existing.name, place: await rankOf(existing), status: existing.status } };
+    return { created: false, entry: { place: await rankOf(existing), status: existing.status } };
   }
   if (existing) throw launchError("We couldn't add this email. Please contact us.", 400);
 
@@ -227,7 +227,7 @@ async function join(input = {}) {
     // Two joins with the same email at once: the other one won
     if (err.code === 11000) {
       const winner = await LaunchSignup.findOne({ email });
-      if (winner) return { created: false, entry: { name: winner.name, place: await rankOf(winner), status: winner.status } };
+      if (winner) return { created: false, entry: { place: await rankOf(winner), status: winner.status } };
     }
     throw err;
   }

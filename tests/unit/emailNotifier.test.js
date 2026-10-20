@@ -163,7 +163,9 @@ describe("notifyInvalidGrant", () => {
     expect(sentEmail.html).toContain("invalid_grant");
 
     // Body contains re-auth URL
-    expect(sentEmail.html).toContain("https://mybot.example.com/auth/google?phone=447700000001");
+    // Only the instructor can reconnect their own Google account, from their dashboard
+    expect(sentEmail.html).toContain("/dashboard");
+    expect(sentEmail.html).not.toContain("/auth/google");
   });
 
   it("handles missing instructor fields gracefully", async () => {
@@ -175,13 +177,13 @@ describe("notifyInvalidGrant", () => {
     expect(sentEmail.html).toContain("Sheets");
   });
 
-  it("uses localhost as fallback when BASE_URL is not set", async () => {
+  it("links to the local dashboard when no dashboard URL is set", async () => {
     delete process.env.BASE_URL;
 
     await notifyInvalidGrant(instructor, "Calendar", "invalid_grant");
 
     const sentEmail = mockSendMail.mock.calls[0][0];
-    expect(sentEmail.html).toContain("http://localhost:3000/auth/google");
+    expect(sentEmail.html).toContain("http://localhost:8080/dashboard");
   });
 });
 

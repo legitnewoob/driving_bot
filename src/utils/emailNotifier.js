@@ -181,12 +181,15 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
  * @param {string} errorMessage - The original error message
  */
 async function notifyInvalidGrant(instructor, service, errorMessage) {
-  const name = instructor?.name || "Unknown";
-  const phoneNumberId = instructor?.phoneNumberId || "N/A";
-  const phone = instructor?.phone || "N/A";
-  const email = instructor?.email || "N/A";
-  const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-  const reAuthUrl = `${baseUrl}/auth/google?phone=${phone}`;
+  // Everything below goes into HTML: escape what instructors control
+  const name = escapeHtml(instructor?.name || "Unknown");
+  const phoneNumberId = escapeHtml(instructor?.phoneNumberId || "N/A");
+  const phone = escapeHtml(instructor?.phone || "N/A");
+  const email = escapeHtml(instructor?.email || "N/A");
+  service = escapeHtml(service);
+  errorMessage = escapeHtml(errorMessage);
+  // Only the instructor can reconnect (it's their Google account), from their dashboard
+  const reAuthUrl = `${process.env.DASHBOARD_URL || process.env.FRONTEND_URL || "http://localhost:8080"}/dashboard`;
 
   const subject = `⚠️ Invalid Grant — ${name} (${service})`;
 
@@ -212,11 +215,11 @@ async function notifyInvalidGrant(instructor, service, errorMessage) {
       </table>
 
       <h3>How to fix</h3>
-      <p>The instructor needs to re-authorize Google access by visiting:</p>
+      <p>The instructor needs to reconnect Google Calendar from their dashboard (we've emailed them too):</p>
       <p style="margin: 16px 0;">
         <a href="${reAuthUrl}" style="background: #1976d2; color: white; padding: 12px 24px; 
            text-decoration: none; border-radius: 4px; display: inline-block;">
-          Re-authorize Google Access
+          Open the dashboard
         </a>
       </p>
       <p style="color: #666; font-size: 12px;">Direct link: <a href="${reAuthUrl}">${reAuthUrl}</a></p>
@@ -251,7 +254,7 @@ async function notifyInstructorReauth(instructor) {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #d32f2f;">Your Google Calendar connection has expired</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtml(name)},</p>
       <p>Your Google Calendar authorisation has expired or been revoked. Donna AI can no longer
          create or update calendar events for your lessons until you reconnect.</p>
 

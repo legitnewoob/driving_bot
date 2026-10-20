@@ -135,7 +135,7 @@ describe("joining", () => {
     const res = await post("/api/waitlist", { name: "Raj", email: "raj@x.com" });
     expect(res.status).toBe(200);
     const { data } = await res.json();
-    expect(data).toEqual({ created: false, entry: { name: "Raj", place: 40, status: "waiting" } });
+    expect(data).toEqual({ created: false, entry: { place: 40, status: "waiting" } });
     expect(JSON.stringify(data)).not.toContain("secret");
     expect(LaunchSignup.create).not.toHaveBeenCalled();
     // Their link is emailed again instead (at most hourly)
@@ -161,7 +161,7 @@ describe("joining", () => {
     LaunchSignup.create.mockRejectedValue(Object.assign(new Error("dup"), { code: 11000 }));
     const res = await post("/api/waitlist", { name: "Raj", email: "raj@x.com" });
     expect(res.status).toBe(200);
-    expect((await res.json()).data).toEqual({ created: false, entry: { name: "Raj", place: 142, status: "waiting" } });
+    expect((await res.json()).data).toEqual({ created: false, entry: { place: 142, status: "waiting" } });
   });
 });
 

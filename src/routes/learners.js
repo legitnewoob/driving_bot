@@ -143,7 +143,7 @@ router.get("/bookings", async (req, res) => {
 
     // Look up user names
     const phones = [...new Set(bookings.map((b) => b.userPhone))];
-    const users = await User.find({ phone: { $in: phones } }).select("phone name").lean();
+    const users = await User.find({ phone: { $in: phones }, instructorId }).select("phone name").lean();
     const nameMap = {};
     users.forEach((u) => (nameMap[u.phone] = u.name || u.phone));
 
@@ -189,7 +189,7 @@ router.post("/bookings", async (req, res) => {
     const normalizedPhone = userPhone.replace(/\s+/g, "");
 
     // Look up student name
-    const user = await User.findOne({ phone: normalizedPhone }).select("name postalCode location").lean();
+    const user = await User.findOne({ phone: normalizedPhone, instructorId }).select("name postalCode location").lean();
     const studentName = user?.name || normalizedPhone;
 
     // Claim the slot in Mongo first: the unique index on instructor/date/time
@@ -312,7 +312,7 @@ router.get("/activity", async (req, res) => {
 
     // Look up names
     const phones = [...new Set(bookings.map((b) => b.userPhone))];
-    const users = await User.find({ phone: { $in: phones } }).select("phone name").lean();
+    const users = await User.find({ phone: { $in: phones }, instructorId }).select("phone name").lean();
     const nameMap = {};
     users.forEach((u) => (nameMap[u.phone] = u.name || u.phone));
 
@@ -380,7 +380,7 @@ router.get("/payments", async (req, res) => {
       .lean();
 
     const phones = [...new Set(payments.map((p) => p.userPhone))];
-    const users = await User.find({ phone: { $in: phones } }).select("phone name").lean();
+    const users = await User.find({ phone: { $in: phones }, instructorId }).select("phone name").lean();
     const nameMap = {};
     users.forEach((u) => (nameMap[u.phone] = u.name || u.phone));
 

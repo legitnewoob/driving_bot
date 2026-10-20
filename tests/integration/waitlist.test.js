@@ -312,12 +312,16 @@ describe("the sign-up gate", () => {
     expect((await signUp()).status).toBe(200);
   });
 
-  it("someone let in before (e.g. their account was deleted) can sign up again", async () => {
-    LaunchSignup.findOne.mockImplementation((f) => q(f.email ? { email: "new@x.com", status: "joined" } : null));
-    expect((await signUp()).status).toBe(200);
-    LaunchSignup.findOne.mockReturnValue(q(null));
-    require("../../src/services/accountDeletion").previousAccounts.mockResolvedValueOnce(["old1"]);
-    expect((await signUp()).status).toBe(200);
+  it("a deleted account doesn't get past the waitlist: they're back in the queue", async () => {
+    LaunchSignup.findOne.mockImplementation((f) => q(f.email ? { email: "new@x.com", status: "waiting", position: 40, referrals: 0 } : null));
+    const res = await signUp();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "WAITLIST", onList: true, place: 40 });
+  });
+
+  it("deleting an account puts their waitlist place back to waiting", async () => {
+    await launch.onAccountDeleted({ _id: "i1" });
+    expect(LaunchSignup.updateOne).toHaveBeenCalledWith({ instructorId: "i1" }, expect.objectContaining({ status: "waiting", instructorId: null }));
   });
 
   it("instructors invited by a driving school always get in", async () => {

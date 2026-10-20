@@ -7,7 +7,7 @@ jest.mock("../../src/utils/logger-advanced", () => ({ info: jest.fn(), warn: jes
 jest.mock("../../src/models/instructorSchema");
 jest.mock("../../src/models/phoneNumberModel");
 // Sign-up is open (no launch waitlist) for these tests
-jest.mock("../../src/services/launchService", () => ({ signupAllowed: jest.fn(async () => ({ allowed: true, entry: null })), onSignup: jest.fn() }));
+jest.mock("../../src/services/launchService", () => ({ signupAllowed: jest.fn(async () => ({ allowed: true, entry: null })), onSignup: jest.fn(), onAccountDeleted: jest.fn() }));
 jest.mock("../../src/models/instructorModel", () => ({ invalidateInstructorCache: jest.fn() }));
 jest.mock("../../src/services/phoneNumberService", () => ({
   isFullyProvisioned: (i) => !!i.phoneNumberId && !i.phoneNumberId.startsWith("signup_"),

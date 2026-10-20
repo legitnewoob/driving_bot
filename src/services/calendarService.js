@@ -1,4 +1,4 @@
-const { oauth2Client, calendar } = require("../config/google");
+const { calendar, clientFor } = require("../config/google");
 const timezoneUtils = require("../utils/timezoneUtils");
 const logger = require("../utils/logger-advanced");
 const { notifyInvalidGrant, notifyInstructorReauth } = require("../utils/emailNotifier");
@@ -39,13 +39,13 @@ function isInvalidGrant(error) {
 class CalendarService {
 
   /**
-   * Set OAuth2 credentials from the instructor's refresh token.
+   * A Google client for this instructor only. Each call gets its own, so two
+   * instructors' requests running at the same time can never use each other's
+   * calendar credentials.
    * @param {Object} instructor - Instructor record from DB
    */
-  _setCredentials(instructor) {
-    oauth2Client.setCredentials({
-      refresh_token: instructor.googleRefreshToken,
-    });
+  _auth(instructor) {
+    return clientFor(instructor.googleRefreshToken);
   }
 
   async findEarliestAvailableSlot(instructor) {
@@ -92,7 +92,7 @@ class CalendarService {
    * @returns {object[]} array of calendar event objects
    */
   async getEventsForDate(date, instructor) {
-    this._setCredentials(instructor);
+    const auth = this._auth(instructor);
 
     const dayStart = timezoneUtils.createDateInTimezone(date, "00:00");
     const dayEnd = timezoneUtils.createDateInTimezone(date, "00:00");
@@ -100,6 +100,7 @@ class CalendarService {
 
     try {
       const response = await calendar.events.list({
+        auth,
         calendarId: calendarIdFor(instructor),
         timeMin: dayStart.toISOString(),
         timeMax: dayEnd.toISOString(),
@@ -179,7 +180,7 @@ class CalendarService {
 
   async getCalendarContext(instructor) {
     try {
-      this._setCredentials(instructor);
+      const auth = this._auth(instructor);
 
       const now = timezoneUtils.getCurrentDate();
       const twoWeeksFromNow = new Date(
@@ -187,6 +188,7 @@ class CalendarService {
       );
 
       const response = await calendar.events.list({
+        auth,
         calendarId: calendarIdFor(instructor),
         timeMin: now.toISOString(),
         timeMax: twoWeeksFromNow.toISOString(),
@@ -220,7 +222,7 @@ class CalendarService {
 
   async createEvent(bookingData, instructor) {
     try {
-      this._setCredentials(instructor);
+      const auth = this._auth(instructor);
 
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.date,
@@ -253,8 +255,8 @@ class CalendarService {
       };
 
       const response = await calendar.events.insert({
+        auth,
         calendarId: calendarIdFor(instructor),
-        auth: oauth2Client,
         resource: event,
       });
 
@@ -271,7 +273,7 @@ class CalendarService {
 
   async createBlockEvent({ date, startTime, endTime, isFullDay, reason }, instructor) {
     try {
-      this._setCredentials(instructor);
+      const auth = this._auth(instructor);
 
       const summary = reason || "Blocked";
       let event;
@@ -310,8 +312,8 @@ class CalendarService {
       }
 
       const response = await calendar.events.insert({
+        auth,
         calendarId: calendarIdFor(instructor),
-        auth: oauth2Client,
         resource: event,
       });
 
@@ -329,7 +331,7 @@ class CalendarService {
 
   async updateEvent(eventId, bookingData, instructor) {
     try {
-      this._setCredentials(instructor);
+      const auth = this._auth(instructor);
 
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.newDate,
@@ -355,6 +357,7 @@ class CalendarService {
       };
 
       const response = await calendar.events.update({
+        auth,
         calendarId: calendarIdFor(instructor),
         eventId,
         resource: event,
@@ -378,9 +381,10 @@ class CalendarService {
         throw new Error("Event ID is required for deletion");
       }
 
-      this._setCredentials(instructor);
+      const auth = this._auth(instructor);
 
       await calendar.events.delete({
+        auth,
         calendarId: calendarIdFor(instructor),
         eventId,
       });

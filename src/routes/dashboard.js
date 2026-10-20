@@ -680,6 +680,7 @@ router.patch("/learners/:phone/notes", async (req, res) => {
 
     const { notes } = req.body;
     if (typeof notes !== "string") return res.status(400).json({ success: false, error: "notes must be a string" });
+    if (notes.length > 5000) return res.status(400).json({ success: false, error: "Notes can be up to 5,000 characters" });
 
     const user = await User.findOneAndUpdate(
       { phone: req.params.phone, instructorId: instructor.phoneNumberId },
@@ -1072,6 +1073,16 @@ router.get("/lesson-types", async (req, res) => {
   }
 });
 
+/** What's wrong with these lesson-type fields, if anything (only the ones given are checked). */
+function lessonTypeProblem({ name, price, description, active, sortOrder }) {
+  if (name !== undefined && (typeof name !== "string" || !name.trim() || name.length > 60)) return "Name must be 1–60 characters";
+  if (price !== undefined && !(typeof price === "number" && Number.isFinite(price) && price >= 0 && price <= 1000)) return "Price must be a number from 0 to 1000";
+  if (description !== undefined && (typeof description !== "string" || description.length > 500)) return "Description can be up to 500 characters";
+  if (active !== undefined && typeof active !== "boolean") return "active must be true or false";
+  if (sortOrder !== undefined && !Number.isInteger(sortOrder)) return "sortOrder must be a whole number";
+  return null;
+}
+
 router.post("/lesson-types", async (req, res) => {
   try {
     const instructor = await resolveInstructor(req);
@@ -1079,6 +1090,8 @@ router.post("/lesson-types", async (req, res) => {
 
     const { name, price, description } = req.body;
     if (!name || price == null) return res.status(400).json({ success: false, error: "name and price are required" });
+    const bad = lessonTypeProblem({ name, price, description });
+    if (bad) return res.status(400).json({ success: false, error: bad });
 
     const maxSort = await LessonType.findOne({ instructorId: instructor.phoneNumberId })
       .sort({ sortOrder: -1 })
@@ -1109,6 +1122,8 @@ router.patch("/lesson-types/:id", async (req, res) => {
     for (const key of ["name", "price", "description", "active", "sortOrder"]) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
+    const bad = lessonTypeProblem(updates);
+    if (bad) return res.status(400).json({ success: false, error: bad });
 
     const lessonType = await LessonType.findOneAndUpdate(
       { _id: req.params.id, instructorId: instructor.phoneNumberId },

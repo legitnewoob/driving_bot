@@ -38,6 +38,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const app = express();
+app.disable('x-powered-by');
 
 
 // IMPORTANT: trust first proxy
@@ -76,14 +77,16 @@ const contactLimiter = rateLimit({
   message: { success: false, error: "Too many messages. Please try again later or email us." },
 });
 
-// Basic Auth 
-const logAuth = basicAuth({
-  users: {
-    admin: process.env.LOGS_ADMIN_PASSWORD
-  },
-  challenge: true, // shows browser login popup
-  realm: "Donna Logs"
-});
+// Basic Auth for the log viewer. Without a strong password set, the logs
+// (learners' messages and numbers) aren't served at all.
+const logsPassword = process.env.LOGS_ADMIN_PASSWORD || "";
+const logAuth = logsPassword.length >= 12
+  ? basicAuth({
+      users: { admin: logsPassword },
+      challenge: true, // shows browser login popup
+      realm: "Donna Logs"
+    })
+  : (req, res) => res.status(503).send("Log viewer is off: set LOGS_ADMIN_PASSWORD (12+ characters) to use it.");
 
 
 // CORS (manual middleware — supports multiple allowed origins)
@@ -121,11 +124,31 @@ app.use((req, res, next) => {
   next();
 });
 
+// Security headers on every response (this is a JSON API, so it's strict)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 // Stripe webhook needs raw body — must be mounted BEFORE express.json()
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
 // Middleware
-app.use(express.json());
+// Keep the raw body for the WhatsApp webhook: its signature is checked against the exact bytes
+app.use(express.json({
+  limit: '200kb',
+  verify: (req, res, buf) => {
+    if (req.originalUrl.startsWith('/webhook')) req.rawBody = Buffer.from(buf);
+  },
+}));
+// No MongoDB operators ($ne, $gt, …) or dotted keys from clients
+app.use(require('./src/middleware/sanitizeInput'));
 connectDB();
 
 // Routes
@@ -148,13 +171,14 @@ app.use('/api/admin', adminAuth, adminRoutes);
 // Mock Route (development only)
 if (process.env.NODE_ENV === 'development') {
   const mockWebhookRoutes = require('./src/routes/mockWebhook.js');
-  app.use('/mock-webhook', mockWebhookRoutes);
+  // Only from this machine, even if a server runs in development mode
+  app.use('/mock-webhook', require('./src/middleware/localOnly'), mockWebhookRoutes);
   console.log('🧪 Mock webhook route enabled at POST /mock-webhook');
 }
 
 // Local email outbox (EMAIL_OUTBOX=local): never in production
 if (process.env.NODE_ENV !== 'production' && process.env.EMAIL_OUTBOX === 'local') {
-  app.use('/dev/outbox', require('./src/routes/devOutbox'));
+  app.use('/dev/outbox', require('./src/middleware/localOnly'), require('./src/routes/devOutbox'));
   console.log('📬 Email outbox at /dev/outbox (emails are kept, not sent)');
 }
 
@@ -181,6 +205,16 @@ app.get('/', (req, res) => {
 
 
 
+
+// Unknown routes, and errors nobody handled: a plain JSON answer, never a stack trace
+app.use((req, res) => res.status(404).json({ success: false, error: 'Not found' }));
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({ success: false, error: 'Request too large' });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ success: false, error: 'Invalid JSON' });
+  console.error('[app] Unhandled error:', err?.message || err);
+  res.status(err?.status && err.status < 500 ? err.status : 500).json({ success: false, error: 'Something went wrong' });
+});
 
 // Session cleanup
 const { cleanupSessions , cleanUpContexts} = require('./src/utils/helpers');

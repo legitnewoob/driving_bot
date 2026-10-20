@@ -15,9 +15,7 @@
  */
 
 jest.mock("../../src/config/google", () => ({
-  oauth2Client: {
-    setCredentials: jest.fn(),
-  },
+  clientFor: jest.fn((refreshToken) => ({ refreshToken })),
   calendar: {
     events: {
       list: jest.fn(),
@@ -40,7 +38,7 @@ jest.mock("../../src/models/instructorSchema", () => ({
   findByIdAndUpdate: jest.fn().mockResolvedValue({}),
 }));
 
-const { oauth2Client, calendar } = require("../../src/config/google");
+const { clientFor, calendar } = require("../../src/config/google");
 const logger = require("../../src/utils/logger-advanced");
 const { notifyInvalidGrant } = require("../../src/utils/emailNotifier");
 const calendarService = require("../../src/services/calendarService");
@@ -231,9 +229,9 @@ describe("getEventsForDate", () => {
 
     const events = await calendarService.getEventsForDate("2025-07-15", MOCK_INSTRUCTOR);
 
-    expect(oauth2Client.setCredentials).toHaveBeenCalledWith({
-      refresh_token: "refresh-token",
-    });
+    // Its own client for this instructor's token, passed to Google with the call
+    expect(clientFor).toHaveBeenCalledWith("refresh-token");
+    expect(calendar.events.list.mock.calls.at(-1)[0].auth).toEqual({ refreshToken: "refresh-token" });
     expect(events.length).toBe(1);
     expect(events[0].summary).toBe("Lesson 1");
   });

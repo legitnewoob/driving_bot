@@ -18,6 +18,58 @@ const { needsPlan } = require("../services/permissions");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+// Google apps whose sign-in tokens we accept: the backend's own client, the
+// website and Portal sign-in client, and any extra in GOOGLE_SIGNIN_CLIENT_IDS
+// (comma-separated). A token issued to any other app is refused, so a token
+// from some other site someone signed into with Google can't be replayed here.
+const WEB_SIGNIN_CLIENT_ID = "985782225462-p15d627102gkh8fcuafed3mt77k9cufr.apps.googleusercontent.com";
+function signInAudiences() {
+  return [
+    ...new Set(
+      [process.env.GOOGLE_CLIENT_ID, WEB_SIGNIN_CLIENT_ID, ...(process.env.GOOGLE_SIGNIN_CLIENT_IDS || "").split(",")]
+        .map((id) => (id || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+/**
+ * Who a Google credential belongs to: an ID token (verified, audience checked)
+ * or an access token (checked with Google that it was issued to one of our
+ * apps). Null if it isn't valid for us. Only verified email addresses count.
+ */
+async function googleIdentity(credential) {
+  const audiences = signInAudiences();
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: audiences });
+    const p = ticket.getPayload();
+    if (!p?.email || p.email_verified === false) return null;
+    return { googleId: p.sub, email: p.email, name: p.name, picture: p.picture };
+  } catch {
+    // Not an ID token: treat it as an access token
+  }
+
+  const info = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(credential)}`, {
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  if (!info?.ok) return null;
+  const token = await info.json();
+  if (!audiences.includes(token.aud) && !audiences.includes(token.azp)) {
+    console.warn(`[authGoogle] Sign-in token issued to another app (${token.aud || token.azp}) was refused`);
+    return null;
+  }
+  if (!token.email || String(token.email_verified) !== "true") return null;
+
+  const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${credential}` },
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  const user = userInfoRes?.ok ? await userInfoRes.json() : {};
+  // The identity comes from tokeninfo (checked); userinfo only adds a display name
+  if (user.sub && user.sub !== token.sub) return null;
+  return { googleId: token.sub, email: token.email, name: user.name, picture: user.picture };
+}
+
 /**
  * POST /api/auth/google-signup
  * Public — receives Google ID token from frontend, upserts instructor, returns JWT + API key.
@@ -36,31 +88,12 @@ router.post("/google-signup", async (req, res) => {
     const validatedPlan = VALID_PLANS.includes(plan) ? plan : "pdi";
 
     // Support both ID tokens (from GoogleLogin button) and access tokens (from useGoogleLogin)
-    let googleId, email, name, picture;
-
-    try {
-      // Try as ID token first
-      const ticket = await googleClient.verifyIdToken({
-        idToken: credential,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-      const payload = ticket.getPayload();
-      ({ sub: googleId, email, name, picture } = payload);
-    } catch {
-      // Fall back to access token — fetch user info from Google
-      const userInfoRes = await fetch(
-        "https://www.googleapis.com/oauth2/v3/userinfo",
-        { headers: { Authorization: `Bearer ${credential}` } }
-      );
-      if (!userInfoRes.ok) {
-        return res.status(401).json({ success: false, error: "Invalid Google credential" });
-      }
-      const userInfo = await userInfoRes.json();
-      googleId = userInfo.sub;
-      email = userInfo.email;
-      name = userInfo.name;
-      picture = userInfo.picture;
+    const identity = await googleIdentity(credential);
+    if (!identity) {
+      return res.status(401).json({ success: false, error: "Invalid Google credential" });
     }
+    const { googleId, name, picture } = identity;
+    const { email } = identity;
 
     if (!email) {
       return res.status(400).json({ success: false, error: "Google account has no email" });
@@ -211,12 +244,13 @@ router.get("/calendar/connect", jwtAuth, async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
-    const { oauth2Client } = require("../config/google");
-    const url = oauth2Client.generateAuthUrl({
+    const { newClient } = require("../config/google");
+    const url = newClient().generateAuthUrl({
       access_type: "offline",
       scope: ["https://www.googleapis.com/auth/calendar"],
       prompt: "consent",
-      state: `email:${instructor.email}`,
+      // Signed and short-lived: the callback trusts it to say whose calendar this is
+      state: require("../utils/oauthState").createState(instructor._id),
     });
 
     res.json({ success: true, url });
@@ -360,12 +394,16 @@ router.put("/profile", jwtAuth, async (req, res) => {
 
     const { name, timezone } = req.body;
     if (name !== undefined) {
-      if (!name || !name.trim()) {
-        return res.status(400).json({ success: false, error: "Name cannot be empty" });
+      if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+        return res.status(400).json({ success: false, error: "Name must be 1–100 characters" });
       }
       instructor.name = name.trim();
     }
     if (timezone !== undefined) {
+      // Only real time zones: anything else would break their diary
+      if (typeof timezone !== "string" || !require("moment-timezone").tz.zone(timezone)) {
+        return res.status(400).json({ success: false, error: "Unknown time zone" });
+      }
       instructor.timezone = timezone;
     }
 
@@ -463,18 +501,16 @@ router.post("/exchange-code", async (req, res) => {
     }
 
     const AuthCode = require("../models/authCodeModel");
-    const authCode = await AuthCode.findOne({ code, used: false });
+    // Claim it in one step, so the same code can never be used twice
+    const authCode = await AuthCode.findOneAndUpdate(
+      { code: String(code), used: false, expiresAt: { $gt: new Date() } },
+      { used: true },
+      { new: true }
+    );
 
     if (!authCode) {
       return res.status(401).json({ success: false, error: "Invalid or expired auth code" });
     }
-
-    if (authCode.expiresAt < new Date()) {
-      return res.status(401).json({ success: false, error: "Auth code expired" });
-    }
-
-    authCode.used = true;
-    await authCode.save();
 
     const instructor = await Instructor.findById(authCode.instructorId);
     // Back from checkout: unlock straight away if Stripe says it finished (the

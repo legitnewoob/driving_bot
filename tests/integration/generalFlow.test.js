@@ -903,11 +903,12 @@ describe("Flow – Webhook Verification", () => {
         "hub.challenge": "challenge-123",
       },
     };
-    const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
+    const res = { status: jest.fn().mockReturnThis(), type: jest.fn().mockReturnThis(), send: jest.fn() };
 
     await webhookController.verifyWebhook(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.type).toHaveBeenCalledWith("text/plain");
     expect(res.send).toHaveBeenCalledWith("challenge-123");
   });
 

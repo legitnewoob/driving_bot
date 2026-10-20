@@ -13,14 +13,13 @@ function verifyToken(token, secret) {
   const [headerB64, payloadB64, signature] = parts;
 
   const header = base64UrlDecode(headerB64);
-  if (!header.alg || !header.alg.startsWith("HS")) {
+  // We only ever sign HS256; never let a token choose a different algorithm
+  if (header.alg !== "HS256") {
     throw new Error("Unsupported JWT algorithm");
   }
 
-  const algorithm = `sha${header.alg.replace("HS", "")}`;
-
   const expectedSignature = crypto
-    .createHmac(algorithm, secret)
+    .createHmac("sha256", secret)
     .update(`${headerB64}.${payloadB64}`)
     .digest("base64url");
 
@@ -36,7 +35,8 @@ function verifyToken(token, secret) {
 
   const payload = base64UrlDecode(payloadB64);
 
-  if (payload.exp && Date.now() >= payload.exp * 1000) {
+  // Every token we issue expires; one without an expiry isn't ours
+  if (!payload.exp || Date.now() >= payload.exp * 1000) {
     throw new Error("Token expired");
   }
 
@@ -60,8 +60,8 @@ function jwtAuth(req, res, next) {
 
   try {
     req.user = verifyToken(token, secret);
-  } catch (err) {
-    return res.status(401).json({ success: false, error: err.message });
+  } catch {
+    return res.status(401).json({ success: false, error: "Invalid or expired sign-in. Please sign in again." });
   }
 
   next();

@@ -280,11 +280,6 @@ async function signupAllowed({ email, inviteToken }) {
   const byLink = await validInvite(inviteToken);
   if (byLink) return { allowed: true, entry: byLink };
 
-  // Already let in once (e.g. their account was deleted and they're starting again)
-  if (onList?.status === "joined") return { allowed: true, entry: null };
-  const { previousAccounts } = require("./accountDeletion");
-  if ((await previousAccounts({ email: lower })).length) return { allowed: true, entry: onList };
-
   if (onList?.status === "invited" && onList.invite?.expiresAt && new Date(onList.invite.expiresAt) > new Date()) {
     return { allowed: true, entry: onList };
   }
@@ -320,6 +315,21 @@ async function onSignup(instructor, { entry, ref } = {}) {
     }
   } catch (err) {
     logger.warn(`Waitlist sign-up bookkeeping failed for ${instructor.email}: ${err.message}`);
+  }
+}
+
+/**
+ * Their account was deleted: their waitlist place (if they had one) goes back to
+ * waiting, so while sign-up is closed they're treated like anyone else on the list.
+ */
+async function onAccountDeleted(instructor) {
+  try {
+    await LaunchSignup.updateOne(
+      { instructorId: instructor._id },
+      { status: "waiting", instructorId: null, "invite.tokenHash": null, "invite.usedAt": null, "invite.expiresAt": null }
+    );
+  } catch (err) {
+    logger.warn(`Waitlist reset after deleting ${instructor._id} failed: ${err.message}`);
   }
 }
 
@@ -710,6 +720,7 @@ module.exports = {
   validInvite,
   signupAllowed,
   onSignup,
+  onAccountDeleted,
   referralFor,
   rewardReferral,
   checkoutPerk,

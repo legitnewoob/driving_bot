@@ -97,6 +97,7 @@ async function overview() {
   const byPlan = Object.fromEntries(byPlanRaw.map((r) => [r._id || "pdi", r.n]));
   const numbers = Object.fromEntries(numbersRaw.map((r) => [r._id, r.n]));
   const membersInSchools = await Instructor.countDocuments({ ...notOwners(), active: true, schoolRole: { $in: SCHOOL_SEATS } });
+  const waitlist = await require("./launchService").stats().catch(() => null);
 
   return {
     instructors: { total, byPlan, suspended, returning, deletedLast30: deleted30 },
@@ -112,7 +113,9 @@ async function overview() {
     },
     signups,
     signupsLast30: signups.reduce((s, d) => s + d.count, 0),
+    waitlist: waitlist && { total: waitlist.total, waiting: waitlist.waiting, invited: waitlist.invited, joined: waitlist.joined },
     funnel: [
+      ...(waitlist?.total ? [{ key: "waitlist", label: "Joined the waitlist", count: waitlist.total }] : []),
       { key: "signedUp", label: "Signed up", count: total },
       { key: "number", label: "Got a WhatsApp number", count: withNumber },
       { key: "calendar", label: "Connected calendar", count: withCalendar },

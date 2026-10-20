@@ -37,9 +37,46 @@ const hash = (token) => crypto.createHash("sha256").update(String(token)).digest
 const clean = (v, max) => String(v ?? "").trim().slice(0, max);
 const isLive = (date) => !!date && new Date(`${date}T23:59:59Z`) > new Date();
 
-/** Their place in the queue: the order they joined, moved up by referrals. */
-function placeOf(entry) {
-  return Math.max(1, (entry.position || 1) - PLACES_PER_REFERRAL * (entry.referrals || 0));
+/**
+ * How far along someone is: the order they joined, moved up 10 for each
+ * referral. Lower goes first. Only used to order people; the place we show is
+ * their rank among people still waiting (see rankOf).
+ */
+function scoreOf(entry) {
+  return (entry.position || 1) - PLACES_PER_REFERRAL * (entry.referrals || 0);
+}
+
+/** Queue order: priority first, then score, then whoever joined first. */
+function queueOrder(a, b) {
+  if (!!b.priority !== !!a.priority) return b.priority ? 1 : -1;
+  return scoreOf(a) - scoreOf(b) || (a.position || 0) - (b.position || 0);
+}
+
+const SCORE_EXPR = { $subtract: ["$position", { $multiply: [PLACES_PER_REFERRAL, { $ifNull: ["$referrals", 0] }] }] };
+
+/**
+ * Their place in the queue right now: 1 + everyone still waiting ahead of them.
+ * People who are invited, signed up or removed don't count, so places close up
+ * as the queue moves (and the first person on an empty list is #1).
+ * Null for anyone who isn't waiting.
+ */
+async function rankOf(entry) {
+  if (!entry || entry.status !== "waiting") return null;
+  const mine = scoreOf(entry);
+  const better = {
+    $expr: {
+      $or: [
+        { $lt: [SCORE_EXPR, mine] },
+        { $and: [{ $eq: [SCORE_EXPR, mine] }, { $lt: ["$position", entry.position || 0] }] },
+      ],
+    },
+  };
+  const ahead = await LaunchSignup.countDocuments({
+    status: "waiting",
+    _id: { $ne: entry._id },
+    $or: entry.priority ? [{ priority: true, ...better }] : [{ priority: true }, { priority: { $ne: true }, ...better }],
+  });
+  return 1 + (ahead || 0);
 }
 
 /** A short, friendly link code: "raj7k2". */
@@ -62,11 +99,11 @@ async function uniqueReferralCode(name) {
 }
 
 /** What the website shows about this person (never their tokens, except to themselves). */
-function summary(entry, { withToken = false } = {}) {
+function summary(entry, { withToken = false, place = null } = {}) {
   return {
     name: entry.name,
     email: entry.email,
-    place: placeOf(entry),
+    place,
     position: entry.position,
     referralCode: entry.referralCode,
     referrals: entry.referrals || 0,
@@ -116,7 +153,7 @@ async function referrerFor(code) {
 
 /** A friend joined with this person's link: move them up, and tell them (once a day at most). */
 async function creditReferral(referrer, friend) {
-  const before = placeOf(referrer);
+  const before = await rankOf(referrer);
   const updated = await LaunchSignup.findOneAndUpdate(
     { _id: referrer._id },
     { $inc: { referrals: 1 } },
@@ -130,7 +167,7 @@ async function creditReferral(referrer, friend) {
   const lastEmail = updated.emails?.movedUpAt;
   if (updated.status === "waiting" && !updated.unsubscribedAt && (!lastEmail || Date.now() - new Date(lastEmail) > DAY)) {
     const sent = await emails
-      .sendWaitlistMovedUp(updated, { from: before, to: placeOf(updated), friendName: friend.name, referrals: updated.referrals })
+      .sendWaitlistMovedUp(updated, { from: before, to: await rankOf(updated), friendName: friend.name, referrals: updated.referrals })
       .catch(() => false);
     if (sent) await LaunchSignup.updateOne({ _id: updated._id }, { "emails.movedUpAt": new Date() });
   }
@@ -154,9 +191,9 @@ async function join(input = {}) {
     const last = existing.emails?.confirmationSentAt;
     if (existing.status === "waiting" && (!last || Date.now() - new Date(last) > 60 * 60 * 1000)) {
       await LaunchSignup.updateOne({ _id: existing._id }, { "emails.confirmationSentAt": new Date() });
-      emails.sendWaitlistConfirmation(existing, { place: placeOf(existing), launchDate: (await publicLaunch().catch(() => ({}))).date }).catch(() => {});
+      emails.sendWaitlistConfirmation(existing, { place: await rankOf(existing), launchDate: (await publicLaunch().catch(() => ({}))).date }).catch(() => {});
     }
-    return { created: false, entry: { name: existing.name, place: placeOf(existing), status: existing.status } };
+    return { created: false, entry: { name: existing.name, place: await rankOf(existing), status: existing.status } };
   }
   if (existing) throw launchError("We couldn't add this email. Please contact us.", 400);
 
@@ -190,7 +227,7 @@ async function join(input = {}) {
     // Two joins with the same email at once: the other one won
     if (err.code === 11000) {
       const winner = await LaunchSignup.findOne({ email });
-      if (winner) return { created: false, entry: { name: winner.name, place: placeOf(winner), status: winner.status } };
+      if (winner) return { created: false, entry: { name: winner.name, place: await rankOf(winner), status: winner.status } };
     }
     throw err;
   }
@@ -198,10 +235,11 @@ async function join(input = {}) {
   if (referredBy && refEntry) await creditReferral(refEntry, entry).catch((e) => logger.warn(`Referral credit failed: ${e.message}`));
 
   const launch = await publicLaunch().catch(() => ({}));
-  const sent = await emails.sendWaitlistConfirmation(entry, { place: placeOf(entry), launchDate: launch.date }).catch(() => false);
+  const place = await rankOf(entry);
+  const sent = await emails.sendWaitlistConfirmation(entry, { place, launchDate: launch.date }).catch(() => false);
   if (sent) await LaunchSignup.updateOne({ _id: entry._id }, { "emails.confirmationSentAt": new Date() });
 
-  return { created: true, entry: summary(entry, { withToken: true }) };
+  return { created: true, entry: summary(entry, { withToken: true, place }) };
 }
 
 async function byToken(token) {
@@ -218,7 +256,7 @@ async function status(token) {
     LaunchSignup.find({ referredBy: entry.referralCode, status: { $ne: "removed" } }).sort({ createdAt: -1 }).limit(20).lean(),
   ]);
   return {
-    ...summary(entry, { withToken: true }),
+    ...summary(entry, { withToken: true, place: await rankOf(entry) }),
     friends: friends.map((f) => ({ name: String(f.name).split(" ")[0], joinedAt: f.createdAt })),
     launch,
   };
@@ -235,7 +273,7 @@ async function updateProfile(token, input = {}) {
   if ("currentTool" in input) entry.currentTool = [...new Set((Array.isArray(input.currentTool) ? input.currentTool : []).filter((t) => TOOLS.includes(t)))];
   if ("marketingConsent" in input) entry.marketingConsent = !!input.marketingConsent;
   await entry.save();
-  return summary(entry, { withToken: true });
+  return summary(entry, { withToken: true, place: await rankOf(entry) });
 }
 
 async function unsubscribe(token) {
@@ -286,7 +324,7 @@ async function signupAllowed({ email, inviteToken }) {
   const schoolInvite = await SchoolInvite.findOne({ email: lower, status: "pending", expiresAt: { $gt: new Date() } }).lean();
   if (schoolInvite) return { allowed: true, entry: onList };
 
-  return { allowed: false, onList: !!onList, place: onList ? placeOf(onList) : null, status: onList?.status || null };
+  return { allowed: false, onList: !!onList, place: onList ? await rankOf(onList) : null, status: onList?.status || null };
 }
 
 /**
@@ -460,7 +498,7 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function inviteOrder(a, b) {
   if (!!b.priority !== !!a.priority) return b.priority ? 1 : -1;
   if (!!b.type !== !!a.type) return b.type ? 1 : -1;
-  return placeOf(a) - placeOf(b);
+  return queueOrder(a, b);
 }
 
 async function adminList(query = {}) {
@@ -476,13 +514,18 @@ async function adminList(query = {}) {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(query.limit, 10) || 50));
 
-  const [rows, totals] = await Promise.all([LaunchSignup.find(filter).lean(), stats()]);
+  const [rows, totals, waiting] = await Promise.all([
+    LaunchSignup.find(filter).lean(),
+    stats(),
+    LaunchSignup.find({ status: "waiting" }, { _id: 1, position: 1, referrals: 1, priority: 1 }).lean(),
+  ]);
   rows.sort(inviteOrder);
+  const ranks = new Map((waiting || []).sort(queueOrder).map((e, i) => [String(e._id), i + 1]));
   const now = new Date();
   return {
     data: rows.slice((page - 1) * limit, page * limit).map((e) => ({
       id: String(e._id),
-      ...summary(e),
+      ...summary(e, { place: ranks.get(String(e._id)) ?? null }),
       source: e.source || {},
       invite: e.invite?.sentAt
         ? { sentAt: e.invite.sentAt, expiresAt: e.invite.expiresAt, expired: e.invite.expiresAt && new Date(e.invite.expiresAt) < now, remindedAt: e.invite.remindedAt, usedAt: e.invite.usedAt, promoCode: e.invite.promoCode }
@@ -593,10 +636,11 @@ const csvCell = (v) => {
 
 async function csv() {
   const rows = await LaunchSignup.find({}).sort({ position: 1 }).lean();
+  const ranks = new Map(rows.filter((e) => e.status === "waiting").sort(queueOrder).map((e, i) => [String(e._id), i + 1]));
   const header = ["position", "place", "name", "email", "type", "school_size", "area", "current_tool", "marketing_consent", "status", "referrals", "priority", "referral_code", "referred_by", "utm_source", "utm_medium", "utm_campaign", "referrer", "joined_at", "invited_at", "unsubscribed"];
   const lines = rows.map((e) =>
     [
-      e.position, placeOf(e), e.name, e.email, e.type, e.schoolSize, e.area, (e.currentTool || []).join(" "), e.marketingConsent ? "yes" : "no",
+      e.position, ranks.get(String(e._id)) ?? "", e.name, e.email, e.type, e.schoolSize, e.area, (e.currentTool || []).join(" "), e.marketingConsent ? "yes" : "no",
       e.status, e.referrals || 0, e.priority ? "yes" : "no", e.referralCode, e.referredBy, e.source?.utm_source, e.source?.utm_medium,
       e.source?.utm_campaign, e.source?.referrer, e.createdAt && new Date(e.createdAt).toISOString(), e.invite?.sentAt && new Date(e.invite.sentAt).toISOString(), e.unsubscribedAt ? "yes" : "no",
     ].map(csvCell).join(",")
@@ -710,7 +754,8 @@ async function sendDigest() {
 module.exports = {
   PLACES_PER_REFERRAL,
   REFERRALS_FOR_PRIORITY,
-  placeOf,
+  scoreOf,
+  rankOf,
   publicLaunch,
   join,
   status,

@@ -104,6 +104,7 @@ describe("joining", () => {
   });
 
   it("puts them on the list with the next position, a link code, and emails their place", async () => {
+    LaunchSignup.countDocuments.mockResolvedValue(141); // 141 people waiting ahead
     const res = await post("/api/waitlist", { name: " Raj Agrawal ", email: "Raj@X.com", source: { utm_source: "ig" } });
     expect(res.status).toBe(201);
     const { data } = await res.json();
@@ -129,6 +130,7 @@ describe("joining", () => {
   });
 
   it("joining twice keeps their place and doesn't hand out their private link", async () => {
+    LaunchSignup.countDocuments.mockResolvedValue(39);
     LaunchSignup.findOne.mockReturnValue(q(doc({ _id: "e1", name: "Raj", email: "raj@x.com", position: 50, referrals: 1, status: "waiting", accessToken: "secret", emails: {} })));
     const res = await post("/api/waitlist", { name: "Raj", email: "raj@x.com" });
     expect(res.status).toBe(200);
@@ -154,6 +156,7 @@ describe("joining", () => {
   });
 
   it("two joins with the same email at once: the second gets the first's place", async () => {
+    LaunchSignup.countDocuments.mockResolvedValue(141);
     LaunchSignup.findOne.mockReturnValueOnce(q(null)).mockReturnValue(q({ name: "Raj", position: 142, referrals: 0, status: "waiting" }));
     LaunchSignup.create.mockRejectedValue(Object.assign(new Error("dup"), { code: 11000 }));
     const res = await post("/api/waitlist", { name: "Raj", email: "raj@x.com" });
@@ -172,6 +175,8 @@ describe("referrals on the waitlist", () => {
   it("a friend joining with their link moves them up 10 places and tells them", async () => {
     LaunchSignup.findOne.mockImplementation((f) => q(f.referralCode === "ella1ab" ? referrer() : null));
     LaunchSignup.findOneAndUpdate.mockResolvedValue(referrer({ referrals: 1 }));
+    // 99 waiting ahead of Ella before, 89 after
+    LaunchSignup.countDocuments.mockResolvedValueOnce(99).mockResolvedValueOnce(89);
     await post("/api/waitlist", { name: "Sam", email: "sam@x.com", ref: "ELLA1AB" });
     expect(LaunchSignup.create.mock.calls[0][0].referredBy).toBe("ella1ab");
     expect(LaunchSignup.findOneAndUpdate).toHaveBeenCalledWith({ _id: "r1" }, { $inc: { referrals: 1 } }, { new: true });
@@ -199,9 +204,23 @@ describe("referrals on the waitlist", () => {
     expect(LaunchSignup.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
-  it("place never goes below 1", () => {
-    expect(launch.placeOf({ position: 5, referrals: 3 })).toBe(1);
-    expect(launch.placeOf({ position: 142, referrals: 3 })).toBe(112);
+  it("the first person on an empty list is #1, however many joined and left before", async () => {
+    Counter.findOneAndUpdate.mockResolvedValue({ seq: 2 });
+    LaunchSignup.create.mockImplementation(async (d) => doc({ _id: "e3", status: "waiting", referrals: 0, ...d }));
+    LaunchSignup.countDocuments.mockResolvedValue(0);
+    const { data } = await (await post("/api/waitlist", { name: "Ann", email: "ann@x.com" })).json();
+    expect(data.entry).toMatchObject({ position: 2, place: 1 });
+  });
+
+  it("place counts only people still waiting ahead of them", async () => {
+    LaunchSignup.countDocuments.mockResolvedValue(4);
+    expect(await launch.rankOf({ _id: "e1", status: "waiting", position: 20, referrals: 1 })).toBe(5);
+    const query = LaunchSignup.countDocuments.mock.calls[0][0];
+    expect(query).toMatchObject({ status: "waiting", _id: { $ne: "e1" } });
+    // Not priority: every priority person is ahead, plus anyone further along
+    expect(query.$or[0]).toEqual({ priority: true });
+    // Invited, signed-up or removed people have no place
+    expect(await launch.rankOf({ status: "invited" })).toBeNull();
   });
 });
 
@@ -210,6 +229,7 @@ describe("their status page and answers", () => {
     LaunchSignup.findOne.mockReturnValue(q(doc({ name: "Raj", email: "raj@x.com", position: 142, referrals: 1, referralCode: "raj1", status: "waiting", accessToken: "t1" })));
     LaunchSignup.find.mockReturnValue(q([{ name: "Sam Smith", createdAt: new Date() }]));
     mockSettings["launch.date"] = new Date(Date.now() + 5 * day).toISOString().slice(0, 10);
+    LaunchSignup.countDocuments.mockResolvedValue(131);
     const res = await req("GET", "/api/waitlist/me?t=t1");
     const { data } = await res.json();
     expect(data).toMatchObject({ place: 132, referrals: 1, referralsToPriority: 2, friends: [{ name: "Sam" }] });
@@ -280,6 +300,7 @@ describe("the sign-up gate", () => {
 
   it("tells someone already on the list their place", async () => {
     LaunchSignup.findOne.mockReturnValue(q({ email: "new@x.com", position: 50, referrals: 0, status: "waiting" }));
+    LaunchSignup.countDocuments.mockResolvedValue(49);
     const res = await signUp();
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: "WAITLIST", onList: true, place: 50 });
@@ -314,6 +335,7 @@ describe("the sign-up gate", () => {
 
   it("a deleted account doesn't get past the waitlist: they're back in the queue", async () => {
     LaunchSignup.findOne.mockImplementation((f) => q(f.email ? { email: "new@x.com", status: "waiting", position: 40, referrals: 0 } : null));
+    LaunchSignup.countDocuments.mockResolvedValue(39);
     const res = await signUp();
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: "WAITLIST", onList: true, place: 40 });
@@ -373,6 +395,17 @@ describe("admin", () => {
     expect(b.invite.tokenHash).toBe(launch.hash(joinUrl.split("=")[1]));
     expect(promo.label).toBe("20% off for 3 months");
     expect(audit).toHaveBeenCalledWith("admin-key", "waitlist.invite", "2 people", expect.anything());
+  });
+
+  it("the list shows live places: gaps close, and only waiting people have one", async () => {
+    const rows = [
+      { _id: "a", name: "A", email: "a@x.com", position: 5, referrals: 0, status: "waiting", createdAt: new Date() },
+      { _id: "b", name: "B", email: "b@x.com", position: 9, referrals: 0, status: "waiting", createdAt: new Date() },
+      { _id: "c", name: "C", email: "c@x.com", position: 2, referrals: 0, status: "invited", createdAt: new Date() },
+    ];
+    LaunchSignup.find.mockImplementation((f) => q(f.status === "waiting" ? rows.filter((r) => r.status === "waiting") : rows));
+    const { data } = await (await req("GET", "/api/admin/waitlist?status=all", null, admin)).json();
+    expect(Object.fromEntries(data.map((r) => [r.email, r.place]))).toEqual({ "a@x.com": 1, "b@x.com": 2, "c@x.com": null });
   });
 
   it("support can see the list and invite, but not change launch settings", async () => {

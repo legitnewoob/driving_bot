@@ -9,8 +9,10 @@ const STAFF_PERMISSIONS = {
   admin: [
     "admin.view", "admin.trials", "admin.numbers",
     "admin.customers", "admin.pricing", "admin.sales", "admin.roles",
+    "admin.waitlist", "admin.launch",
   ],
-  support: ["admin.view", "admin.trials", "admin.numbers"],
+  // admin.waitlist: see the launch waitlist and send invites; admin.launch: launch mode, date and perks
+  support: ["admin.view", "admin.trials", "admin.numbers", "admin.waitlist"],
 };
 
 // schoolRole "member" is an instructor

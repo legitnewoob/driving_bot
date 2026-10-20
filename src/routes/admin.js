@@ -5,6 +5,7 @@ const PriceChange = require("../models/priceChangeModel");
 const phoneNumberService = require("../services/phoneNumberService");
 const adminService = require("../services/adminService");
 const pricing = require("../services/pricingService");
+const launch = require("../services/launchService");
 const { requirePermission } = require("../middleware/adminAuth");
 const { audit } = require("../services/auditLog");
 const logger = require("../utils/logger-advanced");
@@ -122,6 +123,37 @@ router.post("/promo-codes", requirePermission("admin.sales"), wrap("create the c
 
 router.delete("/promo-codes/:id", requirePermission("admin.sales"), wrap("deactivate the code", async (req, res) => {
   res.json({ success: true, data: await pricing.deactivatePromoCode(req.params.id, actor(req)) });
+}));
+
+// ── Launch waitlist ─────────────────────────────────────────────────────
+router.get("/waitlist", requirePermission("admin.waitlist"), wrap("load the waitlist", async (req, res) => {
+  res.json({ success: true, ...(await launch.adminList(req.query)) });
+}));
+
+router.get("/waitlist.csv", requirePermission("admin.waitlist"), wrap("export the waitlist", async (req, res) => {
+  res.set("Content-Type", "text/csv; charset=utf-8");
+  res.set("Content-Disposition", `attachment; filename="waitlist-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(await launch.csv());
+}));
+
+router.post("/waitlist/invite", requirePermission("admin.waitlist"), wrap("send the invites", async (req, res) => {
+  res.json({ success: true, data: await launch.invite(req.body || {}, actor(req)) });
+}));
+
+router.post("/waitlist/:id/remove", requirePermission("admin.waitlist"), wrap("remove them", async (req, res) => {
+  res.json({ success: true, data: await launch.remove(req.params.id, actor(req)) });
+}));
+
+router.get("/launch", requirePermission("admin.waitlist"), wrap("load the launch settings", async (req, res) => {
+  res.json({ success: true, data: await launch.launchSettings() });
+}));
+
+router.put("/launch", requirePermission("admin.launch"), wrap("save the launch settings", async (req, res) => {
+  res.json({ success: true, data: await launch.updateLaunchSettings(req.body || {}, actor(req)) });
+}));
+
+router.post("/launch/announce", requirePermission("admin.launch"), wrap("send the announcement", async (req, res) => {
+  res.json({ success: true, data: await launch.announceLaunch(actor(req)) });
 }));
 
 // ── Audit log ───────────────────────────────────────────────────────────

@@ -47,3 +47,6 @@ logging/loki/wal/**
 logging/loki/chunks/**
 logs/*
 logs
+
+# Local email outbox (EMAIL_OUTBOX=local)
+.outbox/

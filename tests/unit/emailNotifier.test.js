@@ -279,3 +279,61 @@ describe("sendNotification via Resend", () => {
     expect(await sendNotification("Hi", "<p>x</p>", null, "someone@example.com")).toBe(false);
   });
 });
+
+describe("sender name and headers", () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.EMAIL_FROM;
+    global.fetch = realFetch;
+  });
+
+  it("can send as a person, with extra headers (e.g. List-Unsubscribe)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.EMAIL_FROM = "Donna Drive <hello@donnadrive.co.uk>";
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+    await sendNotification("Hi", "<p>x</p>", null, "a@x.com", null, { fromName: "Raj from Donna Drive", headers: { "List-Unsubscribe": "<https://u>" } });
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.from).toBe("Raj from Donna Drive <hello@donnadrive.co.uk>");
+    expect(body.headers).toEqual({ "List-Unsubscribe": "<https://u>" });
+  });
+});
+
+describe("local outbox (EMAIL_OUTBOX=local)", () => {
+  const fs = require("fs");
+  const realFetch = global.fetch;
+  let written;
+  beforeEach(() => {
+    process.env.EMAIL_OUTBOX = "local";
+    process.env.RESEND_API_KEY = "re_test";
+    global.fetch = jest.fn();
+    written = [];
+    jest.spyOn(fs, "mkdirSync").mockImplementation(() => {});
+    jest.spyOn(fs, "writeFileSync").mockImplementation((file, content) => written.push({ file, content }));
+  });
+  afterEach(() => {
+    delete process.env.EMAIL_OUTBOX;
+    delete process.env.RESEND_API_KEY;
+    process.env.NODE_ENV = "test";
+    global.fetch = realFetch;
+    jest.restoreAllMocks();
+  });
+
+  it("keeps the email as a file instead of sending it", async () => {
+    expect(await sendNotification("You're #142 on the list", "<p>hello</p>", null, "a@x.com")).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(written).toHaveLength(1);
+    expect(written[0].file).toMatch(/\.outbox\/.+-you-re-142-on-the-list\.html$/);
+    expect(written[0].content).toContain("<p>hello</p>");
+    expect(written[0].content).toContain('"to":"a@x.com"');
+  });
+
+  it("is ignored in production", async () => {
+    process.env.NODE_ENV = "production";
+    global.fetch.mockResolvedValue({ ok: true });
+    await sendNotification("Hi", "<p>x</p>", null, "a@x.com");
+    expect(written).toHaveLength(0);
+    expect(global.fetch).toHaveBeenCalled();
+  });
+});

@@ -120,6 +120,12 @@ const instructorSchema = new mongoose.Schema({
   // On a new account: earlier accounts by the same person that they deleted
   previousAccountIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
   canceledAt: { type: Date, default: null },
+  // Referrals ("give a month, get a month"): their own link code, the code of
+  // whoever referred them, and when that referral's free months were paid out
+  referralCode: { type: String, unique: true, sparse: true },
+  referredBy: { type: String, default: null },
+  referralRewardedAt: { type: Date, default: null },
+  referralFreeMonths: { type: Number, default: 0 },
   stripeCustomerId: { type: String, unique: true, sparse: true },
   subscriptionId: { type: String },
   subscriptionStatus: {

@@ -127,6 +127,12 @@ async function stripeWebhookHandler(req, res) {
           await syncMembersSubscription(instructor);
           console.log(`[stripeWebhook] Payment recovered for ${instructor.email}`);
         }
+        // A referred customer's first real payment: a free month each for them and their referrer
+        if (instructor?.referredBy && !instructor.referralRewardedAt) {
+          await require("../services/launchService").rewardReferral(stripe, instructor, invoice).catch((err) =>
+            console.error(`[stripeWebhook] Referral reward failed for ${instructor.email}:`, err.message)
+          );
+        }
         break;
       }
 

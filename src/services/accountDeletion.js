@@ -50,6 +50,7 @@ async function deleteAccount(instructor) {
   await Instructor.updateOne({ _id: instructor._id }, update);
   invalidateInstructorCache(instructor.phoneNumberId);
   await audit(instructor.email, "account.delete", instructor.email, { accountId: id, plan: instructor.plan });
+  await require("./launchService").onAccountDeleted(instructor);
   logger.info(`Account ${id} deleted`);
 }
 

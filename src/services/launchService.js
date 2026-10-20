@@ -280,6 +280,11 @@ async function signupAllowed({ email, inviteToken }) {
   const byLink = await validInvite(inviteToken);
   if (byLink) return { allowed: true, entry: byLink };
 
+  // Already let in once (e.g. their account was deleted and they're starting again)
+  if (onList?.status === "joined") return { allowed: true, entry: null };
+  const { previousAccounts } = require("./accountDeletion");
+  if ((await previousAccounts({ email: lower })).length) return { allowed: true, entry: onList };
+
   if (onList?.status === "invited" && onList.invite?.expiresAt && new Date(onList.invite.expiresAt) > new Date()) {
     return { allowed: true, entry: onList };
   }

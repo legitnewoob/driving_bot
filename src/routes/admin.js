@@ -68,6 +68,12 @@ router.post("/customers/:id/reactivate", requirePermission("admin.customers"), w
   res.json({ success: true, data: await adminService.setSuspended(req.params.id, false, actor(req), req.staff?.email) });
 }));
 
+// Permanent: the body must say { confirmation: "DELETE" }
+router.post("/customers/:id/delete", requirePermission("admin.customers"), wrap("delete the account", async (req, res) => {
+  if (req.body?.confirmation !== "DELETE") return res.status(400).json({ success: false, error: 'Type DELETE to confirm' });
+  res.json({ success: true, data: await adminService.deleteCustomer(req.params.id, actor(req), req.staff?.email) });
+}));
+
 // ── Staff roles ─────────────────────────────────────────────────────────
 router.get("/staff", requirePermission("admin.roles"), wrap("list staff", async (req, res) => {
   res.json({ success: true, data: await adminService.listStaff() });

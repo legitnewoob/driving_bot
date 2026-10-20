@@ -1,42 +1,44 @@
+const crypto = require("crypto");
+
 /**
  * Authentication middleware for protecting routes
  */
 
+const same = (a, b) => {
+  const x = crypto.createHash("sha256").update(String(a)).digest();
+  const y = crypto.createHash("sha256").update(String(b)).digest();
+  return crypto.timingSafeEqual(x, y);
+};
+
 /**
- * Basic HTTP authentication middleware
- * Prompts for username/password and validates credentials
+ * Basic HTTP authentication for the status page. Needs ADMIN_USERNAME and an
+ * ADMIN_PASSWORD of 12+ characters; there are no default credentials, so
+ * without them the page is off.
  */
 const basicAuth = (req, res, next) => {
-  // Get auth header value
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader) {
-    // No authorization header
-    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Access"');
-    return res.status(401).send('Authentication required');
+  const validUsername = process.env.ADMIN_USERNAME || "admin";
+  const validPassword = process.env.ADMIN_PASSWORD || "";
+  if (validPassword.length < 12) {
+    return res.status(503).send("Status page is off: set ADMIN_PASSWORD (12+ characters) to use it.");
   }
-  
-  // Check if it's Basic auth
-  if (!authHeader.startsWith('Basic ')) {
-    return res.status(401).send('Authentication method not supported');
+
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin Access"');
+    return res.status(401).send("Authentication required");
   }
-  
-  // Get credentials (decode from base64)
-  const base64Credentials = authHeader.split(' ')[1];
-  const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-  const [username, password] = credentials.split(':');
-  
-  // Check credentials (replace these with environment variables in production)
-  const validUsername = process.env.ADMIN_USERNAME || 'admin';
-  const validPassword = process.env.ADMIN_PASSWORD || 'admin';
-  
-  if (username === validUsername && password === validPassword) {
-    next(); // Credentials are valid, proceed to the route
-  } else {
-    // Credentials are invalid
-    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Access"');
-    return res.status(401).send('Invalid credentials');
-  }
+
+  const credentials = Buffer.from(authHeader.slice(6).trim(), "base64").toString("utf8");
+  const sep = credentials.indexOf(":");
+  const username = sep === -1 ? credentials : credentials.slice(0, sep);
+  const password = sep === -1 ? "" : credentials.slice(sep + 1);
+
+  // Check both, always, so timing doesn't reveal which was wrong
+  const ok = same(username, validUsername) & same(password, validPassword);
+  if (ok) return next();
+
+  res.setHeader("WWW-Authenticate", 'Basic realm="Admin Access"');
+  return res.status(401).send("Invalid credentials");
 };
 
 module.exports = { basicAuth };

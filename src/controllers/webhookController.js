@@ -616,9 +616,10 @@ class WebhookController {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
+    if (process.env.VERIFY_TOKEN && mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
       logger.info("Webhook verified");
-      return res.status(200).send(challenge);
+      // Plain text: never echo the query back as HTML
+      return res.status(200).type("text/plain").send(String(challenge ?? ""));
     }
     res.status(403).send("Forbidden");
   }

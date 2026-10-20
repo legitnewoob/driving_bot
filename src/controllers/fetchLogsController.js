@@ -7,8 +7,8 @@ class FetchLogsController {
     try {
       const { date } = req.query;
 
-      if (!date) {
-        return res.status(400).json({ message: "Date required" });
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+        return res.status(400).json({ message: "Date required (YYYY-MM-DD)" });
       }
       const command = new ListObjectsV2Command({
         Bucket: process.env.R2_BUCKET,
@@ -41,8 +41,9 @@ class FetchLogsController {
     try {
       const { date, phone } = req.query;
 
-      if (!date || !phone) {
-        return res.status(400).json({ message: "Date and phone required" });
+      // Only a date and a phone number: nothing that could reach other files in the bucket
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || "")) || !/^\+?\d{6,16}$/.test(String(phone || ""))) {
+        return res.status(400).json({ message: "Date (YYYY-MM-DD) and phone (digits) required" });
       }
 
       const key = `${process.env.R2_DIRECTORY}/logs/${date}/${phone}.log`;

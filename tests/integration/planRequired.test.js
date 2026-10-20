@@ -113,7 +113,7 @@ describe("choosing a plan", () => {
     });
 
     it("unlocks when Stripe says checkout finished (before the webhook lands)", async () => {
-      AuthCode.findOne.mockResolvedValue(code());
+      AuthCode.findOneAndUpdate.mockResolvedValue(code());
       const d = doc({ _id: "i1", plan: "adi" });
       Instructor.findById.mockResolvedValue(d);
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({ status: "complete", client_reference_id: "i1" });
@@ -123,7 +123,7 @@ describe("choosing a plan", () => {
     });
 
     it("stays locked if payment didn't finish", async () => {
-      AuthCode.findOne.mockResolvedValue(code());
+      AuthCode.findOneAndUpdate.mockResolvedValue(code());
       const d = doc({ _id: "i1", plan: "adi" });
       Instructor.findById.mockResolvedValue(d);
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({ status: "open", client_reference_id: "i1" });
@@ -132,13 +132,13 @@ describe("choosing a plan", () => {
     });
 
     it("stays locked for someone else's checkout, or without a session", async () => {
-      AuthCode.findOne.mockResolvedValue(code());
+      AuthCode.findOneAndUpdate.mockResolvedValue(code());
       const d = doc({ _id: "i1", plan: "adi" });
       Instructor.findById.mockResolvedValue(d);
       mockStripe.checkout.sessions.retrieve.mockResolvedValue({ status: "complete", client_reference_id: "someone-else" });
       await back({ code: "c", sessionId: "cs_1" });
       expect(d.planSelected).toBe(false);
-      AuthCode.findOne.mockResolvedValue(code());
+      AuthCode.findOneAndUpdate.mockResolvedValue(code());
       await back({ code: "c" });
       expect(d.planSelected).toBe(false);
     });

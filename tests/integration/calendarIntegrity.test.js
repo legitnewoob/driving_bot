@@ -28,7 +28,7 @@ jest.mock("../../src/utils/logger-advanced", () => ({
 
 // Mock Google Calendar API at the lowest level so we can inspect call args
 jest.mock("../../src/config/google", () => ({
-  oauth2Client: { setCredentials: jest.fn() },
+  clientFor: jest.fn((refreshToken) => ({ refreshToken })),
   calendar: {
     events: {
       list: jest.fn(),

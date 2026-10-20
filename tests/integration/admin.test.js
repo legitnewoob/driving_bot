@@ -8,6 +8,7 @@ jest.mock("../../src/models/instructorSchema");
 jest.mock("../../src/models/auditLogModel");
 jest.mock("../../src/services/auditLog", () => ({ audit: jest.fn() }));
 jest.mock("../../src/models/instructorModel", () => ({ invalidateInstructorCache: jest.fn() }));
+jest.mock("../../src/services/accountDeletion", () => ({ deleteAccount: jest.fn(), previousAccounts: jest.fn(async () => []) }));
 const mockStripe = { subscriptions: { retrieve: jest.fn(), update: jest.fn() } };
 jest.mock("stripe", () => jest.fn(() => mockStripe));
 
@@ -193,6 +194,37 @@ describe("customer actions", () => {
 
     Instructor.findById.mockReturnValue({ catch: () => doc({ email: "agrawalraj918@gmail.com" }) });
     await expect(adminService.setSuspended("raj", true, "ann", "ann@donnadrive.co.uk")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("deleting an account runs the same deletion as the instructor's own, and lifts a suspension", async () => {
+    const { deleteAccount } = require("../../src/services/accountDeletion");
+    const d = doc({ suspended: true });
+    Instructor.findById.mockReturnValue({ catch: () => d });
+    Instructor.updateOne.mockResolvedValue({});
+    const res = await adminService.deleteCustomer("ivy", "raj", "agrawalraj918@gmail.com");
+    expect(res).toEqual({ id: String(d._id), deleted: true });
+    expect(deleteAccount).toHaveBeenCalledWith(d);
+    expect(Instructor.updateOne).toHaveBeenCalledWith({ _id: d._id }, { suspended: false });
+    expect(audit).toHaveBeenCalledWith("raj", "customer.delete", d.email, expect.anything());
+  });
+
+  it("can't delete a super admin, yourself, an already deleted account, or a school owner who still has instructors", async () => {
+    const { deleteAccount } = require("../../src/services/accountDeletion");
+    Instructor.findById.mockReturnValue({ catch: () => doc({ email: "agrawalraj918@gmail.com" }) });
+    await expect(adminService.deleteCustomer("raj", "ann", "ann@donnadrive.co.uk")).rejects.toMatchObject({ status: 403 });
+    Instructor.findById.mockReturnValue({ catch: () => doc({ email: "ann@donnadrive.co.uk" }) });
+    await expect(adminService.deleteCustomer("ann", "ann", "ann@donnadrive.co.uk")).rejects.toMatchObject({ status: 400 });
+    Instructor.findById.mockReturnValue({ catch: () => doc({ deletedAt: new Date() }) });
+    await expect(adminService.deleteCustomer("ivy", "raj", "agrawalraj918@gmail.com")).rejects.toMatchObject({ status: 409 });
+    Instructor.findById.mockReturnValue({ catch: () => doc({ schoolRole: "owner", schoolId: "s1" }) });
+    Instructor.countDocuments.mockResolvedValue(2);
+    await expect(adminService.deleteCustomer("ivy", "raj", "agrawalraj918@gmail.com")).rejects.toThrow("2 instructors");
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("the delete endpoint needs admin.customers and a typed confirmation", async () => {
+    expect((await call("/customers/ivy/delete", { method: "POST", headers: as("sue@donnadrive.co.uk"), body: { confirmation: "DELETE" } })).status).toBe(403);
+    expect((await call("/customers/ivy/delete", { method: "POST", headers: as("ann@donnadrive.co.uk"), body: {} })).status).toBe(400);
   });
 
   it("staff roles: can't change a super admin or yourself; the person must have signed in once", async () => {

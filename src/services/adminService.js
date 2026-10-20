@@ -319,6 +319,29 @@ async function setSuspended(id, suspended, actor, actorEmail) {
   return row(i.toObject());
 }
 
+/**
+ * Delete a customer's account for them: the same as "Delete account" on their
+ * own dashboard. Billing is cancelled, their WhatsApp number goes back to the
+ * pool and their identity is removed, so signing in again with the same Google
+ * account starts a fresh account.
+ */
+async function deleteCustomer(id, actor, actorEmail) {
+  const i = await loadCustomer(id);
+  if (i.deletedAt) throw adminError("This account is already deleted", 409);
+  if (isSuperAdmin(i)) throw adminError("A super admin account can't be deleted", 403);
+  if (actorEmail && i.email === actorEmail) throw adminError("You can't delete your own account from here", 400);
+  if (i.schoolRole === "owner" && i.schoolId) {
+    const others = await Instructor.countDocuments({ schoolId: i.schoolId, schoolRole: { $in: SCHOOL_SEATS }, active: true });
+    if (others > 0) throw adminError(`Their school still has ${others} instructor${others === 1 ? "" : "s"}. Remove them from the school first.`, 409);
+  }
+  const email = i.email;
+  await require("./accountDeletion").deleteAccount(i);
+  // A suspended account that's deleted shouldn't stay blocked: the person can start again
+  await Instructor.updateOne({ _id: i._id }, { suspended: false });
+  await audit(actor, "customer.delete", email, { accountId: String(i._id) });
+  return { id: String(i._id), deleted: true };
+}
+
 async function listStaff() {
   const people = await Instructor.find({ $or: [{ staffRole: { $in: ["admin", "support"] } }, { email: { $in: superAdminEmails() } }] }).lean();
   const found = new Set(people.map((p) => p.email.toLowerCase()));
@@ -363,6 +386,7 @@ module.exports = {
   setComp,
   removeComp,
   setSuspended,
+  deleteCustomer,
   listStaff,
   setStaffRole,
   auditLog,

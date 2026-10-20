@@ -312,6 +312,14 @@ describe("the sign-up gate", () => {
     expect((await signUp()).status).toBe(200);
   });
 
+  it("someone let in before (e.g. their account was deleted) can sign up again", async () => {
+    LaunchSignup.findOne.mockImplementation((f) => q(f.email ? { email: "new@x.com", status: "joined" } : null));
+    expect((await signUp()).status).toBe(200);
+    LaunchSignup.findOne.mockReturnValue(q(null));
+    require("../../src/services/accountDeletion").previousAccounts.mockResolvedValueOnce(["old1"]);
+    expect((await signUp()).status).toBe(200);
+  });
+
   it("instructors invited by a driving school always get in", async () => {
     SchoolInvite.findOne.mockReturnValue(q({ email: "new@x.com", status: "pending" }));
     expect((await signUp()).status).toBe(200);

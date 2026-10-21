@@ -251,14 +251,14 @@ describe("customer actions", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-describe("super admins aren't customers", () => {
+describe("staff aren't customers", () => {
   const chain = (rows) => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: async () => rows }) }) }) });
 
-  it("they're left out of the customer list unless looking at staff", async () => {
+  it("super admins, admins and support are left out of the customer list unless looking at staff", async () => {
     Instructor.find.mockReturnValue(chain([]));
     Instructor.countDocuments.mockResolvedValue(0);
     await adminService.listCustomers({});
-    expect(Instructor.find.mock.calls[0][0].$and).toContainEqual({ email: { $nin: ["agrawalraj918@gmail.com"] } });
+    expect(Instructor.find.mock.calls[0][0].$and).toContainEqual({ email: { $nin: ["agrawalraj918@gmail.com"] }, staffRole: { $nin: ["admin", "support"] } });
 
     Instructor.find.mockClear();
     await adminService.listCustomers({ staff: "true" });

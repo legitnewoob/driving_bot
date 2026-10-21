@@ -12,7 +12,6 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
-const PAID_PLANS = ["adi", "driving-school"];
 
 /**
  * POST /api/stripe/create-checkout-session
@@ -23,8 +22,13 @@ router.post("/create-checkout-session", async (req, res) => {
     // embedded: true → Stripe's checkout shown in a modal on the dashboard
     const { plan, embedded } = req.body;
 
-    if (!plan || !PAID_PLANS.includes(plan)) {
-      return res.status(400).json({ success: false, error: "Invalid plan. Must be 'adi' or 'driving-school'" });
+    // Any plan with a price; a free (£0) plan is picked without checkout
+    const planConfig = typeof plan === "string" ? await pricing.getPlan(plan) : null;
+    if (!planConfig) {
+      return res.status(400).json({ success: false, error: "Unknown plan" });
+    }
+    if (!(planConfig.amount > 0)) {
+      return res.status(400).json({ success: false, error: "This plan is free, so there's nothing to pay", code: "FREE_PLAN" });
     }
 
     if (!req.user?.email) {
@@ -45,8 +49,7 @@ router.post("/create-checkout-session", async (req, res) => {
       return res.status(400).json({ success: false, error: "You have free access from Donna Drive, so there's nothing to pay." });
     }
 
-    const planConfig = await pricing.getPlan(plan);
-    if (!planConfig?.stripePriceId) {
+    if (!planConfig.stripePriceId) {
       return res.status(503).json({ success: false, error: "This plan isn't available to buy right now" });
     }
 
@@ -138,6 +141,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     // Update the plan on the instructor (will be confirmed by webhook)
     instructor.plan = plan;
+    instructor.pendingPlan = plan;
     await instructor.save();
 
     res.json({ success: true, url: session.url || null, clientSecret: session.client_secret || null });

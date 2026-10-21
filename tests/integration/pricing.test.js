@@ -195,6 +195,7 @@ describe("changing a price", () => {
   it.each([
     [{ amount: 50 }, "at least £1"],
     [{ amount: 12.5 }, "at least £1"],
+    [{ amount: -100 }, "at least £1"],
     [{ trialDays: 120 }, "0 to 90"],
     [{ name: " " }, "can't be empty"],
     [{ includedSeats: 4 }, "Only the Driving School plan has seats"],
@@ -202,9 +203,47 @@ describe("changing a price", () => {
     await expect(pricing.updatePlan("adi", changes, "raj")).rejects.toThrow(message);
   });
 
-  it("the free plan can't be priced", async () => {
+  it("a free plan can get a price and a trial: new sign-ups go through checkout, people already on it stay free", async () => {
     Plan.findOne.mockResolvedValue(pdi());
-    await expect(pricing.updatePlan("pdi", { amount: 500 }, "raj")).rejects.toThrow("free");
+    Instructor.updateMany.mockResolvedValue({ modifiedCount: 2 });
+    mockStripe.products.create.mockResolvedValue({ id: "prod_pdi" });
+    const { plan, priceChanges, grandfathered } = await pricing.updatePlan("pdi", { amount: 500, trialDays: 7 }, "raj");
+    expect(mockStripe.prices.create).toHaveBeenCalledWith(expect.objectContaining({ unit_amount: 500, product: "prod_pdi" }));
+    expect(plan).toMatchObject({ amount: 500, trialDays: 7, stripePriceId: "price_new" });
+    // Nobody pays for a free plan, so there's no price change to schedule or email
+    expect(priceChanges).toEqual([]);
+    expect(PriceChange.create).not.toHaveBeenCalled();
+    // The two people already on PDI keep it free, as a comp
+    expect(grandfathered).toBe(2);
+    expect(Instructor.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: "pdi", active: true }),
+      { $set: { comp: { plan: "pdi", until: null, note: expect.any(String) } } }
+    );
+  });
+
+  it("£0 makes a plan free, but not while anyone pays for it, and never the Driving School plan", async () => {
+    Plan.findOne.mockResolvedValue(adi());
+    Instructor.countDocuments.mockResolvedValue(0);
+    const { plan } = await pricing.updatePlan("adi", { amount: 0 }, "raj");
+    expect(plan).toMatchObject({ amount: 0, stripePriceId: null, pastPriceIds: ["price_adi_10"] });
+
+    Instructor.countDocuments.mockResolvedValue(3);
+    await expect(pricing.updatePlan("adi", { amount: 0 }, "raj")).rejects.toThrow("3 people pay");
+
+    Plan.findOne.mockResolvedValue(school());
+    await expect(pricing.updatePlan("driving-school", { amount: 0 }, "raj")).rejects.toThrow("can't be free");
+  });
+
+  it("knows which plans are free from their price", async () => {
+    plans([{ ...pdi(), amount: 500 }, adi({ amount: 0 }), school()]);
+    await pricing.getPlans();
+    expect(pricing.isFreePlan("pdi")).toBe(false);
+    expect(pricing.isFreePlan("adi")).toBe(true);
+    expect(pricing.isFreePlan("driving-school")).toBe(false);
+    plans();
+    pricing.clearCache();
+    await pricing.getPlans();
+    expect(pricing.isFreePlan("pdi")).toBe(true);
   });
 
   it("the hourly job applies rises whose notice has ended", async () => {

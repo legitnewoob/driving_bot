@@ -63,6 +63,18 @@ function defaultPlans() {
 
 let _plans = null;
 let _plansAt = 0;
+
+// A plan priced at £0 is free: no checkout, no subscription needed. Kept in
+// memory (refreshed with the plans) so code that can't wait, like
+// Instructor.hasActivePlan, can ask.
+const slugsPricedZero = (plans) => new Set(plans.filter((p) => !(p.amount > 0)).map((p) => p.slug));
+let _freeSlugs = slugsPricedZero(defaultPlans());
+
+/** Is this plan free (priced at £0)? Missing plan = the PDI plan, as stored by default. */
+function isFreePlan(slug) {
+  if (!_plans || Date.now() - _plansAt >= CACHE_MS) getPlans().catch(() => {});
+  return _freeSlugs.has(slug || "pdi");
+}
 let _sales = null;
 let _salesAt = 0;
 
@@ -98,6 +110,7 @@ async function getPlans() {
   }
   _plans = plans.length ? plans : defaultPlans();
   _plansAt = Date.now();
+  _freeSlugs = slugsPricedZero(_plans);
   return _plans;
 }
 
@@ -296,16 +309,27 @@ async function updatePlan(slug, changes = {}, actor = "system") {
     ? getStripe()
     : null;
 
-  if (changes.amount !== undefined && changes.amount !== plan.amount) {
+  if (changes.amount !== undefined && changes.amount !== plan.amount && Number(changes.amount) === 0) {
+    // £0 makes the plan free: nothing to sell in Stripe
+    if (slug === "driving-school") throw pricingError("The Driving School plan can't be free: seats are billed on it");
+    const paying = await Instructor.countDocuments({ plan: slug, subscriptionStatus: { $in: LIVE_STATUSES }, schoolRole: { $nin: ["member", "manager"] } });
+    if (paying) {
+      throw pricingError(`${paying} ${paying === 1 ? "person pays" : "people pay"} for this plan. Cancel ${paying === 1 ? "their subscription" : "their subscriptions"} in Stripe before making it free.`, 409);
+    }
+    const past = [...new Set([...(plan.pastPriceIds || []), plan.stripePriceId].filter(Boolean))];
+    Object.assign(set, { amount: 0, stripePriceId: null, pastPriceIds: past });
+  } else if (changes.amount !== undefined && changes.amount !== plan.amount) {
     const amount = Number(changes.amount);
-    if (slug === "pdi") throw pricingError("The PDI plan is free");
-    if (!validAmount(amount) || amount < 100) throw pricingError("Price must be at least £1");
+    if (!validAmount(amount) || amount < 100) throw pricingError("Price must be £0 (free) or at least £1");
     const productId = await productFor(stripe, plan.stripeProductId, plan.stripePriceId, `Donna Drive ${plan.name}`);
     const priceId = await newStripePrice(stripe, {
       productId, amount, currency: plan.currency, interval: plan.interval, nickname: `${plan.name} £${(amount / 100).toFixed(2)}/${plan.interval}`,
     });
     const past = [...new Set([...(plan.pastPriceIds || []), plan.stripePriceId].filter(Boolean))];
-    priceChanges.push(await schedule({ plan: slug, kind: "base", fromAmount: plan.amount, toAmount: amount, fromPriceIds: past, toPriceId: priceId, by: actor }));
+    // From free there are no subscribers to move, so nothing to schedule or email
+    if (plan.amount > 0) {
+      priceChanges.push(await schedule({ plan: slug, kind: "base", fromAmount: plan.amount, toAmount: amount, fromPriceIds: past, toPriceId: priceId, by: actor }));
+    }
     Object.assign(set, { amount, stripeProductId: productId, stripePriceId: priceId, pastPriceIds: past });
   }
 
@@ -324,14 +348,31 @@ async function updatePlan(slug, changes = {}, actor = "system") {
 
   const updated = await Plan.findOneAndUpdate({ slug }, { $set: set }, { new: true }).lean();
 
+  // A free plan just got a price: people already on it for free keep it free
+  // (as a comp, which an admin can remove to make them pay)
+  let grandfathered = 0;
+  if (!(plan.amount > 0) && set.amount > 0) {
+    const r = await Instructor.updateMany(
+      {
+        plan: slug,
+        active: true,
+        schoolRole: { $nin: ["member", "manager"] },
+        subscriptionStatus: { $nin: LIVE_STATUSES },
+        $or: [{ "comp.plan": null }, { "comp.plan": { $exists: false } }],
+      },
+      { $set: { comp: { plan: slug, until: null, note: "On this plan before it had a price" } } }
+    );
+    grandfathered = r.modifiedCount || 0;
+  }
+
   // Included seats changed: every school's limit follows (their extra seats stay)
   if (set.includedSeats !== undefined && set.includedSeats !== plan.includedSeats) {
     await School.updateMany({}, [{ $set: { seatLimit: { $add: [set.includedSeats, { $ifNull: ["$extraSeats", 0] }] } } }]);
   }
 
   clearCache();
-  await audit(actor, "plan.update", slug, { changes, priceChanges: priceChanges.map((c) => String(c._id)) });
-  return { plan: updated, priceChanges };
+  await audit(actor, "plan.update", slug, { changes, priceChanges: priceChanges.map((c) => String(c._id)), ...(grandfathered && { grandfathered }) });
+  return { plan: updated, priceChanges, grandfathered };
 }
 
 /**
@@ -616,6 +657,7 @@ module.exports = {
   deactivatePromoCode,
   listPromoCodes,
   checkoutDiscount,
+  isFreePlan,
   saleFor,
   discounted,
   noticeDays,

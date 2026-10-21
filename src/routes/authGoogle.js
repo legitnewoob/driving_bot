@@ -319,18 +319,20 @@ async function schoolInfo(instructor) {
 
 /**
  * POST /api/auth/choose-plan
- * JWT protected — picks the free plan. Paid plans are chosen by finishing Stripe checkout.
+ * JWT protected — picks a free plan (one priced at £0). Paid plans are chosen by finishing Stripe checkout.
  */
 router.post("/choose-plan", jwtAuth, async (req, res) => {
   try {
-    if (req.body?.plan !== "pdi") {
-      return res.status(400).json({ success: false, error: "Paid plans are chosen at checkout" });
+    // Only a free plan (priced £0) can be picked here; anything with a price goes through checkout
+    const plan = await require("../services/pricingService").getPlan(String(req.body?.plan || ""));
+    if (!plan || plan.amount > 0) {
+      return res.status(400).json({ success: false, error: "Paid plans are chosen at checkout", code: "PAID_PLAN" });
     }
     const instructor = await Instructor.findOne({ email: req.user?.email, active: true });
     if (!instructor) return res.status(404).json({ success: false, error: "Instructor not found" });
     // A paying or school account keeps its plan; this only completes a new sign-up
     if (instructor.planSelected === false) {
-      instructor.plan = "pdi";
+      instructor.plan = plan.slug;
       instructor.planSelected = true;
       await instructor.save();
     }
@@ -371,7 +373,7 @@ router.get("/me", jwtAuth, async (req, res) => {
         access: accessInfo(instructor),
         needsPlan: needsPlan(instructor),
         // Picked a paid plan but didn't finish paying: offer to resume it
-        pendingPlan: needsPlan(instructor) && ["adi", "driving-school"].includes(instructor.plan) ? instructor.plan : null,
+        pendingPlan: needsPlan(instructor) && instructor.pendingPlan ? instructor.pendingPlan : null,
         comp: instructor.comp?.plan ? { plan: instructor.comp.plan, until: instructor.comp.until } : null,
       },
     });

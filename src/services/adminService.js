@@ -30,7 +30,9 @@ const compActive = () => ({ "comp.plan": { $ne: null }, $or: [{ "comp.until": nu
 const billedSelf = { schoolRole: { $nin: SCHOOL_SEATS } };
 
 /** Super admins run Donna Drive; they aren't customers, so they're left out of the numbers. */
-const notOwners = () => ({ email: { $nin: superAdminEmails() } });
+// Staff (super admins, admins, support) run Donna Drive: they aren't customers,
+// so they're left out of the customer list and every customer number
+const notOwners = () => ({ email: { $nin: superAdminEmails() }, staffRole: { $nin: ["admin", "support"] } });
 
 function isoDay(d) {
   return new Date(d).toISOString().slice(0, 10);
@@ -180,7 +182,7 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
     and.push({ $or: [{ name: re }, { email: re }, { phone: re }, { "deletedIdentity.email": re }, { "deletedIdentity.name": re }] });
   }
   if (plan) q.plan = plan;
-  // Super admins only show up when looking at staff
+  // Staff only show up when looking at staff
   if (staff !== "true") and.push(notOwners());
   if (staff === "true") and.push({ $or: [{ staffRole: { $in: ["admin", "support"] } }, { email: { $in: superAdminEmails() } }] });
   switch (status) {

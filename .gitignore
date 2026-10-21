@@ -50,3 +50,6 @@ logs
 
 # Local email outbox (EMAIL_OUTBOX=local)
 .outbox/
+
+# Local backups made by scripts (contain customer data)
+backups/

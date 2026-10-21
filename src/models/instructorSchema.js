@@ -97,7 +97,7 @@ const instructorSchema = new mongoose.Schema({
   staffRole: { type: String, enum: ["admin", "support", null], default: null },
   // A plan given free by an admin; counts as an active subscription until `until` (null = no end)
   comp: {
-    plan: { type: String, enum: ["adi", "driving-school", null], default: null },
+    plan: { type: String, enum: ["pdi", "adi", "driving-school", null], default: null },
     until: { type: Date, default: null },
     note: { type: String, default: "" },
   },
@@ -120,6 +120,8 @@ const instructorSchema = new mongoose.Schema({
   // On a new account: earlier accounts by the same person that they deleted
   previousAccountIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
   canceledAt: { type: Date, default: null },
+  // The paid plan they started checkout for and haven't finished paying (offered again next sign-in)
+  pendingPlan: { type: String, default: null },
   // Referrals ("give a month, get a month"): their own link code, the code of
   // whoever referred them, and when that referral's free months were paid out
   referralCode: { type: String, unique: true, sparse: true },
@@ -135,9 +137,9 @@ const instructorSchema = new mongoose.Schema({
   },
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
-// Paid plan access: a live Stripe subscription, or a comp from an admin
+// Plan access: a free plan (priced £0), a live Stripe subscription, or a comp from an admin
 instructorSchema.methods.hasActivePlan = function () {
-  if (this.plan === "pdi") return true;
+  if (require("../services/pricingService").isFreePlan(this.plan)) return true;
   if (["active", "trialing"].includes(this.subscriptionStatus)) return true;
   return !!(this.comp?.plan && (!this.comp.until || this.comp.until > new Date()));
 };

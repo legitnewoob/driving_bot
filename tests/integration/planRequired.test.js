@@ -89,6 +89,20 @@ describe("choosing a plan", () => {
     expect(d.save).toHaveBeenCalled();
   });
 
+  it("PDI can't be picked for free once it has a price", async () => {
+    const pricing = require("../../src/services/pricingService");
+    const spy = jest.spyOn(pricing, "getPlan").mockResolvedValue({ slug: "pdi", amount: 500, trialDays: 7 });
+    const d = doc();
+    Instructor.findOne.mockResolvedValue(d);
+    const res = await fetch(`${base}/api/auth/choose-plan`, {
+      method: "POST", headers: { ...as("new@x.com"), "Content-Type": "application/json" }, body: JSON.stringify({ plan: "pdi" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("PAID_PLAN");
+    expect(d.planSelected).toBe(false);
+    spy.mockRestore();
+  });
+
   it("paid plans can't be picked without checkout", async () => {
     const res = await fetch(`${base}/api/auth/choose-plan`, {
       method: "POST", headers: { ...as("new@x.com"), "Content-Type": "application/json" }, body: JSON.stringify({ plan: "adi" }),

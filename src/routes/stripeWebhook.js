@@ -54,6 +54,7 @@ async function stripeWebhookHandler(req, res) {
             instructor.stripeCustomerId = session.customer;
             if (plan) instructor.plan = plan;
             instructor.planSelected = true;
+            instructor.pendingPlan = null;
             await instructor.save();
             await syncMembersSubscription(instructor);
             // Seats bought at checkout raise the school's seat limit straight away

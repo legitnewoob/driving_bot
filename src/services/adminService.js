@@ -138,7 +138,7 @@ function statusOf(i) {
   if (i.deletedAt || i.active === false) return "deleted";
   if (i.comp?.plan && (!i.comp.until || new Date(i.comp.until) > new Date())) return "comped";
   if (SCHOOL_SEATS.includes(i.schoolRole)) return "school";
-  if (i.plan === "pdi" || !i.subscriptionStatus) return "free";
+  if (pricing.isFreePlan(i.plan) || !i.subscriptionStatus) return "free";
   return i.subscriptionStatus;
 }
 
@@ -190,7 +190,11 @@ async function listCustomers({ search = "", plan, status, staff, page = 1, limit
     case "trialing": Object.assign(q, { subscriptionStatus: "trialing" }, billedSelf); break;
     case "past_due": Object.assign(q, { subscriptionStatus: "past_due" }); break;
     case "canceled": Object.assign(q, { subscriptionStatus: "canceled" }); break;
-    case "free": Object.assign(q, { plan: "pdi" }); break;
+    case "free": {
+      const plans = await pricing.getPlans();
+      q.plan = { $in: plans.filter((p) => !(p.amount > 0)).map((p) => p.slug) };
+      break;
+    }
     case "comped": and.push(compActive()); break;
     case "school": q.schoolRole = { $in: SCHOOL_SEATS }; break;
     case "suspended": q.suspended = true; break;
@@ -281,7 +285,7 @@ async function extendTrial(id, days, actor) {
 }
 
 async function setComp(id, { plan, until, note }, actor) {
-  if (!["adi", "driving-school"].includes(plan)) throw adminError("Plan must be adi or driving-school");
+  if (!["pdi", "adi", "driving-school"].includes(plan)) throw adminError("Plan must be pdi, adi or driving-school");
   const untilDate = until ? new Date(until) : null;
   if (untilDate && (isNaN(untilDate) || untilDate <= new Date())) throw adminError("The end date must be in the future");
   const i = await loadCustomer(id);
@@ -301,8 +305,12 @@ async function removeComp(id, actor) {
   if (!i.comp?.plan) throw adminError("They don't have a comp");
   const was = i.comp.plan;
   i.comp = { plan: null, until: null, note: "" };
-  // Without a live subscription they're back on the free plan
-  if (!["active", "trialing", "past_due"].includes(i.subscriptionStatus)) i.plan = "pdi";
+  // Without a live subscription they're back on PDI. If PDI has a price, they
+  // pick a plan again (the dashboard asks them to pay) instead of losing Donna quietly
+  if (!["active", "trialing", "past_due"].includes(i.subscriptionStatus)) {
+    i.plan = "pdi";
+    if (!pricing.isFreePlan("pdi")) i.planSelected = false;
+  }
   await i.save();
   invalidateInstructorCache(i.phoneNumberId);
   await audit(actor, "customer.uncomp", i.email, { plan: was });

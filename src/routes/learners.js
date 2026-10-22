@@ -5,6 +5,9 @@ const Booking = require("../models/bookingModel");
 const Payment = require("../models/paymentModel");
 const { getCoordinatesFromPostalCode } = require("../services/mapsService");
 const calendarService = require("../services/calendarService");
+const settings = require("../services/instructorSettings");
+const LessonType = require("../models/lessonTypeModel");
+const { to12h } = require("../utils/timeFormat");
 const logger = require("../utils/logger-advanced");
 const { customAlphabet } = require("nanoid");
 
@@ -164,6 +167,10 @@ router.get("/bookings", async (req, res) => {
       paymentAmount: b.paymentAmount || 0,
       completedAt: b.completedAt || null,
       createdAt: b.createdAt,
+      durationMin: settings.bookingDuration(b, req.instructor),
+      lessonTypeId: b.lessonTypeId || null,
+      lessonTypeName: b.lessonTypeName || "",
+      price: b.price ?? null,
     }));
 
     res.json({ success: true, data });
@@ -180,13 +187,40 @@ router.post("/bookings", async (req, res) => {
   try {
     const instructor = req.instructor;
     const instructorId = instructor.phoneNumberId;
-    const { userPhone, date, time, postalCode, pickupLocation, dropoffLocation, notes } = req.body;
+    const { userPhone, date, time, postalCode, pickupLocation, dropoffLocation, notes, lessonTypeId } = req.body;
 
     if (!userPhone || !date || !time) {
       return res.status(400).json({ success: false, error: "userPhone, date, and time are required" });
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      return res.status(400).json({ success: false, error: "date must be YYYY-MM-DD and time HH:MM" });
+    }
 
     const normalizedPhone = userPhone.replace(/\s+/g, "");
+
+    // The lesson type sets the length
+    let lessonType = null;
+    if (lessonTypeId) {
+      lessonType = await LessonType.findOne({ _id: lessonTypeId, instructorId }).lean().catch(() => null);
+      if (!lessonType) return res.status(400).json({ success: false, error: "That lesson type wasn't found" });
+    }
+    const durationMin = lessonType?.durationMin || settings.resolveRouteSettings(instructor).lessonDurationMin;
+
+    // Instructors can book outside Donna's packing rules, but never on top of another lesson
+    const start = settings.toMinutes(time);
+    const sameDay = await Booking.find({ instructorId, date, status: { $in: ["confirmed", "rescheduled"] } }).lean();
+    const clash = (sameDay || []).find((b) => {
+      if (!/^\d{1,2}:\d{2}$/.test(b.time || "")) return false;
+      const other = settings.toMinutes(b.time);
+      return start < other + settings.bookingDuration(b, instructor) && other < start + durationMin;
+    });
+    if (clash) {
+      return res.status(409).json({
+        success: false,
+        code: "OVERLAP",
+        error: `That overlaps the ${to12h(clash.time)} lesson on ${date}`,
+      });
+    }
 
     // Look up student name
     const user = await User.findOne({ phone: normalizedPhone, instructorId }).select("name postalCode location").lean();
@@ -210,6 +244,10 @@ router.post("/bookings", async (req, res) => {
           dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,
           progressNotes: notes || "",
           status: "confirmed",
+          durationMin,
+          lessonTypeId: lessonType?._id || null,
+          lessonTypeName: lessonType?.name || "",
+          price: lessonType ? lessonType.price : null,
         });
       } catch (err) {
         if (err?.code === 11000 && err.keyPattern?.bookingId && attempt < 5) continue;
@@ -228,6 +266,7 @@ router.post("/bookings", async (req, res) => {
           userPhone: studentName,
           pickupAddress: pickupLocation || "",
           dropoffAddress: dropoffLocation || "",
+          durationMin,
         },
         instructor
       );
@@ -252,6 +291,10 @@ router.post("/bookings", async (req, res) => {
         dropoffLocation: booking.dropoffLocation || null,
         calendarEventId: booking.calendarEventId || null,
         createdAt: booking.createdAt,
+        durationMin,
+        lessonTypeId: booking.lessonTypeId || null,
+        lessonTypeName: booking.lessonTypeName || "",
+        price: booking.price ?? null,
       },
     });
   } catch (err) {

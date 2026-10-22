@@ -811,9 +811,21 @@ function settingsPayload(instructor) {
     botSettings: {
       ...settings.resolveBotSettings(instructor),
       workingHours: settings.workingHoursFor(instructor),
+      dayHours: settings.dayHoursFor(instructor),
     },
     presets: settings.ROUTE_PRESETS,
   };
+}
+
+const toMinutes = (t) => settings.toMinutes(t);
+
+// The lunch window has to be long enough for the lunch itself
+function lunchProblem(lunch) {
+  if (!lunch?.enabled) return null;
+  if (toMinutes(lunch.windowTo) - toMinutes(lunch.windowFrom) < lunch.durationMin) {
+    return `Lunch window ${lunch.windowFrom}–${lunch.windowTo} is shorter than a ${lunch.durationMin}-minute lunch`;
+  }
+  return null;
 }
 
 router.get("/notifications", async (req, res) => {
@@ -940,7 +952,15 @@ router.patch("/settings", async (req, res) => {
         return res.status(400).json({ success: false, error: "Holiday mode needs a start and end date" });
       }
       const notifications = { ...plainObj(cur.notifications), ...(botSettings.notifications || {}) };
-      doc.botSettings = { ...cur, ...botSettings, holiday, notifications };
+      const lunch = { ...settings.LUNCH_DEFAULTS, ...plainObj(cur.lunch), ...(botSettings.lunch || {}) };
+      const badLunch = lunchProblem(lunch);
+      if (badLunch) return res.status(400).json({ success: false, error: badLunch });
+      doc.botSettings = { ...cur, ...botSettings, holiday, notifications, lunch };
+      // Switching to packed mode for the first time: keep the same working days
+      // by starting from the hours the start-time chips imply
+      if (botSettings.scheduleMode === "packed" && !cur.dayHours && botSettings.dayHours === undefined) {
+        doc.botSettings.dayHours = settings.dayHoursFor({ ...doc.toObject(), botSettings: { ...cur, dayHours: null } });
+      }
     }
 
     // Turning Donna on needs the basics filled in first, and the school's switch on
@@ -1053,9 +1073,102 @@ router.post("/route-preview", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/dashboard/day-preview
+ * How many lessons of each type fit in a day with these (draft) settings,
+ * assuming every drive takes the full X: the guaranteed minimum.
+ * Body: { bufferMin?, dayHours?: { start, end }, lunch?, durationMins? }
+ */
+router.post("/day-preview", async (req, res) => {
+  try {
+    const instructor = await resolveInstructor(req);
+    if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
+
+    const body = req.body || {};
+    const draft = {};
+    if (body.bufferMin !== undefined) draft.routeSettings = { bufferMin: body.bufferMin };
+    if (body.lunch !== undefined) draft.botSettings = { lunch: body.lunch };
+    const { errors, routeSettings, botSettings } = validateSettingsUpdate(draft);
+    if (errors.length) return res.status(400).json({ success: false, error: errors[0], errors });
+
+    const bot = settings.resolveBotSettings(instructor);
+    const lunch = { ...bot.lunch, ...(botSettings?.lunch || {}) };
+    const badLunch = lunchProblem(lunch);
+    if (badLunch) return res.status(400).json({ success: false, error: badLunch });
+
+    const X = routeSettings?.bufferMin ?? settings.resolveRouteSettings(instructor).bufferMin;
+    let hours = body.dayHours;
+    if (hours !== undefined) {
+      const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+      if (!hours || !TIME.test(hours.start || "") || !TIME.test(hours.end || "") || hours.start >= hours.end) {
+        return res.status(400).json({ success: false, error: "dayHours needs a start before its end" });
+      }
+    } else {
+      // The instructor's longest working day
+      const days = Object.values(settings.dayHoursFor(instructor)).filter(Boolean);
+      hours = days.sort((a, b) => (toMinutes(b.end) - toMinutes(b.start)) - (toMinutes(a.end) - toMinutes(a.start)))[0]
+        || { start: "09:00", end: "17:00" };
+    }
+
+    let lengths = Array.isArray(body.durationMins) ? body.durationMins : null;
+    let types = [];
+    if (!lengths) {
+      types = await LessonType.find({ instructorId: instructor.phoneNumberId, active: true })
+        .sort({ durationMin: 1 })
+        .lean();
+      lengths = types.filter((t) => t.durationMin).map((t) => t.durationMin);
+      if (!lengths.length) lengths = [60, 90, 120];
+    }
+    lengths = [...new Set(lengths)].filter((d) => Number.isInteger(d) && d >= 30 && d <= 180).slice(0, 10);
+
+    const lunchMin = lunch.enabled
+      ? { durationMin: lunch.durationMin, from: toMinutes(lunch.windowFrom), to: toMinutes(lunch.windowTo) }
+      : null;
+    const dayPacker = require("../services/dayPacker");
+    const days = lengths.map((d) => {
+      const day = dayPacker.packEmptyDay({
+        start: toMinutes(hours.start),
+        end: toMinutes(hours.end),
+        d,
+        X,
+        lunch: lunchMin,
+        blocks: settings.breakBlocks(instructor),
+      });
+      const type = types.find((t) => t.durationMin === d);
+      return {
+        durationMin: d,
+        name: type?.name || null,
+        count: day.count,
+        starts: day.starts.map(settings.toTime),
+        lunch: day.lunch ? { from: settings.toTime(day.lunch.from), to: settings.toTime(day.lunch.to) } : null,
+      };
+    });
+
+    res.json({ success: true, data: { bufferMin: X, dayHours: hours, lunch, days } });
+  } catch (err) {
+    logger.error(`Dashboard /day-preview error: ${err.message}`);
+    res.status(500).json({ success: false, error: "Failed to preview your day" });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Lesson Types
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Another active lesson type with this length, if there is one
+async function sameLengthType(instructorId, durationMin, exceptId = null) {
+  return LessonType.findOne({
+    instructorId,
+    durationMin,
+    active: true,
+    ...(exceptId && { _id: { $ne: exceptId } }),
+  }).lean();
+}
+
+function duplicateLengthMessage(other) {
+  const { formatDuration } = require("../services/lessonTypes");
+  return `"${other.name}" is already ${formatDuration(other.durationMin)} long. Each lesson type needs a different length.`;
+}
 
 router.get("/lesson-types", async (req, res) => {
   try {
@@ -1074,8 +1187,11 @@ router.get("/lesson-types", async (req, res) => {
 });
 
 /** What's wrong with these lesson-type fields, if anything (only the ones given are checked). */
-function lessonTypeProblem({ name, price, description, active, sortOrder }) {
+function lessonTypeProblem({ name, price, description, active, sortOrder, durationMin }) {
   if (name !== undefined && (typeof name !== "string" || !name.trim() || name.length > 60)) return "Name must be 1–60 characters";
+  if (durationMin !== undefined && !(Number.isInteger(durationMin) && durationMin >= 30 && durationMin <= 180 && durationMin % 15 === 0)) {
+    return "Length must be 30 minutes to 3 hours, in 15-minute steps";
+  }
   if (price !== undefined && !(typeof price === "number" && Number.isFinite(price) && price >= 0 && price <= 1000)) return "Price must be a number from 0 to 1000";
   if (description !== undefined && (typeof description !== "string" || description.length > 500)) return "Description can be up to 500 characters";
   if (active !== undefined && typeof active !== "boolean") return "active must be true or false";
@@ -1088,10 +1204,14 @@ router.post("/lesson-types", async (req, res) => {
     const instructor = await resolveInstructor(req);
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
 
-    const { name, price, description } = req.body;
-    if (!name || price == null) return res.status(400).json({ success: false, error: "name and price are required" });
-    const bad = lessonTypeProblem({ name, price, description });
+    const { name, price, description, durationMin } = req.body;
+    if (!name || price == null || durationMin == null) {
+      return res.status(400).json({ success: false, error: "name, price and length are required" });
+    }
+    const bad = lessonTypeProblem({ name, price, description, durationMin });
     if (bad) return res.status(400).json({ success: false, error: bad });
+    const clash = await sameLengthType(instructor.phoneNumberId, durationMin);
+    if (clash) return res.status(409).json({ success: false, code: "DUPLICATE_LENGTH", error: duplicateLengthMessage(clash) });
 
     const maxSort = await LessonType.findOne({ instructorId: instructor.phoneNumberId })
       .sort({ sortOrder: -1 })
@@ -1102,12 +1222,16 @@ router.post("/lesson-types", async (req, res) => {
       instructorId: instructor.phoneNumberId,
       name,
       price,
+      durationMin,
       description: description || "",
       sortOrder: (maxSort?.sortOrder ?? -1) + 1,
     });
 
     res.status(201).json({ success: true, data: lessonType });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ success: false, code: "DUPLICATE_LENGTH", error: "Each lesson type needs a different length." });
+    }
     logger.error(`Dashboard /lesson-types POST error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to create lesson type" });
   }
@@ -1119,11 +1243,23 @@ router.patch("/lesson-types/:id", async (req, res) => {
     if (!instructor) return res.status(401).json({ success: false, error: "Instructor not found" });
 
     const updates = {};
-    for (const key of ["name", "price", "description", "active", "sortOrder"]) {
+    for (const key of ["name", "price", "description", "active", "sortOrder", "durationMin"]) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
     const bad = lessonTypeProblem(updates);
     if (bad) return res.status(400).json({ success: false, error: bad });
+
+    // Only active types need distinct lengths: check what this one would end up as
+    if (updates.durationMin !== undefined || updates.active === true) {
+      const current = await LessonType.findOne({ _id: req.params.id, instructorId: instructor.phoneNumberId }).lean();
+      if (!current) return res.status(404).json({ success: false, error: "Lesson type not found" });
+      const length = updates.durationMin ?? current.durationMin;
+      const active = updates.active ?? current.active;
+      if (active && length) {
+        const clash = await sameLengthType(instructor.phoneNumberId, length, current._id);
+        if (clash) return res.status(409).json({ success: false, code: "DUPLICATE_LENGTH", error: duplicateLengthMessage(clash) });
+      }
+    }
 
     const lessonType = await LessonType.findOneAndUpdate(
       { _id: req.params.id, instructorId: instructor.phoneNumberId },
@@ -1135,6 +1271,9 @@ router.patch("/lesson-types/:id", async (req, res) => {
 
     res.json({ success: true, data: lessonType });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ success: false, code: "DUPLICATE_LENGTH", error: "Each lesson type needs a different length." });
+    }
     logger.error(`Dashboard /lesson-types PATCH error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to update lesson type" });
   }

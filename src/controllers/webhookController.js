@@ -23,8 +23,10 @@ const ProcessedMessage = require("../models/processedMessageModel");
 const { notifyInstructorLearnerMessage } = require("../utils/emailNotifier");
 const { runExclusive } = require("../utils/keyedQueue");
 const { to12h } = require("../utils/timeFormat");
+const { formatDuration } = require("../services/lessonTypes");
 const { isDbReady } = require("../utils/db");
 const { schoolAllowsDonna } = require("../services/donnaStatus");
+const bookingFlow = require("../services/bookingFlow");
 
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
 const HISTORY_LENGTH = 10;
@@ -211,7 +213,8 @@ class WebhookController {
     logger.info("Finding next available appointment...");
     let earliestSlot = null;
     try {
-      earliestSlot = await routeOptimizer.findEarliestOfferedSlot(ctx.instructor, ctx.from);
+      const durationMin = await aiService._lessonLengthFor(ctx.from, ctx.instructor);
+      earliestSlot = await routeOptimizer.findEarliestOfferedSlot(ctx.instructor, ctx.from, { durationMin });
     } catch (err) {
       logger.warn(`Route-aware earliest slot failed, using calendar only: ${err.message}`);
     }
@@ -283,17 +286,9 @@ class WebhookController {
     this._remember(ctx, `I want to cancel ${booking.bookingId}`, `${question}\n[ACTION:NULL]\n{}`);
   }
 
-  // Remember which lesson is moving, then let Donna find the new time as usual.
+  // Moving a lesson is a guided flow: what to change, then only the steps needed.
   async startMove(ctx, booking) {
-    const question =
-      `Moving your lesson on ${formatDay(booking.date)} at ${to12h(booking.time)} (${booking.bookingId}). ` +
-      `What day and time would suit you instead?`;
-    await ctx.send(question);
-    this._remember(
-      ctx,
-      `I want to move my lesson ${booking.bookingId} on ${booking.date} at ${booking.time}`,
-      `${question}\n[ACTION:NULL]\n{"bookingId": "${booking.bookingId}"}`
-    );
+    return bookingFlow.startMove(ctx, booking);
   }
 
   async showBookings(ctx) {
@@ -400,10 +395,11 @@ class WebhookController {
       const updated = await bookingService.rescheduleBooking(ctx.from, bookingData, ctx.instructorId);
       if (!updated) {
         await ctx.send(`⚠️ No booking found with ID ${bookingData?.bookingId || "(none given)"}. Say "show my bookings" to see your lessons.`);
-        return;
+        return false;
       }
       await ctx.send(`✅ Booking ${updated.bookingId} moved to ${formatDay(bookingData.newDate)} at ${to12h(bookingData.newTime)}`);
       this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+      return true;
     } catch (err) {
       logger.error(`Reschedule error for ${ctx.from}: ${err.message}`);
       await ctx.send(
@@ -411,6 +407,7 @@ class WebhookController {
           ? `❌ ${err.message}`
           : "❌ Sorry, I couldn't move that lesson just now. Please try again in a minute."
       );
+      return false;
     }
   }
 
@@ -477,7 +474,8 @@ class WebhookController {
         `🕐 Time: ${to12h(bookingData.time)}`,
       ];
       if (result.lessonType) {
-        lines.push(`🎯 Lesson: ${result.lessonType.name} (£${result.lessonType.price})`);
+        const length = result.lessonType.durationMin ? `, ${formatDuration(result.lessonType.durationMin)}` : "";
+        lines.push(`🎯 Lesson: ${result.lessonType.name} (£${result.lessonType.price}${length})`);
       }
       if (bookingData.pickupAddress) {
         lines.push(`📍 Pickup: ${bookingData.pickupAddress}`);
@@ -489,12 +487,14 @@ class WebhookController {
 
       await ctx.send(lines.join("\n"));
       this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);
+      return result;
     } catch (error) {
       logger.error(`Booking error for ${ctx.from}: ${error.message}`);
       const errorMessage = error.userFacing || error.message.includes("validation")
         ? `❌ ${error.message}`
         : "❌ Sorry, there was an error processing your booking. Please try again.";
       await ctx.send(errorMessage);
+      return null;
     }
   }
 
@@ -541,6 +541,11 @@ class WebhookController {
   async _handleTap(ctx, user, buttonId) {
     const [kind, ...rest] = buttonId.split(":");
 
+    if (kind === "bf") {
+      await bookingFlow.handleTap(ctx, user, buttonId, this);
+      return { handled: true };
+    }
+
     if (kind === "slot" && rest.length === 3) {
       const [date, hh, mm] = rest;
       const time = `${hh}:${mm}`;
@@ -552,12 +557,18 @@ class WebhookController {
     if (kind === "lt" && rest[0]) {
       const LessonType = require("../models/lessonTypeModel");
       const type = await LessonType.findOne({ _id: rest[0], instructorId: ctx.instructorId, active: true }).lean().catch(() => null);
-      if (type) return { handled: false, rewrite: `I'd like the ${type.name} lesson` };
+      if (type) {
+        aiService.setPendingLessonType(ctx.from, type);
+        return { handled: false, rewrite: `I'd like the ${type.name} lesson` };
+      }
       return { handled: false };
     }
 
     if (kind === "menu") {
-      if (rest[0] === "book") return { handled: false, rewrite: "I'd like to book another lesson" };
+      if (rest[0] === "book") {
+        await bookingFlow.startBooking(ctx, user, {}, this);
+        return { handled: true };
+      }
       if (rest[0] === "move" || rest[0] === "cancel") {
         if (!(await this._allowed(ctx, rest[0]))) return { handled: true };
         await this.pickBooking(ctx, rest[0]);
@@ -756,7 +767,7 @@ class WebhookController {
       if (inProgress) return;
       if (justCompleted) {
         this.clearUserConversationHistoryAndContext(from, ctx.instructorId);
-        await ctx.send("🚗 How can I assist you today?");
+        await bookingFlow.showMenu(ctx, user, { greet: false });
         return;
       }
 
@@ -782,6 +793,21 @@ class WebhookController {
         if (tap.rewrite) text = tap.rewrite;
       }
 
+      // A booking in progress: take the message as the answer to the current step if it is one
+      const flowActive = !!bookingFlow.get(from);
+      let aiText = text;
+      if (flowActive && !extra.buttonId) {
+        if (await bookingFlow.handleText(ctx, user, text, extra, this)) return;
+        aiText +=
+          `\n[SYSTEM: the learner is part-way through the guided booking (step: ${bookingFlow.get(from)?.step}). ` +
+          `Answer their message briefly with [ACTION:NULL]; the booking step is shown again after your reply. ` +
+          `If they've given new booking details, use [ACTION:START_BOOKING] with them instead.]`;
+      } else if (!extra.buttonId && bookingFlow.isGreeting(text)) {
+        await bookingFlow.showMenu(ctx, user);
+        this._remember(ctx, text, "[Showed the main menu]\n[ACTION:NULL]\n{}");
+        return;
+      }
+
       if (extra.location) {
         aiService.updatePendingPickupDropoff(from, {
           pickupAddress: extra.location.label,
@@ -792,7 +818,7 @@ class WebhookController {
       // AI
       const session = getUserSession(from, ctx.instructorId);
       const aiResponse = await aiService.getResponse(
-        text,
+        aiText,
         session.conversationHistory,
         from,
         instructor,
@@ -830,8 +856,19 @@ class WebhookController {
         hasAction &&
         ["book", "show_bookings", "update_booking", "cancel_booking", "handover", "waitlist"].includes(actionType);
 
+      // Donna answered a side question mid-booking: show where we were
+      if (bookingFlow.get(from) && (!hasAction || actionType === "null")) {
+        await bookingFlow.reprompt(ctx, user, this);
+      } else if (bookingFlow.get(from) && actionType !== "start_booking") {
+        bookingFlow.clear(from);
+      }
+
       if (hasAction) {
         switch (actionType) {
+          case "start_booking":
+            if (!ctx.bot.acceptingNewLearners && !user) break;
+            await bookingFlow.startBooking(ctx, user, bookingData || {}, this);
+            break;
           case "book":
             bookingData.userPhone = from;
             await this.processBooking(ctx, bookingData);

@@ -567,7 +567,7 @@ describe("Flow – New User Signup", () => {
     mockAiResponse("Hello Jane! How can I help?");
     mockAiAction(null, {}, "Hello Jane! How can I help?");
 
-    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hi", "inst-flow");
+    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hi, can you help me with a lesson?", "inst-flow");
 
     expect(aiService.getResponse).toHaveBeenCalled();
     expect(replies[0]).toContain("Hello Jane");
@@ -756,7 +756,7 @@ describe("Flow – AI Error Handling", () => {
   it("sends error message to user when AI throws", async () => {
     jest.spyOn(aiService, "getResponse").mockRejectedValue(new Error("Gemini quota exceeded"));
 
-    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hello");
+    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hi, can you help me with a lesson?");
 
     expect(replies[0]).toContain("trouble processing");
     expect(logger.error).toHaveBeenCalledWith(
@@ -863,7 +863,7 @@ describe("Flow – Mock vs Prod Send Routing", () => {
   afterEach(() => jest.restoreAllMocks());
 
   it("mock mode captures replies and does NOT call WhatsApp API", async () => {
-    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hello");
+    const replies = await sendMockMessage(REGISTERED_USER.phone, "Hi, can you help me with a lesson?");
 
     expect(replies).toEqual(["Hi!"]);
     expect(whatsappService.sendTextMessage).not.toHaveBeenCalled();
@@ -872,7 +872,7 @@ describe("Flow – Mock vs Prod Send Routing", () => {
   it("prod mode (isMock=false) calls WhatsApp API", async () => {
     // Call without mock mode
     await webhookController.handleIncomingMessage(
-      REGISTERED_USER.phone, "Hello", "inst-flow", false, null
+      REGISTERED_USER.phone, "Hi, can you help me with a lesson?", "inst-flow", false, null
     );
 
     expect(whatsappService.sendTextMessage).toHaveBeenCalledWith(
@@ -969,7 +969,7 @@ describe("Flow – handleWebhook (full payload parsing)", () => {
               messages: [{
                 from: REGISTERED_USER.phone,
                 type: "text",
-                text: { body: "Hello" },
+                text: { body: "Hi, can you help me with a lesson?" },
               }],
             },
           }],

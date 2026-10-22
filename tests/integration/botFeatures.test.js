@@ -599,7 +599,7 @@ describe("2.8 menus for lesson types, moving and cancelling", () => {
     expect(replies[1].interactive.buttons.map((x) => x.id)).toEqual(["cancelyes:DL-ONE001", "cancelno"]);
   });
 
-  it("move without saying which lesson lists them, then asks for the new time", async () => {
+  it("move without saying which lesson lists them, then asks what to change", async () => {
     bookingsAre([lesson("DL-AAA001", 5), lesson("DL-BBB002", 8, "14:00")]);
     aiSays("Sure\n[ACTION:UPDATE_BOOKING]\n{}");
     const replies = await chat("move my lesson");
@@ -607,11 +607,10 @@ describe("2.8 menus for lesson types, moving and cancelling", () => {
 
     Booking.findOne.mockResolvedValue(lesson("DL-BBB002", 8, "14:00"));
     const [ask] = await chat("pick", { buttonId: "movepick:DL-BBB002" });
-    expect(ask).toContain("Moving your lesson");
-    expect(ask).toContain("What day and time");
+    expect(ask.text).toContain("Moving your lesson");
+    expect(ask.interactive.rows.map((r) => r.id)).toEqual(expect.arrayContaining(["bf:mv:when", "bf:mv:place"]));
     // Donna knows which lesson is moving
-    const history = userSessions["4471::inst-1"].conversationHistory;
-    expect(history[history.length - 2].content).toContain("DL-BBB002");
+    expect(aiService.pendingContext["4471"].flow.bookingId).toBe("DL-BBB002");
   });
 
   it("my bookings ends with Move / Cancel / Book buttons, hiding ones the instructor turned off", async () => {

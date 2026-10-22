@@ -189,7 +189,7 @@ describe("AI Prompt – Instructor Personalization", () => {
   it("includes instructor name in the prompt sent to Gemini", async () => {
     await webhookController.handleIncomingMessage(
       "447700000099",
-      "Hello",
+      "Hi, can you help me with a lesson?",
       "inst-tone"
     );
 
@@ -225,7 +225,7 @@ describe("Response Delivery", () => {
   it("sends the AI response text back to the user", async () => {
     await webhookController.handleIncomingMessage(
       "447700000099",
-      "Hello",
+      "Hi, can you help me with a lesson?",
       "inst-tone"
     );
 

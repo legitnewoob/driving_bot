@@ -364,10 +364,9 @@ async function run() {
   for (const instructor of instructors) {
     const id = instructor.phoneNumberId;
     LESSON_TYPES.push(
-      { instructorId: id, name: "Beginner", price: 35, description: "First-time drivers — cockpit drill, moving off, basic controls", sortOrder: 0 },
-      { instructorId: id, name: "Standard", price: 40, description: "Regular lesson — junctions, roundabouts, dual carriageways", sortOrder: 1 },
-      { instructorId: id, name: "Motorway", price: 55, description: "Motorway and high-speed road driving", sortOrder: 2 },
-      { instructorId: id, name: "Test Prep", price: 50, description: "Mock test routes, manoeuvres, show-me tell-me", sortOrder: 3 },
+      { instructorId: id, name: "Beginner", durationMin: 120, price: 80, description: "First-time drivers — cockpit drill, moving off, basic controls", sortOrder: 0 },
+      { instructorId: id, name: "Moderate", durationMin: 90, price: 60, description: "Junctions, roundabouts, dual carriageways", sortOrder: 1 },
+      { instructorId: id, name: "Novice", durationMin: 60, price: 40, description: "Mock test routes, manoeuvres, show-me tell-me", sortOrder: 2 },
     );
   }
   await LessonType.insertMany(LESSON_TYPES);

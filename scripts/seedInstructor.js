@@ -229,6 +229,7 @@ async function addInstructor() {
   }
 
   const result = await Instructor.create(instructorData);
+  await require("../src/services/lessonTypes").ensureDefaultLessonTypes(result.phoneNumberId);
 
   console.log("\n✓ Instructor created successfully:");
   console.log(`  Name:           ${result.name}`);

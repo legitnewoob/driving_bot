@@ -43,6 +43,11 @@ const bookingSchema = new mongoose.Schema({
   paymentAmount: { type: Number, default: 0 },
   completedAt: { type: Date, default: null },
   lessonTypeId: { type: mongoose.Schema.Types.ObjectId, ref: "LessonType", default: null },
+  // Lesson length in minutes. Null on older bookings: they use the instructor's lessonDurationMin.
+  durationMin: { type: Number, default: null },
+  // The drive into this lesson from the one before, and the gap left for it (packed mode)
+  driveInMin: { type: Number, default: null },
+  gapBeforeMin: { type: Number, default: null },
   addedDriveMin: { type: Number, default: null },
   routeScoreReason: { type: String, default: "" },
   lessonTypeName: { type: String, default: "" },

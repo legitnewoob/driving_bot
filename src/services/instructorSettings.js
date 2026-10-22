@@ -1,4 +1,5 @@
 const timezoneUtils = require("../utils/timezoneUtils");
+const dayPacker = require("./dayPacker");
 
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -27,7 +28,18 @@ const ROUTE_DEFAULTS = {
   serviceArea: { radius: null, unit: "miles", radiusMiles: null, postcodeDistricts: [] },
   suggestOtherDays: true,
   lookAheadDays: 10,
+  // Packed mode: the most driving allowed between two lessons (the slider),
+  // and the margin added to every real drive for traffic and parking.
+  bufferMin: 20,
+  driveVarianceMin: 5,
 };
+
+// In packed mode the slider replaces the preset: its value picks the band.
+function presetForBuffer(bufferMin) {
+  if (bufferMin < 20) return "tight";
+  if (bufferMin < 30) return "balanced";
+  return "relaxed";
+}
 
 const KM_PER_MILE = 1.609344;
 
@@ -44,7 +56,9 @@ function serviceRadius(area = {}) {
 
 function resolveRouteSettings(instructor) {
   const stored = { ...ROUTE_DEFAULTS, ...(plain(instructor?.routeSettings) || {}) };
-  const preset = ROUTE_PRESETS[stored.preset] ? stored.preset : stored.preset === "custom" ? "custom" : "balanced";
+  const packed = isPacked(instructor);
+  let preset = ROUTE_PRESETS[stored.preset] ? stored.preset : stored.preset === "custom" ? "custom" : "balanced";
+  if (packed) preset = presetForBuffer(stored.bufferMin);
   const fromPreset = preset === "custom" ? {} : ROUTE_PRESETS[preset];
   const merged = { ...stored, ...fromPreset };
 
@@ -63,13 +77,23 @@ function resolveRouteSettings(instructor) {
     },
     suggestOtherDays: merged.suggestOtherDays !== false,
     lookAheadDays: merged.lookAheadDays,
+    packed,
+    bufferMin: stored.bufferMin,
+    driveVarianceMin: stored.driveVarianceMin,
   };
 }
 
 // ── Bot behaviour settings ──────────────────────────────────────────────
 
+const LUNCH_DEFAULTS = { enabled: true, durationMin: 45, windowFrom: "12:00", windowTo: "14:00" };
+
 const BOT_DEFAULTS = {
   donnaEnabled: true,
+  // "fixed": the instructor picks start times (workingHours).
+  // "packed": Donna fits lessons between dayHours start and end.
+  scheduleMode: "fixed",
+  dayHours: null,
+  lunch: LUNCH_DEFAULTS,
   workingHours: null,
   breaks: [],
   maxLessonsPerDay: null,
@@ -97,8 +121,13 @@ function resolveBotSettings(instructor) {
     ...stored,
     holiday: { ...BOT_DEFAULTS.holiday, ...(plain(stored.holiday) || {}) },
     notifications: { ...BOT_DEFAULTS.notifications, ...(plain(stored.notifications) || {}) },
+    lunch: { ...LUNCH_DEFAULTS, ...(plain(stored.lunch) || {}) },
     breaks: stored.breaks || [],
   };
+}
+
+function isPacked(instructor) {
+  return plain(instructor?.botSettings)?.scheduleMode === "packed";
 }
 
 function toMinutes(time) {
@@ -121,9 +150,77 @@ function rawTimesForDay(instructor, day) {
   return instructor?.availableTimes?.length ? [...instructor.availableTimes] : [...DEFAULT_TIMES];
 }
 
-function timesForDate(instructor, dateStr) {
-  const { breaks } = resolveBotSettings(instructor);
+function toTime(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+// Packed mode: each weekday's { start, end }. Without dayHours it's worked out
+// from the start-time chips (first start to last lesson's end), so switching
+// modes keeps the same days.
+function dayHoursFor(instructor) {
+  const stored = plain(resolveBotSettings(instructor).dayHours);
   const duration = resolveRouteSettings(instructor).lessonDurationMin;
+  return Object.fromEntries(
+    DAY_KEYS.map((key, day) => {
+      if (stored && key in stored) {
+        const h = plain(stored[key]);
+        return [key, h && h.start && h.end ? { start: h.start, end: h.end } : null];
+      }
+      const times = rawTimesForDay(instructor, day);
+      if (!times.length) return [key, null];
+      return [key, { start: times[0], end: toTime(Math.min(toMinutes(times[times.length - 1]) + duration, 23 * 60 + 55)) }];
+    })
+  );
+}
+
+/** Packed mode: the day's window in minutes, or null if not a working day. */
+function dayWindow(instructor, dateStr) {
+  const h = dayHoursFor(instructor)[DAY_KEYS[dayIndex(dateStr)]];
+  return h ? { start: toMinutes(h.start), end: toMinutes(h.end) } : null;
+}
+
+/** Packed mode: lunch as minutes ({ durationMin, from, to }), or null when off. */
+function lunchWindow(instructor) {
+  const { lunch } = resolveBotSettings(instructor);
+  if (!lunch?.enabled) return null;
+  return { durationMin: lunch.durationMin, from: toMinutes(lunch.windowFrom), to: toMinutes(lunch.windowTo) };
+}
+
+/** Fixed breaks as blocks for the packer. */
+function breakBlocks(instructor) {
+  return resolveBotSettings(instructor)
+    .breaks.filter((b) => b?.from && b?.to)
+    .map((b) => ({ start: toMinutes(b.from), end: toMinutes(b.to), kind: "block", label: "break" }));
+}
+
+/** Packed mode: the guaranteed-minimum day for a lesson length (every drive takes X). */
+function packedDay(instructor, dateStr, durationMin) {
+  const window = dayWindow(instructor, dateStr);
+  if (!window) return { starts: [], lunch: null, count: 0 };
+  const { bufferMin } = resolveRouteSettings(instructor);
+  return dayPacker.packEmptyDay({
+    start: window.start,
+    end: window.end,
+    d: durationMin,
+    X: bufferMin,
+    lunch: lunchWindow(instructor),
+    blocks: breakBlocks(instructor),
+  });
+}
+
+/** How long a booking lasts: its own length, or the old single length for older bookings. */
+function bookingDuration(booking, instructor) {
+  return booking?.durationMin || resolveRouteSettings(instructor).lessonDurationMin;
+}
+
+// Start times for a date. In packed mode these are the packed day for the
+// given length (the starts Donna can promise before knowing where anyone is).
+function timesForDate(instructor, dateStr, durationMin = null) {
+  const duration = durationMin || resolveRouteSettings(instructor).lessonDurationMin;
+  if (isPacked(instructor)) {
+    return packedDay(instructor, dateStr, duration).starts.map(toTime);
+  }
+  const { breaks } = resolveBotSettings(instructor);
   return rawTimesForDay(instructor, dayIndex(dateStr)).filter((time) => {
     const start = toMinutes(time);
     const end = start + duration;
@@ -131,17 +228,24 @@ function timesForDate(instructor, dateStr) {
   });
 }
 
+// Every start time the instructor offers. Packed mode has no fixed list.
 function allWorkingTimes(instructor) {
+  if (isPacked(instructor)) return [];
   const set = new Set();
   for (let d = 0; d < 7; d++) rawTimesForDay(instructor, d).forEach((t) => set.add(t));
   return [...set].sort((a, b) => toMinutes(a) - toMinutes(b));
 }
 
 function workingDayIndexes(instructor) {
+  if (isPacked(instructor)) {
+    const hours = dayHoursFor(instructor);
+    return [0, 1, 2, 3, 4, 5, 6].filter((d) => !!hours[DAY_KEYS[d]]);
+  }
   return [0, 1, 2, 3, 4, 5, 6].filter((d) => rawTimesForDay(instructor, d).length > 0);
 }
 
 function isWorkingDay(instructor, dateStr) {
+  if (isPacked(instructor)) return !!dayWindow(instructor, dateStr);
   return rawTimesForDay(instructor, dayIndex(dateStr)).length > 0;
 }
 
@@ -219,6 +323,16 @@ module.exports = {
   ROUTE_PRESETS,
   ROUTE_DEFAULTS,
   BOT_DEFAULTS,
+  LUNCH_DEFAULTS,
+  presetForBuffer,
+  isPacked,
+  dayHoursFor,
+  dayWindow,
+  lunchWindow,
+  breakBlocks,
+  packedDay,
+  bookingDuration,
+  toTime,
   FRAGMENTATION_MINUTES,
   HOME_LEG_WEIGHTS,
   resolveRouteSettings,

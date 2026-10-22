@@ -11,8 +11,9 @@ function calendarIdFor(instructor) {
   return instructor.googleCalendarId || "primary";
 }
 
-function lessonMinutes(instructor) {
-  return settings.resolveRouteSettings(instructor).lessonDurationMin;
+// A lesson's length: its own (booking or lesson type), else the instructor's old single length
+function lessonMinutes(instructor, durationMin = null) {
+  return durationMin || settings.resolveRouteSettings(instructor).lessonDurationMin;
 }
 
 async function handleCalendarTokenExpiry(instructor, service, errorMessage) {
@@ -142,14 +143,14 @@ class CalendarService {
     return { isAvailable: conflictingEvents.length === 0, conflictingEvents };
   }
 
-  async checkAvailability(date, time, instructor) {
+  async checkAvailability(date, time, instructor, durationMin = null) {
     try {
       if (!instructor) {
         return { isAvailable: false, error: "Instructor not found" };
       }
 
       const events = await this.getEventsForDate(date, instructor);
-      const result = this.checkSlotAgainstEvents(date, time, events, lessonMinutes(instructor));
+      const result = this.checkSlotAgainstEvents(date, time, events, lessonMinutes(instructor, durationMin));
 
       return result;
     } catch (error) {
@@ -162,20 +163,49 @@ class CalendarService {
     }
   }
 
-  async getAvailableTimeSlotsForDate(date, instructor) {
+  async getAvailableTimeSlotsForDate(date, instructor, durationMin = null) {
+    const minutes = lessonMinutes(instructor, durationMin);
     try {
       const events = await this.getEventsForDate(date, instructor);
 
-      const availableSlots = settings.timesForDate(instructor, date).filter((time) => {
-        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events, lessonMinutes(instructor));
+      const availableSlots = settings.timesForDate(instructor, date, minutes).filter((time) => {
+        const { isAvailable } = this.checkSlotAgainstEvents(date, time, events, minutes);
         return isAvailable;
       });
 
       return availableSlots;
     } catch (error) {
       logger.error(`Error getting available time slots: ${error.message}`);
-      return settings.timesForDate(instructor, date);
+      return settings.timesForDate(instructor, date, minutes);
     }
+  }
+
+  /**
+   * The day's calendar events as { start, end } minutes after midnight
+   * (instructor's timezone), for packing lessons around them. Events in
+   * `skipIds` (the lessons' own events) are left out; all-day events block
+   * the whole day.
+   */
+  async getBusyBlocks(date, instructor, skipIds = new Set()) {
+    const events = await this.getEventsForDate(date, instructor);
+    const minutesOn = (d) => {
+      const day = timezoneUtils.formatDate(d, "YYYY-MM-DD");
+      if (day < date) return 0;
+      if (day > date) return 24 * 60;
+      return settings.toMinutes(timezoneUtils.formatDate(d, "HH:mm"));
+    };
+    return events
+      .filter((e) => e.start && e.end && !skipIds.has(e.id))
+      .map((e) => {
+        if (!e.start.dateTime) return { start: 0, end: 24 * 60, kind: "block", label: e.summary || "Busy" };
+        return {
+          start: minutesOn(new Date(e.start.dateTime)),
+          end: minutesOn(new Date(e.end.dateTime)),
+          kind: "block",
+          label: e.summary || "Busy",
+        };
+      })
+      .filter((b) => b.end > b.start);
   }
 
   async getCalendarContext(instructor) {
@@ -227,7 +257,7 @@ class CalendarService {
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.date,
         bookingData.time,
-        lessonMinutes(instructor)
+        lessonMinutes(instructor, bookingData.durationMin)
       );
 
       const event = {
@@ -336,7 +366,7 @@ class CalendarService {
       const { startDateTime, endDateTime } = this.buildDateTimes(
         bookingData.newDate,
         bookingData.newTime,
-        lessonMinutes(instructor)
+        lessonMinutes(instructor, bookingData.durationMin)
       );
 
       const event = {

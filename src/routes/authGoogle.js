@@ -171,8 +171,11 @@ router.post("/google-signup", async (req, res) => {
         planSelected: false,
         apiKey: hashedKey,
         active: true,
+        // New instructors start with Donna packing their day
+        botSettings: { scheduleMode: "packed" },
         ...(previous.length && { previousAccountIds: previous }),
       });
+      await require("../services/lessonTypes").ensureDefaultLessonTypes(instructor.phoneNumberId);
       if (previous.length) {
         await require("../services/auditLog").audit(email, "account.rejoined", email, { previousAccountIds: previous.map(String) });
       }

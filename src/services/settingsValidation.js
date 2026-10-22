@@ -85,10 +85,37 @@ const ROUTE_SPEC = {
   },
   suggestOtherDays: bool(),
   lookAheadDays: int(5, 20),
+  bufferMin: int(12, 45),
+  driveVarianceMin: int(0, 15),
 };
+
+const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 
 const BOT_SPEC = {
   donnaEnabled: bool(),
+  scheduleMode: oneOf(["fixed", "packed"]),
+  dayHours: (v, label, errors) => {
+    if (v === null) return { value: null };
+    const day = (h, l) => {
+      if (h === null) return { value: null };
+      if (!isObj(h) || !TIME.test(h.start || "") || !TIME.test(h.end || "")) {
+        return { error: `${l} needs a start and end time like "09:00", or empty for a day off` };
+      }
+      if (toMin(h.end) - toMin(h.start) < 30) return { error: `${l} must end at least 30 minutes after it starts` };
+      return { value: { start: h.start, end: h.end } };
+    };
+    const days = check(v, Object.fromEntries(DAY_KEYS.map((d) => [d, day])), label, errors);
+    return { value: Object.fromEntries(DAY_KEYS.map((d) => [d, days[d] ?? null])) };
+  },
+  lunch: (v, label, errors) => {
+    const l = check(v, {
+      enabled: bool(),
+      durationMin: int(15, 90, { step: 5 }),
+      windowFrom: (t, lb) => (TIME.test(t || "") ? { value: t } : { error: `${lb} must be a time like "12:00"` }),
+      windowTo: (t, lb) => (TIME.test(t || "") ? { value: t } : { error: `${lb} must be a time like "14:00"` }),
+    }, label, errors);
+    return { value: l };
+  },
   workingHours: (v, label, errors) => {
     if (v === null) return { value: null };
     const days = check(v, Object.fromEntries(DAY_KEYS.map((d) => [d, timeList(24)])), label, errors);

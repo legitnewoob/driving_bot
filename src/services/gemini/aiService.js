@@ -8,6 +8,7 @@ const settings = require("../instructorSettings");
 const { isDbReady } = require("../../utils/db");
 const { getCoordinatesFromPostalCode } = require("../mapsService");
 const logger = require("../../utils/logger-advanced");
+const { formatDuration } = require("../lessonTypes");
 const fs = require("fs");
 const path = require("path");
 
@@ -102,13 +103,19 @@ class AIService {
     const bot = settings.resolveBotSettings(instructor);
     const route = settings.resolveRouteSettings(instructor);
     const duration = route.lessonDurationMin;
-    const lessonLength = duration % 60 === 0
-      ? `${duration / 60} hour${duration === 60 ? "" : "s"}`
-      : `${duration} minutes`;
+    const typedLengths = lessonTypes.some((t) => t.durationMin);
+    const lessonLength = typedLengths
+      ? "set by the lesson type (see LESSON TYPES)"
+      : duration % 60 === 0
+        ? `${duration / 60} hour${duration === 60 ? "" : "s"}`
+        : `${duration} minutes`;
+    const times = route.packed
+      ? "worked out for each day from the lesson length and where learners are; use the availability info"
+      : settings.allWorkingTimes(instructor || {}).join(", ");
 
     let prompt = this._systemPromptRaw
       .replaceAll("{{INSTRUCTOR_NAME}}", name)
-      .replaceAll("{{AVAILABLE_TIMES}}", settings.allWorkingTimes(instructor || {}).join(", "))
+      .replaceAll("{{AVAILABLE_TIMES}}", times)
       .replaceAll("{{WORKING_DAYS}}", settings.describeWorkingDays(instructor || {}))
       .replaceAll("{{LESSON_LENGTH}}", lessonLength)
       .replaceAll("{{MIN_NOTICE_HOURS}}", String(bot.minNoticeHours));
@@ -140,7 +147,9 @@ class AIService {
     if (lessonTypes.length) {
       prompt +=
         `\n\n## LESSON TYPES\n` +
-        lessonTypes.map((t) => `- ${t.name}: £${t.price}${t.description ? ` — ${t.description}` : ""}`).join("\n") +
+        lessonTypes
+          .map((t) => `- ${t.name}${t.durationMin ? ` (${formatDuration(t.durationMin)})` : ""}: £${t.price}${t.description ? ` — ${t.description}` : ""}`)
+          .join("\n") +
         `\nIf it isn't clear which lesson the learner wants, ask before booking and add "offerLessonTypes": true so they can tap one. ` +
         `Put the chosen name in the BOOK JSON as "lessonType". Quote prices exactly as listed.`;
     }
@@ -184,6 +193,34 @@ class AIService {
     this._pruneStaleContexts();
 
     logger.info(`Pending context updated for ${userPhone}: date=${this.pendingContext[userPhone].date}, time=${this.pendingContext[userPhone].time}`);
+  }
+
+  /** Remembers the lesson type the learner picked, so availability uses its length. */
+  setPendingLessonType(userPhone, type) {
+    if (!type) return;
+    if (!this.pendingContext[userPhone]) this.pendingContext[userPhone] = {};
+    Object.assign(this.pendingContext[userPhone], {
+      lessonTypeId: String(type._id),
+      lessonTypeName: type.name,
+      durationMin: type.durationMin || null,
+      _updatedAt: Date.now(),
+    });
+  }
+
+  /**
+   * The length of the lesson being discussed: the type picked in this chat,
+   * else the learner's usual type, else the only type there is. Null when it's
+   * still unknown (the instructor's single old length then applies).
+   */
+  async _lessonLengthFor(userPhone, instructor, learner = null) {
+    const pending = this.pendingContext[userPhone];
+    if (pending?.durationMin) return pending.durationMin;
+    const types = (await this._lessonTypesFor(instructor)).filter((t) => t.durationMin);
+    const usual = learner?.schedulingPrefs?.defaultLessonTypeId;
+    const match = usual && types.find((t) => String(t._id) === String(usual));
+    if (match) return match.durationMin;
+    if (types.length === 1) return types[0].durationMin;
+    return null;
   }
 
   /**
@@ -237,6 +274,20 @@ class AIService {
       logger.warn(
         `Geocoding pending pickup "${ctx.pickupAddress}" failed for ${userPhone}: ${err.message}`
       );
+      return null;
+    }
+  }
+
+  async _getPendingDropoffCoords(userPhone) {
+    const ctx = this.pendingContext[userPhone];
+    if (!ctx?.dropoffAddress) return null;
+    if (ctx.dropoffCoords) return ctx.dropoffCoords;
+    try {
+      const geo = await getCoordinatesFromPostalCode(ctx.dropoffAddress);
+      ctx.dropoffCoords = { lat: geo.lat, long: geo.lng };
+      return ctx.dropoffCoords;
+    } catch (err) {
+      logger.warn(`Geocoding pending drop-off "${ctx.dropoffAddress}" failed for ${userPhone}: ${err.message}`);
       return null;
     }
   }
@@ -478,9 +529,11 @@ class AIService {
       }
 
       const workingTimes = settings.allWorkingTimes(instructor);
+      const packed = settings.isPacked(instructor);
 
-      // Early-exit: reject times not in the allowed list BEFORE hitting the calendar
-      if (timeRequested && !isValidBookingTime(timeRequested, workingTimes)) {
+      // Early-exit: reject times not in the allowed list BEFORE hitting the calendar.
+      // Packed mode has no fixed list: any time that fits is fine.
+      if (!packed && timeRequested && !isValidBookingTime(timeRequested, workingTimes)) {
         return {
           isValidRequest: false,
           requestedSlotAvailable: false,
@@ -490,9 +543,11 @@ class AIService {
         };
       }
 
-      const availableSlotsForDate = await calendarService.getAvailableTimeSlotsForDate(
+      const durationMin = await this._lessonLengthFor(userPhone, instructor);
+      let availableSlotsForDate = await calendarService.getAvailableTimeSlotsForDate(
         dateRequested,
-        instructor
+        instructor,
+        durationMin
       );
 
       logger.info(`Slots for ${dateRequested} (pre-optimization): [${availableSlotsForDate}]`);
@@ -500,6 +555,7 @@ class AIService {
       // If the user has already given a pickup address in this conversation,
       // use those coords (geocoded lazily) instead of their profile location.
       const pickupCoords = await this._getPendingPickupCoords(userPhone);
+      const dropoffCoords = await this._getPendingDropoffCoords(userPhone);
 
       let day = { offered: availableSlotsForDate, evaluations: [], preferred: [] };
       let learner = { userLoc: null, prefs: {}, user: null };
@@ -512,7 +568,12 @@ class AIService {
           userLoc: learner.userLoc,
           prefs: learner.prefs,
           userPhone,
+          durationMin,
+          dropoffLoc: dropoffCoords,
+          requestedTime: timeRequested,
         });
+        // Packed mode makes its own starts (real drives can fit lessons in sooner)
+        if (day.free) availableSlotsForDate = day.free;
       } catch (err) {
         logger.error(`Route optimiser error: ${err.message}`);
       }
@@ -549,6 +610,8 @@ class AIService {
             prefs: learner.prefs,
             userPhone,
             excludeDate: dateRequested,
+            durationMin,
+            dropoffLoc: dropoffCoords,
           });
         } catch (err) {
           logger.warn(`Best-days suggestion failed: ${err.message}`);
@@ -710,7 +773,7 @@ class AIService {
     };
 
     const ACTION_REGEX =
-      /\[ACTION:(BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NEXT_AVAILABLE_SLOT|HANDOVER|WAITLIST|NULL)\]\s*({[\s\S]*?})?\s*$/;
+      /\[ACTION:(START_BOOKING|BOOK|UPDATE_BOOKING|CANCEL_BOOKING|SHOW_BOOKINGS|NEXT_AVAILABLE_SLOT|HANDOVER|WAITLIST|NULL)\]\s*({[\s\S]*?})?\s*$/;
 
     const match = aiResponse.match(ACTION_REGEX);
 

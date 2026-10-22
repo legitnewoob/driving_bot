@@ -204,7 +204,7 @@ describe("1.3 webhook acknowledgement and repeats", () => {
     const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
 
     const pending = webhookController.handleWebhook(
-      { body: webhookBody([{ from: "4471", id: "wamid.1", type: "text", text: { body: "hi" } }]) },
+      { body: webhookBody([{ from: "4471", id: "wamid.1", type: "text", text: { body: "can you help me with a lesson?" } }]) },
       res
     );
     await sleep(10);
@@ -249,7 +249,7 @@ describe("1.3 webhook acknowledgement and repeats", () => {
   it("marks real messages as read with a typing indicator", async () => {
     jest.spyOn(aiService, "getResponse").mockResolvedValue("hi\n[ACTION:NULL]\n{}");
     await webhookController.handleWebhook(
-      { body: webhookBody([{ from: "4471", id: "wamid.T", type: "text", text: { body: "hi" } }]) },
+      { body: webhookBody([{ from: "4471", id: "wamid.T", type: "text", text: { body: "can you help me with a lesson?" } }]) },
       { status: jest.fn().mockReturnThis(), send: jest.fn() }
     );
     expect(whatsappService.markReadAndTyping).toHaveBeenCalledWith("wamid.T", mockInstructors["inst-A"]);
@@ -400,7 +400,7 @@ describe("1.5 persisted conversations", () => {
       return "ok\n[ACTION:NULL]\n{}";
     });
 
-    await webhookController.handleIncomingMessage("4471", "hi", "inst-A", true, () => {});
+    await webhookController.handleIncomingMessage("4471", "can you help me with a lesson?", "inst-A", true, () => {});
 
     expect(order).toEqual(["load", "ai", "save"]);
   });
@@ -468,6 +468,8 @@ describe("1.4 portal bookings use the same slot lock", () => {
 
   beforeEach(() => {
     User.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.resolve({ name: "Jane" }) }) });
+    // No other lessons that day, so there's nothing to overlap
+    Booking.find.mockReturnValue({ lean: () => Promise.resolve([]) });
   });
 
   it("creates the booking before the calendar event", async () => {

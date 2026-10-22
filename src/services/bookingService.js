@@ -50,10 +50,14 @@ async function geocodeAddress(address, from, label) {
   }
 }
 
-async function resolveLessonType(instructorId, requestedName, defaultId) {
-  if (!requestedName && !defaultId) return null;
+async function resolveLessonType(instructorId, requestedName, defaultId, requestedId = null) {
+  if (!requestedName && !defaultId && !requestedId) return null;
   if (!isDbReady()) return null;
   try {
+    if (requestedId) {
+      const byId = await LessonType.findOne({ _id: requestedId, instructorId, active: true }).lean().catch(() => null);
+      if (byId) return byId;
+    }
     if (requestedName) {
       const types = await LessonType.find({ instructorId, active: true }).lean();
       const wanted = String(requestedName).trim().toLowerCase();
@@ -130,8 +134,16 @@ class BookingService {
     return cancellationNoticeHours > 0 && hoursUntil(booking.date, booking.time) < cancellationNoticeHours;
   }
 
-  async validateBooking(bookingData, instructor) {
+  /**
+   * Problems with a booking's date and time, as learner-facing messages.
+   * opts.durationMin is the lesson's length; opts.userLoc / opts.dropoffLoc are
+   * where it starts and ends (packed mode checks the drive gaps with them).
+   */
+  async validateBooking(bookingData, instructor, opts = {}) {
     const availableDates = getAvailableDates(instructor);
+    const durationMin = opts.durationMin || bookingData.durationMin || null;
+    const lessonMin = durationMin || settings.resolveRouteSettings(instructor).lessonDurationMin;
+    const packed = settings.isPacked(instructor);
 
     const errors = [];
 
@@ -146,8 +158,21 @@ class BookingService {
       );
     }
 
-    const dayTimes = settings.timesForDate(instructor, bookingData.date);
-    if (!dayTimes.includes(bookingData.time)) {
+    const dayTimes = settings.timesForDate(instructor, bookingData.date, lessonMin);
+    if (packed) {
+      const ok = errors.length === 0 && await routeOptimizer.isPackedStartAvailable({
+        date: bookingData.date,
+        time: bookingData.time,
+        instructor,
+        durationMin: lessonMin,
+        userLoc: opts.userLoc || null,
+        dropoffLoc: opts.dropoffLoc || null,
+        excludeBookingId: opts.excludeBookingId || null,
+      });
+      if (!ok && errors.length === 0) {
+        errors.push(`${to12h(bookingData.time)} on ${bookingData.date} isn't free for a lesson that long. Please pick one of the offered times.`);
+      }
+    } else if (!dayTimes.includes(bookingData.time)) {
       errors.push(
         "Time slot is not available. Available times: " +
           (dayTimes.length ? dayTimes : settings.allWorkingTimes(instructor)).join(", ")
@@ -175,7 +200,8 @@ class BookingService {
       const availability = calendarService.checkSlotAgainstEvents(
         bookingData.date,
         bookingData.time,
-        events
+        events.filter((e) => !opts.ignoreEventId || e.id !== opts.ignoreEventId),
+        lessonMin
       );
 
       if (!availability.isAvailable) {
@@ -187,7 +213,8 @@ class BookingService {
           const { isAvailable } = calendarService.checkSlotAgainstEvents(
             bookingData.date,
             time,
-            events
+            events,
+            lessonMin
           );
           return isAvailable;
         });
@@ -231,21 +258,64 @@ class BookingService {
     const instructor = await getInstructor(booking.instructorId);
     if (!instructor) throw new Error("Instructor not found for this booking");
 
+    // Optional changes besides the time: a different lesson type (and so length),
+    // and a new pickup or drop-off. Resolve them first so the checks use them.
+    let lessonType = null;
+    if (bookingData.lessonTypeId || bookingData.lessonType) {
+      lessonType = await resolveLessonType(booking.instructorId, bookingData.lessonType, null, bookingData.lessonTypeId);
+      if (!lessonType) throw userFacingError("I couldn't find that lesson type. Please pick one from the list.");
+    }
+    const durationMin = lessonType?.durationMin || booking.durationMin || null;
+
+    let pickupLocation = null;
+    let dropoffLocation = null;
+    if (bookingData.pickupAddress) {
+      pickupLocation = bookingData.pickupCoords
+        ? { address: bookingData.pickupAddress, latitude: bookingData.pickupCoords.lat, longitude: bookingData.pickupCoords.long }
+        : await geocodeAddress(bookingData.pickupAddress, from, "Pickup");
+    }
+    if (bookingData.dropoffAddress) {
+      dropoffLocation = bookingData.dropoffCoords
+        ? { address: bookingData.dropoffAddress, latitude: bookingData.dropoffCoords.lat, longitude: bookingData.dropoffCoords.long }
+        : await geocodeAddress(bookingData.dropoffAddress, from, "Drop-off");
+    }
+    const toLoc = (l) => (l && typeof l.latitude === "number" ? { lat: l.latitude, long: l.longitude } : null);
+    const startLoc = toLoc(pickupLocation) || toLoc(booking.pickupLocation) || toLoc(booking.location);
+    const endLoc = toLoc(dropoffLocation) || toLoc(booking.dropoffLocation);
+
     const validationErrors = await this.validateBooking({
       ...booking.toObject(),
       date: newDate,
       time: newTime,
-    }, instructor);
+    }, instructor, {
+      durationMin,
+      userLoc: startLoc,
+      dropoffLoc: endLoc,
+      excludeBookingId: booking.bookingId,
+      ignoreEventId: booking.calendarEventId,
+    });
     if (validationErrors.length > 0) throw userFacingError(validationErrors.join(" "));
 
-    const previous = { date: booking.date, time: booking.time, status: booking.status };
+    const previous = {
+      date: booking.date,
+      time: booking.time,
+      status: booking.status,
+      durationMin: booking.durationMin,
+      lessonTypeId: booking.lessonTypeId,
+      lessonTypeName: booking.lessonTypeName,
+      price: booking.price,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+    };
 
-    if (bookingData.pickupAddress) {
-      booking.pickupLocation = await geocodeAddress(bookingData.pickupAddress, from, "Pickup");
+    if (pickupLocation) booking.pickupLocation = pickupLocation;
+    if (dropoffLocation) booking.dropoffLocation = dropoffLocation;
+    if (lessonType) {
+      booking.lessonTypeId = lessonType._id;
+      booking.lessonTypeName = lessonType.name;
+      booking.price = lessonType.price;
     }
-    if (bookingData.dropoffAddress) {
-      booking.dropoffLocation = await geocodeAddress(bookingData.dropoffAddress, from, "Drop-off");
-    }
+    if (durationMin) booking.durationMin = durationMin;
 
     booking.date = newDate;
     booking.time = newTime;
@@ -268,7 +338,7 @@ class BookingService {
     }
 
     try {
-      await calendarService.updateEvent(booking.calendarEventId, bookingData, instructor);
+      await calendarService.updateEvent(booking.calendarEventId, { ...bookingData, durationMin }, instructor);
     } catch (err) {
       logger.error(`Calendar update failed for ${bookingId}, undoing reschedule: ${err.message}`);
       Object.assign(booking, previous);
@@ -286,12 +356,55 @@ class BookingService {
   }
 
   async createBooking(from, bookingData, instructor) {
-    const validationErrors = await this.validateBooking(bookingData, instructor);
+    const user = await User.findOne({ phone: from, instructorId: instructor.phoneNumberId });
+
+    // The lesson type sets the length, which every availability check needs
+    const lessonType = await resolveLessonType(
+      instructor.phoneNumberId,
+      bookingData.lessonType,
+      user?.schedulingPrefs?.defaultLessonTypeId,
+      bookingData.lessonTypeId
+    );
+    const durationMin = lessonType?.durationMin || bookingData.durationMin || null;
+
+    let pickupLocation = {};
+    let dropoffLocation = {};
+    if (bookingData.pickupCoords && bookingData.pickupAddress) {
+      pickupLocation = {
+        address: bookingData.pickupAddress,
+        latitude: bookingData.pickupCoords.lat,
+        longitude: bookingData.pickupCoords.long,
+      };
+    } else if (bookingData.pickupAddress) {
+      pickupLocation = await geocodeAddress(bookingData.pickupAddress, from, "Pickup");
+    }
+    if (bookingData.dropoffCoords && bookingData.dropoffAddress) {
+      dropoffLocation = {
+        address: bookingData.dropoffAddress,
+        latitude: bookingData.dropoffCoords.lat,
+        longitude: bookingData.dropoffCoords.long,
+      };
+    } else if (bookingData.dropoffAddress) {
+      dropoffLocation = await geocodeAddress(bookingData.dropoffAddress, from, "Drop-off");
+    }
+
+    const startLoc = pickupLocation.latitude !== undefined
+      ? { lat: pickupLocation.latitude, long: pickupLocation.longitude }
+      : user?.location?.latitude && user?.location?.longitude
+        ? { lat: user.location.latitude, long: user.location.longitude }
+        : null;
+    const endLoc = dropoffLocation.latitude !== undefined
+      ? { lat: dropoffLocation.latitude, long: dropoffLocation.longitude }
+      : null;
+
+    const validationErrors = await this.validateBooking(bookingData, instructor, {
+      durationMin,
+      userLoc: startLoc,
+      dropoffLoc: endLoc,
+    });
     if (validationErrors.length > 0) {
       throw userFacingError(validationErrors.join(" "));
     }
-
-    const user = await User.findOne({ phone: from, instructorId: instructor.phoneNumberId });
 
     if (!user) {
       throw new Error("User not found. Please complete your profile first.");
@@ -322,38 +435,16 @@ class BookingService {
       );
     }
 
-    let pickupLocation = {};
-    let dropoffLocation = {};
-
-    if (bookingData.pickupCoords && bookingData.pickupAddress) {
-      pickupLocation = {
-        address: bookingData.pickupAddress,
-        latitude: bookingData.pickupCoords.lat,
-        longitude: bookingData.pickupCoords.long,
-      };
-    } else if (bookingData.pickupAddress) {
-      pickupLocation = await geocodeAddress(bookingData.pickupAddress, from, "Pickup");
-    }
-
-    if (bookingData.dropoffAddress) {
-      dropoffLocation = await geocodeAddress(bookingData.dropoffAddress, from, "Drop-off");
-    }
-
     let routeFit = null;
     try {
-      const at = pickupLocation.latitude !== undefined
-        ? { lat: pickupLocation.latitude, long: pickupLocation.longitude }
-        : { lat: user.location.latitude, long: user.location.longitude };
-      routeFit = await routeOptimizer.evaluateSlot(bookingData.date, bookingData.time, instructor, at);
+      const at = startLoc || { lat: user.location.latitude, long: user.location.longitude };
+      routeFit = await routeOptimizer.evaluateSlot(bookingData.date, bookingData.time, instructor, at, {
+        durationMin,
+        dropoffLoc: endLoc,
+      });
     } catch (err) {
       logger.warn(`Route fit for booking not recorded: ${err.message}`);
     }
-
-    const lessonType = await resolveLessonType(
-      instructor.phoneNumberId,
-      bookingData.lessonType,
-      user.schedulingPrefs?.defaultLessonTypeId
-    );
 
     const doc = {
       userPhone: bookingData.userPhone,
@@ -372,8 +463,11 @@ class BookingService {
       lessonTypeId: lessonType?._id || null,
       lessonTypeName: lessonType?.name || "",
       price: lessonType ? lessonType.price : null,
+      durationMin,
       addedDriveMin: routeFit?.addedDrive != null ? Math.round(routeFit.addedDrive * 10) / 10 : null,
       routeScoreReason: routeFit?.reason || "",
+      driveInMin: routeFit?.driveIn != null ? Math.round(routeFit.driveIn) : null,
+      gapBeforeMin: routeFit?.gapBefore ?? null,
     };
 
     // Claim the slot in Mongo first: the unique index on instructor/date/time
@@ -391,7 +485,7 @@ class BookingService {
 
     let calendarEvent;
     try {
-      calendarEvent = await calendarService.createEvent(bookingData, instructor);
+      calendarEvent = await calendarService.createEvent({ ...bookingData, durationMin }, instructor);
     } catch (err) {
       logger.error(`Calendar event failed for ${newBooking.bookingId}, releasing slot: ${err.message}`);
       try {

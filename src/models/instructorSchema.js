@@ -41,10 +41,34 @@ const instructorSchema = new mongoose.Schema({
     },
     suggestOtherDays: { type: Boolean, default: true },
     lookAheadDays: { type: Number, default: 10 },
+    // Packed mode: most driving allowed between lessons, and the margin added to real drives
+    bufferMin: { type: Number, default: 20 },
+    driveVarianceMin: { type: Number, default: 5 },
   },
   botSettings: {
     // Master switch: when false Donna stops replying and booking (e.g. an emergency)
     donnaEnabled: { type: Boolean, default: true },
+    // "fixed": instructor picks start times. "packed": Donna fits lessons into dayHours.
+    // New instructors are created as "packed"; the default keeps existing ones as they were.
+    scheduleMode: { type: String, enum: ["fixed", "packed"], default: "fixed" },
+    dayHours: {
+      type: new mongoose.Schema(
+        Object.fromEntries(
+          ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => [
+            d,
+            { type: new mongoose.Schema({ start: String, end: String }, { _id: false }), default: null },
+          ])
+        ),
+        { _id: false }
+      ),
+      default: null,
+    },
+    lunch: {
+      enabled: { type: Boolean, default: true },
+      durationMin: { type: Number, default: 45 },
+      windowFrom: { type: String, default: "12:00" },
+      windowTo: { type: String, default: "14:00" },
+    },
     workingHours: {
       type: new mongoose.Schema({
         mon: [String], tue: [String], wed: [String], thu: [String],

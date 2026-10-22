@@ -117,7 +117,7 @@ describe("Accepting new learners", () => {
     mockInstructor.botSettings = { acceptingNewLearners: false };
     jest.spyOn(aiService, "getResponse").mockResolvedValue("Sure!\n[ACTION:NULL]\n{}");
 
-    const replies = await send("Hi");
+    const replies = await send("Hi, can you help me with a lesson?");
 
     expect(replies).toEqual(["Sure!"]);
   });

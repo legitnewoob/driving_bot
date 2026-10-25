@@ -132,6 +132,17 @@ describe("packed-mode settings", () => {
     expect(savedDoc.routeSettings.autoBufferMin).toBe(15);
   });
 
+  it("a dashboard tab from before the fix sends Donna's own fields back: ignored, not refused or overwritten", async () => {
+    instructor.routeSettings = { maxDriveMin: 40, autoBufferMin: 15, autoBufferSamples: 12 };
+    const { status, body } = await call("PATCH", "/settings", {
+      routeSettings: { maxDriveMin: 40, autoBufferMin: 5, autoBufferSamples: 99, autoBufferAt: "2020-01-01", serviceArea: { radius: 12 } },
+    });
+    expect(body.error).toBeUndefined();
+    expect(status).toBe(200);
+    expect(savedDoc.routeSettings).toMatchObject({ autoBufferMin: 15, autoBufferSamples: 12 });
+    expect(savedDoc.routeSettings.serviceArea.radius).toBe(12);
+  });
+
   it("an empty longest drive is accepted (Donna works it out from the older setting)", async () => {
     const { status } = await call("PATCH", "/settings", { routeSettings: { maxDriveMin: null } });
     expect(status).toBe(200);
@@ -147,7 +158,6 @@ describe("packed-mode settings", () => {
   it.each([
     [{ routeSettings: { maxDriveMin: 61 } }, "maxDriveMin"],
     [{ routeSettings: { maxDriveMin: 11 } }, "maxDriveMin"],
-    [{ routeSettings: { autoBufferMin: 5 } }, "autoBufferMin"],
     [{ routeSettings: { bufferMin: 50 } }, "bufferMin"],
     [{ routeSettings: { bufferMin: 10 } }, "bufferMin"],
     [{ routeSettings: { driveVarianceMin: 20 } }, "driveVarianceMin"],

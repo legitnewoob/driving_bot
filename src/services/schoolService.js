@@ -498,6 +498,7 @@ async function viewableInstructor(requester, instructorId) {
 }
 
 module.exports = {
+  requireSchool,
   setSchoolDonna,
   manageableInstructor,
   schoolLearners,

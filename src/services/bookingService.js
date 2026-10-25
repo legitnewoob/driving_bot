@@ -509,6 +509,8 @@ class BookingService {
       lessonTypeName: lessonType?.name || "",
       price: lessonType ? lessonType.price : null,
       durationMin,
+      // createBooking is how Donna books on WhatsApp; other callers say who they are
+      source: ["whatsapp", "portal", "dashboard"].includes(bookingData.source) ? bookingData.source : "whatsapp",
       addedDriveMin: routeFit?.addedDrive != null ? Math.round(routeFit.addedDrive * 10) / 10 : null,
       routeScoreReason: routeFit?.reason || "",
       driveInMin: routeFit?.driveIn != null ? Math.round(routeFit.driveIn) : null,

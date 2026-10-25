@@ -52,6 +52,8 @@ const bookingSchema = new mongoose.Schema({
   routeScoreReason: { type: String, default: "" },
   lessonTypeName: { type: String, default: "" },
   price: { type: Number, default: null },
+  // Who booked it: Donna on WhatsApp, or the instructor in the Portal or dashboard (null: before this was recorded)
+  source: { type: String, enum: ["whatsapp", "portal", "dashboard", null], default: null },
   lateCancellation: { type: Boolean, default: false },
   reminderSentAt: { type: Date, default: null },
   shortReminderSentAt: { type: Date, default: null },
@@ -65,5 +67,7 @@ bookingSchema.index(
   { unique: true, partialFilterExpression: { status: { $in: ["confirmed", "rescheduled"] } } }
 );
 bookingSchema.index({ reminderSentAt: 1, date: 1, status: 1 });
+// Range queries for dashboards and school analytics
+bookingSchema.index({ instructorId: 1, date: 1, status: 1 });
 
 module.exports = mongoose.model("Booking", bookingSchema);

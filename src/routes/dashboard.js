@@ -172,6 +172,10 @@ async function fetchUserMap(phones, instructorId) {
 
 // ─── Stats ────────────────────────────────────────────────────────────────
 
+// What a lesson is worth: its own price (from its lesson type when booked), else the flat rate
+const lessonValue = (b, rate) => (b.price != null ? b.price : rate);
+const BOOKED_STATUSES = ["confirmed", "rescheduled", "completed"];
+
 async function buildStats(instructor, range) {
   const tz = getInstructorTimezone(instructor);
   const { from, to, prevFrom, prevTo } = getRangeBounds(range, tz);
@@ -209,15 +213,11 @@ async function buildStats(instructor, range) {
   const currentLessons = currentBookings.length;
   const previousLessons = previousBookings.length;
 
-  const currentConfirmed = currentBookings.filter(
-    (b) => b.status === "confirmed" || b.status === "rescheduled"
-  );
-  const previousConfirmed = previousBookings.filter(
-    (b) => b.status === "confirmed" || b.status === "rescheduled"
-  );
 
-  const currentRevenue = currentConfirmed.length * rate;
-  const previousRevenue = previousConfirmed.length * rate;
+  // Every lesson that's going ahead or happened, at its own price
+  const valueOf = (list) => list.filter((b) => BOOKED_STATUSES.includes(b.status)).reduce((sum, b) => sum + lessonValue(b, rate), 0);
+  const currentRevenue = valueOf(currentBookings);
+  const previousRevenue = valueOf(previousBookings);
 
   const currentCancelled = currentBookings.filter((b) => b.status === "cancelled").length;
   const previousCancelled = previousBookings.filter((b) => b.status === "cancelled").length;
@@ -351,14 +351,16 @@ async function buildRevenueData(instructor) {
   const counts = await Promise.all(
     Array.from({ length: 7 }, (_, i) => {
       const day = startOfWeek.clone().add(i, "days");
-      return Booking.countDocuments({
+      return Booking.find({
         instructorId: instructor.phoneNumberId,
         date: day.format("YYYY-MM-DD"),
-        status: { $in: ["confirmed", "rescheduled"] },
-      }).then((count) => ({
-        name: day.format("ddd"),
-        revenue: count * rate,
-      }));
+        status: { $in: BOOKED_STATUSES },
+      })
+        .lean()
+        .then((list) => ({
+          name: day.format("ddd"),
+          revenue: (Array.isArray(list) ? list : []).reduce((sum, b) => sum + lessonValue(b, rate), 0),
+        }));
     })
   );
 
@@ -499,14 +501,14 @@ async function buildRevenueGoal(instructor) {
   const monthEnd = moment.tz(tz).endOf("month").format("YYYY-MM-DD");
   const rate = instructor.rates?.basic || DEFAULT_LESSON_RATE;
 
-  const confirmedThisMonth = await Booking.countDocuments({
+  const thisMonth = await Booking.find({
     instructorId: instructor.phoneNumberId,
     date: { $gte: monthStart, $lte: monthEnd },
-    status: { $in: ["confirmed", "rescheduled"] },
-  });
+    status: { $in: BOOKED_STATUSES },
+  }).lean();
 
   const target = MONTHLY_REVENUE_TARGET;
-  const current = confirmedThisMonth * rate;
+  const current = (Array.isArray(thisMonth) ? thisMonth : []).reduce((sum, b) => sum + lessonValue(b, rate), 0);
 
   return { current, target };
 }

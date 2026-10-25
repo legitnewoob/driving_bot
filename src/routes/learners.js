@@ -248,6 +248,7 @@ router.post("/bookings", async (req, res) => {
           lessonTypeId: lessonType?._id || null,
           lessonTypeName: lessonType?.name || "",
           price: lessonType ? lessonType.price : null,
+          source: req.body?.source === "dashboard" ? "dashboard" : "portal",
         });
       } catch (err) {
         if (err?.code === 11000 && err.keyPattern?.bookingId && attempt < 5) continue;

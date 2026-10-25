@@ -43,6 +43,12 @@ const instructorSchema = new mongoose.Schema({
     lookAheadDays: { type: Number, default: 10 },
     // Packed mode: most driving allowed between lessons, and the margin added to real drives
     bufferMin: { type: Number, default: 20 },
+    // Packed mode: the longest drive between lessons (null = older settings,
+    // worked out from bufferMin), and the usual gap Donna has learned
+    maxDriveMin: { type: Number, default: null },
+    autoBufferMin: { type: Number, default: null },
+    autoBufferSamples: { type: Number, default: 0 },
+    autoBufferAt: { type: Date, default: null },
     driveVarianceMin: { type: Number, default: 5 },
   },
   botSettings: {

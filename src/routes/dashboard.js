@@ -813,6 +813,11 @@ function settingsPayload(instructor) {
       workingHours: settings.workingHoursFor(instructor),
       dayHours: settings.dayHoursFor(instructor),
     },
+    // Packed mode: the longest drive (set) and the usual gap (Donna works it out)
+    packing: (() => {
+      const { maxDriveMin, bufferMin, bufferSource, bufferSamples } = settings.resolveRouteSettings(instructor);
+      return { maxDriveMin, bufferMin, bufferSource, bufferSamples, learnAfter: settings.LEARN_AFTER_DRIVES };
+    })(),
     presets: settings.ROUTE_PRESETS,
   };
 }
@@ -1077,7 +1082,8 @@ router.post("/route-preview", async (req, res) => {
  * POST /api/dashboard/day-preview
  * How many lessons of each type fit in a day with these (draft) settings,
  * assuming every drive takes the full X: the guaranteed minimum.
- * Body: { bufferMin?, dayHours?: { start, end }, lunch?, durationMins? }
+ * Body: { maxDriveMin?, dayHours?: { start, end }, lunch?, durationMins? }
+ * X is the usual gap Donna works out (from past drives, or half the longest drive).
  */
 router.post("/day-preview", async (req, res) => {
   try {
@@ -1086,7 +1092,7 @@ router.post("/day-preview", async (req, res) => {
 
     const body = req.body || {};
     const draft = {};
-    if (body.bufferMin !== undefined) draft.routeSettings = { bufferMin: body.bufferMin };
+    if (body.maxDriveMin !== undefined) draft.routeSettings = { maxDriveMin: body.maxDriveMin };
     if (body.lunch !== undefined) draft.botSettings = { lunch: body.lunch };
     const { errors, routeSettings, botSettings } = validateSettingsUpdate(draft);
     if (errors.length) return res.status(400).json({ success: false, error: errors[0], errors });
@@ -1096,7 +1102,9 @@ router.post("/day-preview", async (req, res) => {
     const badLunch = lunchProblem(lunch);
     if (badLunch) return res.status(400).json({ success: false, error: badLunch });
 
-    const X = routeSettings?.bufferMin ?? settings.resolveRouteSettings(instructor).bufferMin;
+    const stored = plainObj(instructor.routeSettings) || {};
+    const range = settings.packingRange({ ...stored, ...(routeSettings || {}) });
+    const X = range.bufferMin;
     let hours = body.dayHours;
     if (hours !== undefined) {
       const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -1144,7 +1152,10 @@ router.post("/day-preview", async (req, res) => {
       };
     });
 
-    res.json({ success: true, data: { bufferMin: X, dayHours: hours, lunch, days } });
+    res.json({
+      success: true,
+      data: { bufferMin: X, maxDriveMin: range.maxDriveMin, bufferSource: range.bufferSource, dayHours: hours, lunch, days },
+    });
   } catch (err) {
     logger.error(`Dashboard /day-preview error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to preview your day" });

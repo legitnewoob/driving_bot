@@ -396,6 +396,7 @@ class BookingService {
 
     logger.info(`Booking ${bookingId} rescheduled for ${from}`);
     notifications.bookingChanged(instructor, "rescheduled", booking, previous).catch(() => {});
+    require("./typicalDrive").refresh(instructor);
     return booking;
   }
 
@@ -554,6 +555,7 @@ class BookingService {
     await Booking.updateOne({ _id: newBooking._id }, { calendarEventId: calendarEvent.id });
 
     notifications.bookingChanged(instructor, "booked", newBooking).catch(() => {});
+    require("./typicalDrive").refresh(instructor);
 
     return {
       booking: newBooking,

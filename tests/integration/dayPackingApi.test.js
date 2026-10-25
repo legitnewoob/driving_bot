@@ -115,7 +115,17 @@ describe("packed-mode settings", () => {
     expect(savedDoc.botSettings.lunch).toMatchObject({ enabled: true, durationMin: 30, windowFrom: "12:30", windowTo: "13:30" });
   });
 
+  it("saves the longest drive, and sends back the usual gap Donna works out", async () => {
+    const { status, body } = await call("PATCH", "/settings", { routeSettings: { maxDriveMin: 50 } });
+    expect(status).toBe(200);
+    expect(savedDoc.routeSettings.maxDriveMin).toBe(50);
+    expect(body.data.packing).toMatchObject({ maxDriveMin: 50, bufferMin: 25, bufferSource: "default" });
+  });
+
   it.each([
+    [{ routeSettings: { maxDriveMin: 61 } }, "maxDriveMin"],
+    [{ routeSettings: { maxDriveMin: 11 } }, "maxDriveMin"],
+    [{ routeSettings: { autoBufferMin: 5 } }, "autoBufferMin"],
     [{ routeSettings: { bufferMin: 50 } }, "bufferMin"],
     [{ routeSettings: { bufferMin: 10 } }, "bufferMin"],
     [{ routeSettings: { driveVarianceMin: 20 } }, "driveVarianceMin"],
@@ -148,7 +158,7 @@ describe("POST /day-preview", () => {
 
   it("counts the lessons of each type that fit, with lunch", async () => {
     const { status, body } = await call("POST", "/day-preview", {
-      bufferMin: 15,
+      maxDriveMin: 30, // X = half of it: 15
       dayHours: { start: "08:00", end: "18:00" },
       lunch: { enabled: true, durationMin: 45, windowFrom: "12:00", windowTo: "14:00" },
     });
@@ -159,22 +169,22 @@ describe("POST /day-preview", () => {
     expect(body.data.days.map((d) => d.durationMin)).toEqual([60, 90, 120]);
   });
 
-  it("a bigger X fits fewer lessons", async () => {
+  it("a longer longest-drive (so a bigger usual gap) fits fewer lessons", async () => {
     const day = { start: "08:00", end: "18:00" };
-    const tight = await call("POST", "/day-preview", { bufferMin: 12, dayHours: day });
-    const relaxed = await call("POST", "/day-preview", { bufferMin: 45, dayHours: day });
+    const tight = await call("POST", "/day-preview", { maxDriveMin: 20, dayHours: day });
+    const relaxed = await call("POST", "/day-preview", { maxDriveMin: 60, dayHours: day });
     const count = (r) => r.body.data.days.find((d) => d.durationMin === 60).count;
     expect(count(relaxed)).toBeLessThan(count(tight));
   });
 
   it("checks the draft values", async () => {
-    expect((await call("POST", "/day-preview", { bufferMin: 99 })).status).toBe(400);
+    expect((await call("POST", "/day-preview", { maxDriveMin: 99 })).status).toBe(400);
     expect((await call("POST", "/day-preview", { dayHours: { start: "18:00", end: "09:00" } })).status).toBe(400);
   });
 
   it("uses 1h, 1.5h and 2h when there are no lesson types yet", async () => {
     LessonType.find.mockReturnValue(sortedLeanOf([]));
-    const { body } = await call("POST", "/day-preview", { bufferMin: 20 });
+    const { body } = await call("POST", "/day-preview", { maxDriveMin: 40 });
     expect(body.data.days.map((d) => d.durationMin)).toEqual([60, 90, 120]);
   });
 });

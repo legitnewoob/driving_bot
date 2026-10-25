@@ -6,7 +6,8 @@
  *
  *   Next door (same address) → 5 minutes after the last lesson
  *   Close (Hanley ↔ Fenton)  → the real drive + 5, well under X
- *   Far (Hanley ↔ Leek)      → over X, so not offered next to that lesson
+ *   Far (Hanley ↔ Leek)      → over the usual gap: fitted in on a quiet day,
+ *                              never when it's over the longest drive
  *
  * Requires GOOGLE_MAPS_API_KEY in envs/.env.test
  * Run:  npm run test:e2e -- packedDayRealWorld
@@ -42,13 +43,14 @@ function nextWednesday() {
 const DAY = nextWednesday();
 const HOURS = Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => [d, { start: "08:00", end: "18:00" }]));
 
-const instructor = (X = 20) => ({
+// route: { maxDriveMin } for the longest drive (usual gap = half of it)
+const instructor = (route = {}) => ({
   phoneNumberId: "e2e-packed-real",
   name: "Sam",
   active: true,
   baseLocation: dbLoc(P.base),
   botSettings: { scheduleMode: "packed", dayHours: HOURS, lunch: { enabled: false } },
-  routeSettings: { bufferMin: X, driveVarianceMin: 5 },
+  routeSettings: { maxDriveMin: 40, driveVarianceMin: 5, ...route },
 });
 const lesson = (time, place) => ({
   bookingId: `DL-${time.replace(":", "")}`,
@@ -97,24 +99,35 @@ describeE2E(E2E_KEYS.MAPS, "E2E – Smart day packing with real drive times", ()
   }, TIMEOUT);
 
   it("a close learner starts after the real drive + 5, sooner than X", async () => {
-    const day = await plan(instructor(30), P.fenton, [lesson("09:00", P.hanley)]);
+    const inst = instructor({ maxDriveMin: 60 }); // X = 30
+    const day = await plan(inst, P.fenton, [lesson("09:00", P.hanley)]);
     const first = day.free.filter((t) => t >= "10:00").map(toMin)[0];
     const need = Math.ceil((drive.toFenton + 5) / 5) * 5;
     expect(first - toMin("10:00")).toBe(need);
     expect(need).toBeLessThan(30);
   }, TIMEOUT);
 
-  it("a learner too far to reach within X isn't offered next to that lesson", async () => {
-    const X = Math.max(12, Math.floor(drive.toLeek)); // drive + 5 is always over this X
-    const day = await plan(instructor(X), P.leek, [lesson("12:00", P.hanley)]);
+  it("a learner further than the longest drive isn't offered next to a lesson", async () => {
+    const inst = instructor({ maxDriveMin: Math.max(12, Math.floor(drive.toLeek) - 1) });
+    const day = await plan(inst, P.leek, [lesson("12:00", P.hanley)]);
     expect(day.free).toEqual([]);
   }, TIMEOUT);
 
-  it("the same far learner is offered when X allows the drive", async () => {
-    const X = Math.min(45, Math.ceil(drive.toLeek + 5) + 2); // a little slack for traffic changes between calls
-    if (drive.toLeek + 5 > 45) return; // can't be allowed within the slider's range
-    const day = await plan(instructor(X), P.leek, [lesson("12:00", P.hanley)]);
+  it("on a quiet day a far learner within the longest drive is fitted in, after the full drive", async () => {
+    if (drive.toLeek + 2 > 60) return; // can't be allowed within the slider's range
+    const inst = instructor({ maxDriveMin: Math.min(60, Math.ceil(drive.toLeek) + 2) });
+    const day = await plan(inst, P.leek, [lesson("09:00", P.hanley)]);
     expect(day.free.length).toBeGreaterThan(0);
-    expect(await routeOptimizer.isPackedStartAvailable({ date: DAY, time: day.free[0], instructor: instructor(X), durationMin: 60, userLoc: loc(P.leek) })).toBe(true);
+    const first = day.free.map(toMin)[0];
+    expect(first - toMin("10:00")).toBeGreaterThanOrEqual(drive.toLeek + 5);
+    expect(await routeOptimizer.isPackedStartAvailable({ date: DAY, time: day.free[0], instructor: inst, durationMin: 60, userLoc: loc(P.leek) })).toBe(true);
+  }, TIMEOUT);
+
+  it("on a busy day the same far learner doesn't take a local learner's place", async () => {
+    if (drive.toLeek + 2 > 60) return;
+    const inst = instructor({ maxDriveMin: Math.min(60, Math.ceil(drive.toLeek) + 2) });
+    const busy = ["08:00", "09:30", "11:00", "12:30", "14:00"].map((t) => lesson(t, P.hanley));
+    const day = await plan(inst, P.leek, busy);
+    expect(day.free.every((t) => toMin(t) >= toMin("15:00") + drive.toLeek)).toBe(true);
   }, TIMEOUT);
 });

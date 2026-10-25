@@ -457,7 +457,11 @@ class BookingFlow {
 
     const rows = times.map((t) => ({ id: `bf:time:${t}`, title: `${to12h(t)} – ${to12h(addMinutes(t, length))}` }));
     rows.push({ id: "bf:date:pick", title: "Another day" });
-    await ctx.sendList(`Here's what's free on ${formatDay(date)}:`, "Choose a time", rows);
+    // A far learner only fits where the long drive costs the day nothing: say why
+    const intro = day.longDrive
+      ? `You're a bit further out, so I can fit you in when there's time for the drive. Here's what's free on ${formatDay(date)}:`
+      : `Here's what's free on ${formatDay(date)}:`;
+    await ctx.sendList(intro, "Choose a time", rows);
   }
 
   // Why the chosen time can't be booked as it stands, or null if it's fine

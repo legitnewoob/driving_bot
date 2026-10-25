@@ -20,7 +20,7 @@ jest.mock("../../src/services/calendarService", () => ({
   createEvent: jest.fn(async () => ({ id: "evt-new" })),
   updateEvent: jest.fn(async () => ({})),
 }));
-jest.mock("../../src/models/instructorModel", () => ({ getInstructor: jest.fn() }));
+jest.mock("../../src/models/instructorModel", () => ({ getInstructor: jest.fn(), invalidateInstructorCache: jest.fn() }));
 
 const Booking = require("../../src/models/bookingModel");
 const User = require("../../src/models/userModel");
@@ -44,6 +44,8 @@ const INSTRUCTOR = {
   botSettings: { scheduleMode: "packed", dayHours: ALL_DAYS, lunch: { enabled: false } },
   routeSettings: { bufferMin: 20, driveVarianceMin: 5 },
 };
+// The same instructor with a longest drive of 25 minutes
+const SHORT = { ...INSTRUCTOR, routeSettings: { ...INSTRUCTOR.routeSettings, maxDriveMin: 25 } };
 
 const booking = (time, loc, extra = {}) => ({
   bookingId: extra.bookingId || `DL-${time.replace(":", "")}`,
@@ -89,10 +91,63 @@ describe("very close learners", () => {
   });
 });
 
-describe("very far learners", () => {
-  it("aren't offered next to a lesson when the drive is over X", async () => {
+describe("far learners (between the usual gap and the longest drive)", () => {
+  // Leek is 30 min from A and from the instructor's base; X 20, H 40 by default
+  const far = () =>
+    mockDrives({
+      [`${key(A)}->${key(LEEK)}`]: 30,
+      [`${key(LEEK)}->${key(A)}`]: 30,
+      [`53.0168,-2.2191->${key(LEEK)}`]: 30,
+      [`${key(LEEK)}->53.0168,-2.2191`]: 30,
+    });
+
+  it("on a quiet day they're fitted in after the full drive, and Donna says why", async () => {
+    Booking.find.mockResolvedValue([booking("09:00", A)]);
+    far();
+    const day = await plan(LEEK);
+    expect(day.free[0]).toBe("10:35");
+    expect(day.longDrive).toBe(true);
+  });
+
+  it("on a busy day they don't take a local learner's place", async () => {
+    Booking.find.mockResolvedValue(["09:00", "10:20", "11:40", "13:00"].map((t) => booking(t, A)));
+    far();
+    const day = await plan(LEEK);
+    expect(day.free).toEqual([]);
+  });
+
+  it("the booking check agrees with what was offered", async () => {
+    far();
+    const base = { date: DATE, instructor: INSTRUCTOR, durationMin: 60, userLoc: LEEK };
+    Booking.find.mockResolvedValue(["09:00", "10:20", "11:40", "13:00"].map((t) => booking(t, A)));
+    expect(await routeOptimizer.isPackedStartAvailable({ ...base, time: "14:35" })).toBe(false);
+    Booking.find.mockResolvedValue([booking("09:00", A)]);
+    expect(await routeOptimizer.isPackedStartAvailable({ ...base, time: "10:35" })).toBe(true);
+  });
+
+  it("a nearby learner isn't flagged as far", async () => {
+    Booking.find.mockResolvedValue([booking("09:00", A)]);
+    const day = await plan(A);
+    expect(day.longDrive).toBe(false);
+  });
+
+  it("still fitted in when the instructor's base is further than the longest drive", async () => {
+    // 30 min from the lesson, but 55 min from the base: the guess about who
+    // else might book only sizes the gap, it doesn't rule the learner out
+    Booking.find.mockResolvedValue([booking("09:00", A)]);
+    mockDrives({
+      [`${key(A)}->${key(LEEK)}`]: 30,
+      [`${key(LEEK)}->${key(A)}`]: 30,
+      [`53.0168,-2.2191->${key(LEEK)}`]: 55,
+      [`${key(LEEK)}->53.0168,-2.2191`]: 55,
+    });
+    const day = await plan(LEEK);
+    expect(day.free).toContain("17:00");
+  });
+
+  it("further than the longest drive: never next to a lesson", async () => {
     Booking.find.mockResolvedValue([booking("12:00", A)]);
-    mockDrives({ [`${key(A)}->${key(LEEK)}`]: 30, [`${key(LEEK)}->${key(A)}`]: 30 });
+    mockDrives({ [`${key(A)}->${key(LEEK)}`]: 50, [`${key(LEEK)}->${key(A)}`]: 50 });
     const day = await plan(LEEK);
     expect(day.free).toEqual([]);
   });
@@ -109,6 +164,51 @@ describe("very far learners", () => {
   });
 });
 
+describe("the instructor's longest drive and usual gap", () => {
+  const settings = require("../../src/services/instructorSettings");
+  const { usualGap } = require("../../src/services/typicalDrive");
+
+  it("new instructors: longest drive 40, usual gap half of it", () => {
+    expect(settings.packingRange({})).toMatchObject({ maxDriveMin: 40, bufferMin: 20, bufferSource: "default" });
+  });
+
+  it("instructors who used the old slider keep their gap, with a longest drive of twice it", () => {
+    expect(settings.packingRange({ bufferMin: 15 })).toMatchObject({ maxDriveMin: 30, bufferMin: 15, bufferSource: "previous" });
+    expect(settings.packingRange({ bufferMin: 45 })).toMatchObject({ maxDriveMin: 60, bufferMin: 45 });
+  });
+
+  it("once Donna has seen 10 drives she uses what she learned, kept between 10 and the longest drive", () => {
+    expect(settings.packingRange({ maxDriveMin: 40, autoBufferMin: 15, autoBufferSamples: 10 })).toMatchObject({ bufferMin: 15, bufferSource: "learned" });
+    expect(settings.packingRange({ maxDriveMin: 40, autoBufferMin: 15, autoBufferSamples: 9 })).toMatchObject({ bufferMin: 20, bufferSource: "default" });
+    expect(settings.packingRange({ maxDriveMin: 25, autoBufferMin: 35, autoBufferSamples: 20 })).toMatchObject({ bufferMin: 25 });
+    expect(settings.packingRange({ maxDriveMin: 40, autoBufferMin: 5, autoBufferSamples: 20 })).toMatchObject({ bufferMin: 10 });
+  });
+
+  it("after a booking Donna re-learns the usual gap from the last 4 weeks of drives", async () => {
+    const Instructor = require("../../src/models/instructorSchema");
+    const { refresh } = require("../../src/services/typicalDrive");
+    const save = jest.spyOn(Instructor, "updateOne").mockResolvedValue({});
+    Booking.find = jest.fn(() => ({ lean: () => Promise.resolve([8, 12, 9, 30, 10, 7, 11, 9, 14, 6].map((driveInMin) => ({ driveInMin }))) }));
+    const result = await refresh({ ...INSTRUCTOR });
+    expect(result).toEqual({ gap: 15, samples: 10 }); // median 9.5 + 5
+    expect(Booking.find.mock.calls[0][0]).toMatchObject({ instructorId: "inst-1", driveInMin: { $ne: null } });
+    expect(save.mock.calls[0][1].$set).toMatchObject({ "routeSettings.autoBufferMin": 15, "routeSettings.autoBufferSamples": 10 });
+    save.mockRestore();
+  });
+
+  it("re-learning never breaks a booking, even if the database fails", async () => {
+    const { refresh } = require("../../src/services/typicalDrive");
+    Booking.find = jest.fn(() => ({ lean: () => Promise.reject(new Error("db down")) }));
+    await expect(refresh({ ...INSTRUCTOR })).resolves.toBeNull();
+  });
+
+  it("the usual gap is the median drive + 5, rounded up to 5", () => {
+    expect(usualGap([4, 6, 9, 30, 8])).toBe(15); // median 8
+    expect(usualGap([10, 12])).toBe(20); // median 11
+    expect(usualGap([])).toBeNull();
+  });
+});
+
 describe("when the Routes API is down", () => {
   beforeEach(() => {
     distanceMatrixService.getDrivingMatrix.mockRejectedValue(new Error("Routes API unavailable"));
@@ -121,17 +221,18 @@ describe("when the Routes API is down", () => {
     expect(day.free).not.toContain("10:05");
   });
 
-  it("a far learner isn't squeezed in next to a lesson on a straight-line guess", async () => {
+  it("a learner further than the longest drive (by straight line) isn't squeezed in", async () => {
     Booking.find.mockResolvedValue([booking("12:00", A)]);
-    const day = await plan(LEEK);
+    // Hanley to Leek is ~15 km in a straight line: ~30 min estimated, over 25
+    const day = await routeOptimizer.planDay({ date: DATE, instructor: SHORT, availableSlots: null, userLoc: LEEK, durationMin: 60 });
     expect(day.free).toEqual([]);
   });
 
   it("the booking check agrees with what was offered", async () => {
     Booking.find.mockResolvedValue([booking("12:00", A)]);
-    const base = { date: DATE, instructor: INSTRUCTOR, durationMin: 60 };
-    expect(await routeOptimizer.isPackedStartAvailable({ ...base, time: "13:20", userLoc: NEAR })).toBe(true);
-    expect(await routeOptimizer.isPackedStartAvailable({ ...base, time: "13:20", userLoc: LEEK })).toBe(false);
+    const base = { date: DATE, durationMin: 60, time: "13:20" };
+    expect(await routeOptimizer.isPackedStartAvailable({ ...base, instructor: INSTRUCTOR, userLoc: NEAR })).toBe(true);
+    expect(await routeOptimizer.isPackedStartAvailable({ ...base, instructor: SHORT, userLoc: LEEK })).toBe(false);
   });
 });
 

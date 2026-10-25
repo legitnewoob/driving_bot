@@ -288,6 +288,18 @@ describe("booking by tapping", () => {
     expect(last(replies).interactive.rows.map((r) => r.id)).toEqual(["bf:time:14:00", "bf:date:pick"]);
   });
 
+  it("tells a far learner why the times are limited", async () => {
+    routeOptimizer.planDay.mockResolvedValue({ offered: ["17:00"], evaluations: [], preferred: [], booked: [], longDrive: true });
+    const { times } = await toTimes();
+    expect(times.text).toMatch(/a bit further out/);
+    expect(ids(times)).toContain("bf:time:17:00");
+  });
+
+  it("doesn't say it to a nearby learner", async () => {
+    const { times } = await toTimes();
+    expect(times.text).not.toMatch(/further out/);
+  });
+
   it("a day with nothing left goes back to the day list", async () => {
     await tap("bf:menu:book");
     await tap("bf:type:t60");

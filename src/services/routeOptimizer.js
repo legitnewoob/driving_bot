@@ -135,25 +135,38 @@ class RouteOptimizer {
   }
 
   /**
-   * Packed mode: minutes to leave between two things in the day (see dayPacker).
+   * Packed mode: minutes to leave between two things in the day (see dayPacker),
+   * or null when the drive is longer than the instructor's longest drive (H).
    * Real drive + variance when both ends have a location, else X. Blocks
-   * (calendar events, breaks) have no location, so they always get X.
+   * (calendar events, breaks) have no location, so they always get X. A learner
+   * who hasn't booked yet (UNKNOWN) is assumed to live near the instructor's base.
    */
-  _packedGap(route, travel, userPt, userEndPt) {
+  _packedGap(route, travel, userPt, userEndPt, homePt = null) {
     const X = route.bufferMin;
+    const H = route.maxDriveMin;
     const V = route.driveVarianceMin;
+    // limit: the longest drive allowed. The guess about a learner who hasn't
+    // booked yet only sizes the gap, so it has no limit.
+    const between = (from, to, limit = H) => {
+      if (!travel || !from || !to) return X;
+      const drive = travel.exact ? travel.exact(from, to) : travel(from, to);
+      if (drive != null) return dayPacker.gapFor(drive, X, V, limit);
+      // No Routes answer: go by the straight-line estimate, never below X
+      const estimate = travel(from, to);
+      if (estimate > limit) return null;
+      return estimate > X ? dayPacker.roundUp5(estimate + V) : X;
+    };
     const endOf = (it) => (it.isNew ? userEndPt : it.endLoc);
     const startOf = (it) => (it.isNew ? userPt : it.startLoc);
     return (a, b) => {
+      if (a.isUnknown || b.isUnknown) {
+        const other = a.isUnknown ? b : a;
+        if (!other.isNew) return X;
+        const g = a.isUnknown ? between(homePt, userPt, Infinity) : between(userEndPt, homePt, Infinity);
+        return Math.max(X, g);
+      }
       if ((!a.isNew && a.kind !== "lesson") || (!b.isNew && b.kind !== "lesson")) return X;
-      const from = endOf(a);
-      const to = startOf(b);
-      if (!travel || !from || !to) return X;
-      const drive = travel.exact ? travel.exact(from, to) : travel(from, to);
-      if (drive != null) return dayPacker.gapFor(drive, X, V);
-      // No Routes answer: leave X, unless even the straight-line estimate
-      // says the drive can't fit (so a far learner isn't squeezed in on a guess)
-      return travel(from, to) + V > X ? null : X;
+      return between(endOf(a), startOf(b));
     };
   }
 
@@ -211,7 +224,7 @@ class RouteOptimizer {
 
     // Packed mode: the drive plus the variance must fit in the gap, and in X
     if (route.packed) {
-      const gap = this._packedGap(route, travel, userPt, userEndPt);
+      const gap = this._packedGap(route, travel, userPt, userEndPt, homePt);
       const NEW = { isNew: true };
       const gIn = prev ? gap({ ...prev, kind: "lesson" }, NEW) : 0;
       const gOut = next ? gap(NEW, { ...next, kind: "lesson" }) : 0;
@@ -505,7 +518,8 @@ class RouteOptimizer {
       X: route.bufferMin,
       lunch: settings.lunchWindow(instructor),
       items: [...plan, ...blocks],
-      gap: this._packedGap(route, travel, userPt, userEndPt),
+      gap: this._packedGap(route, travel, userPt, userEndPt, homePt),
+      maxLessons: bot.maxLessonsPerDay || null,
     };
     const starts = dayPacker.candidateStarts(packArgs);
     if (requestedTime && /^\d{2}:\d{2}$/.test(requestedTime)) {
@@ -516,9 +530,16 @@ class RouteOptimizer {
     const free = this._chronological(
       this._applyLearnerTimeRules(starts.map(settings.toTime), date, prefs)
     );
+    // Whether this learner only fits where a long drive costs nothing (so Donna can say why)
+    const items = [...packArgs.items].sort((a, b) => a.start - b.start);
+    const longDrive = free.length > 0 && free.every((t) => {
+      const st = this.timeToMinutes(t);
+      const { prev, next } = dayPacker.neighbours(items, st, lessonMin);
+      return (prev && packArgs.gap(prev, dayPacker.NEW) > packArgs.X) || (next && packArgs.gap(dayPacker.NEW, next) > packArgs.X);
+    });
 
     if (!userPt || !free.length) {
-      return { offered: free, evaluations: [], preferred: this._preferredSlots(free, date, prefs), free, booked: [] };
+      return { offered: free, evaluations: [], preferred: this._preferredSlots(free, date, prefs), free, booked: [], longDrive };
     }
 
     const slotOpts = { durationMin: lessonMin, userEndPt };
@@ -529,7 +550,7 @@ class RouteOptimizer {
         return a.score - b.score;
       });
 
-    return { ...this._chooseOffered(date, evaluations, route, prefs), free, booked: [] };
+    return { ...this._chooseOffered(date, evaluations, route, prefs), free, booked: [], longDrive };
   }
 
   /**

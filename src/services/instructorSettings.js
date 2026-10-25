@@ -28,11 +28,44 @@ const ROUTE_DEFAULTS = {
   serviceArea: { radius: null, unit: "miles", radiusMiles: null, postcodeDistricts: [] },
   suggestOtherDays: true,
   lookAheadDays: 10,
-  // Packed mode: the most driving allowed between two lessons (the slider),
-  // and the margin added to every real drive for traffic and parking.
+  // Packed mode: the usual gap between lessons (older instructors set it with
+  // the old slider; Donna now works it out), the longest drive between two
+  // lessons (the slider), and the margin added to a real drive for traffic.
   bufferMin: 20,
+  maxDriveMin: 40,
   driveVarianceMin: 5,
 };
+
+const MIN_BUFFER = 10;
+// Donna learns the usual gap once she has seen this many drives between lessons
+const LEARN_AFTER_DRIVES = 10;
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+const roundUp5 = (m) => Math.ceil(m / 5) * 5;
+
+/**
+ * Packed mode: the longest drive between lessons (H) and the usual gap (X).
+ * X comes from the instructor's own recent drives when there are enough,
+ * else the gap they set with the old slider, else half of H.
+ */
+function packingRange(raw = {}) {
+  const legacy = raw.maxDriveMin == null && raw.bufferMin != null;
+  const H = raw.maxDriveMin ?? (legacy ? clamp(2 * raw.bufferMin, 12, 60) : ROUTE_DEFAULTS.maxDriveMin);
+  const learned = raw.autoBufferMin != null && (raw.autoBufferSamples || 0) >= LEARN_AFTER_DRIVES;
+  let X;
+  let source;
+  if (learned) {
+    X = raw.autoBufferMin;
+    source = "learned";
+  } else if (legacy) {
+    X = raw.bufferMin;
+    source = "previous";
+  } else {
+    X = roundUp5(H / 2);
+    source = "default";
+  }
+  return { maxDriveMin: H, bufferMin: clamp(X, Math.min(MIN_BUFFER, H), H), bufferSource: source, bufferSamples: raw.autoBufferSamples || 0 };
+}
 
 // In packed mode the slider replaces the preset: its value picks the band.
 function presetForBuffer(bufferMin) {
@@ -55,10 +88,12 @@ function serviceRadius(area = {}) {
 }
 
 function resolveRouteSettings(instructor) {
-  const stored = { ...ROUTE_DEFAULTS, ...(plain(instructor?.routeSettings) || {}) };
+  const raw = plain(instructor?.routeSettings) || {};
+  const stored = { ...ROUTE_DEFAULTS, ...raw };
   const packed = isPacked(instructor);
+  const range = packingRange(raw);
   let preset = ROUTE_PRESETS[stored.preset] ? stored.preset : stored.preset === "custom" ? "custom" : "balanced";
-  if (packed) preset = presetForBuffer(stored.bufferMin);
+  if (packed) preset = presetForBuffer(range.bufferMin);
   const fromPreset = preset === "custom" ? {} : ROUTE_PRESETS[preset];
   const merged = { ...stored, ...fromPreset };
 
@@ -78,7 +113,7 @@ function resolveRouteSettings(instructor) {
     suggestOtherDays: merged.suggestOtherDays !== false,
     lookAheadDays: merged.lookAheadDays,
     packed,
-    bufferMin: stored.bufferMin,
+    ...range,
     driveVarianceMin: stored.driveVarianceMin,
   };
 }
@@ -325,6 +360,8 @@ module.exports = {
   BOT_DEFAULTS,
   LUNCH_DEFAULTS,
   presetForBuffer,
+  packingRange,
+  LEARN_AFTER_DRIVES,
   isPacked,
   dayHoursFor,
   dayWindow,

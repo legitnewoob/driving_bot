@@ -163,7 +163,8 @@ class WebhookController {
     }
   }
 
-  async _donnaOff(ctx, messageContent, extra = {}) {
+  // reason: "off" (switched off by them or their school) or "calendar" (paused: Google access expired)
+  async _donnaOff(ctx, messageContent, extra = {}, reason = "off") {
     const { from, instructor } = ctx;
     const key = `${from}::${ctx.instructorId}`;
     const last = this._donnaOffReplies.get(key);
@@ -177,11 +178,13 @@ class WebhookController {
 
     if (ctx.isMock) return;
     const user = isDbReady() ? await User.findOne({ phone: from, instructorId: ctx.instructorId }).catch(() => null) : null;
-    notifyInstructorLearnerMessage(instructor, user || { phone: from }, messageContent, { reason: "off" }).catch(() => {});
+    notifyInstructorLearnerMessage(instructor, user || { phone: from }, messageContent, { reason }).catch(() => {});
     notifications
       .notify(instructor, {
         type: "paused_message",
-        message: `${user?.name || from}: "${String(messageContent).slice(0, 120)}" (Donna is switched off)`,
+        message: `${user?.name || from}: "${String(messageContent).slice(0, 120)}" (${
+          reason === "calendar" ? "Donna is paused: reconnect your Google Calendar" : "Donna is switched off"
+        })`,
         clientId: `notif-off-${from}-${extra.messageId || Date.now()}`,
         learnerPhone: from,
       })
@@ -737,6 +740,12 @@ class WebhookController {
       // (or their driving school has switched her off for everyone)
       if (!ctx.bot.donnaEnabled || !(await schoolAllowsDonna(instructor))) {
         await this._donnaOff(ctx, messageContent, extra);
+        return;
+      }
+      // Google Calendar access expired: she can't see or book the diary, so she
+      // pauses (same as off for the learner) until the instructor reconnects
+      if (instructor.calendarTokenExpired) {
+        await this._donnaOff(ctx, messageContent, extra, "calendar");
         return;
       }
 

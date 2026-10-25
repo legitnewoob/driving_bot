@@ -16,16 +16,31 @@ function lessonMinutes(instructor, durationMin = null) {
   return durationMin || settings.resolveRouteSettings(instructor).lessonDurationMin;
 }
 
+/**
+ * Google access has expired or been revoked. Donna pauses for this instructor
+ * (she can't see or book their diary) until they reconnect, which clears the
+ * flag. The instructor and the team are emailed when it first happens, not on
+ * every failed call after that.
+ */
 async function handleCalendarTokenExpiry(instructor, service, errorMessage) {
-  Promise.resolve(notifyInvalidGrant(instructor, service, errorMessage)).catch(() => {});
-  Promise.resolve(notifyInstructorReauth(instructor)).catch(() => {});
+  let firstTime = true;
   try {
     if (instructor?._id) {
-      await Instructor.findByIdAndUpdate(instructor._id, { calendarTokenExpired: true });
+      const flipped = await Instructor.findOneAndUpdate(
+        { _id: instructor._id, calendarTokenExpired: { $ne: true } },
+        { $set: { calendarTokenExpired: true } }
+      );
+      firstTime = !!flipped;
+      require("../models/instructorModel").invalidateInstructorCache(instructor.phoneNumberId);
     }
   } catch (dbErr) {
     logger.error(`Failed to set calendarTokenExpired flag: ${dbErr.message}`);
   }
+  if (instructor) instructor.calendarTokenExpired = true;
+  if (!firstTime) return;
+  logger.warn(`Google Calendar access expired for ${instructor?.name || instructor?.phoneNumberId}: Donna paused until they reconnect`);
+  Promise.resolve(notifyInvalidGrant(instructor, service, errorMessage)).catch(() => {});
+  Promise.resolve(notifyInstructorReauth(instructor)).catch(() => {});
 }
 
 /**

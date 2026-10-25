@@ -288,15 +288,17 @@ async function notifyInstructorReauth(instructor) {
   const dashboardUrl = process.env.DASHBOARD_URL || process.env.BASE_URL || "http://localhost:8080";
   const reconnectUrl = `${dashboardUrl}/dashboard`;
 
-  const subject = "Action needed: reconnect your Google Calendar";
+  const subject = "Donna is paused: reconnect your Google Calendar";
 
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1f2937; font-size: 15px; line-height: 1.6;">
       <p>Hi ${escapeHtml(name)},</p>
-      <p>Your Google Calendar connection has expired, so Donna can't add or update your lessons in your calendar until you reconnect.</p>
+      <p>Your Google Calendar connection has expired, so Donna can't see your diary or book lessons. <strong>She's paused</strong>:
+        learners who message you are asked to contact you directly, and their messages are forwarded to you.</p>
+      <p>She'll start again by herself as soon as you reconnect.</p>
       <p>Sign in to your dashboard and click <strong>Connect Google Calendar</strong>. It takes about 30 seconds:<br/>
         <a href="${reconnectUrl}">${reconnectUrl}</a></p>
-      <p>If you've already reconnected, you can ignore this. Any questions, just reply.</p>
+      <p>You'll also see this on your dashboard and in the Portal. If you've already reconnected, you can ignore this. Any questions, just reply.</p>
       <p>Donna Drive</p>
     </div>
   `;
@@ -315,14 +317,23 @@ async function notifyInstructorLearnerMessage(instructor, learner, messageText, 
   const who = learner?.name || learner?.phone || "A learner";
   const escape = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  const off = reason === "off";
-  const subject = off ? `${who} messaged you (Donna is switched off)` : `${who} messaged you (Donna is paused for them)`;
-  const why = off
-    ? "Donna is switched off, so she told them to contact you directly."
-    : "You've paused Donna for this learner, so she hasn't replied.";
-  const next = off
-    ? "Reply to them on WhatsApp, or switch Donna back on from your dashboard or the Portal."
-    : "Reply to them on WhatsApp, or turn Donna back on from the Learners page.";
+  const off = reason === "off" || reason === "calendar";
+  const calendar = reason === "calendar";
+  const subject = calendar
+    ? `${who} messaged you (Donna is paused: reconnect your Google Calendar)`
+    : off
+      ? `${who} messaged you (Donna is switched off)`
+      : `${who} messaged you (Donna is paused for them)`;
+  const why = calendar
+    ? "Donna is paused because your Google Calendar connection has expired, so she told them to contact you directly."
+    : off
+      ? "Donna is switched off, so she told them to contact you directly."
+      : "You've paused Donna for this learner, so she hasn't replied.";
+  const next = calendar
+    ? "Reply to them on WhatsApp, and reconnect Google Calendar from your dashboard so Donna can start again."
+    : off
+      ? "Reply to them on WhatsApp, or switch Donna back on from your dashboard or the Portal."
+      : "Reply to them on WhatsApp, or turn Donna back on from the Learners page.";
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <p>Hi ${escape(instructor.name || "there")},</p>
@@ -332,7 +343,7 @@ async function notifyInstructorLearnerMessage(instructor, learner, messageText, 
       <p style="color: #999; font-size: 11px;">You'll get at most one of these per learner per hour.</p>
     </div>
   `;
-  return sendNotification(subject, html, `${off ? "donna_off" : "paused_learner"}:${email}:${learner?.phone}`, email);
+  return sendNotification(subject, html, `${calendar ? "calendar_paused" : off ? "donna_off" : "paused_learner"}:${email}:${learner?.phone}`, email);
 }
 
 const escapeHtml = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

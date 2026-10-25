@@ -79,6 +79,9 @@ function parseIncoming(message) {
   }
 }
 
+// First name for friendly messages
+const firstName = (name) => String(name || "").trim().split(/\s+/)[0] || "";
+
 class WebhookController {
   // learner::number → when we last said "this number isn't linked"
   _noInstructorReplies = new Map();
@@ -466,9 +469,9 @@ class WebhookController {
       const lines = [
         "🎉 Booking Confirmed!",
         "",
-        `🆔 Booking ID: ${result.booking.bookingId}`,
-        "✅ Your driving lesson has been successfully booked:",
+        `You're all booked in. ${firstName(ctx.instructor.name) || "Your instructor"} is looking forward to seeing you!`,
         "",
+        `🆔 Booking ID: ${result.booking.bookingId}`,
         `👨‍🏫 Instructor: ${ctx.instructor.name}`,
         `📅 Date: ${timezoneUtils.formatDate(
           timezoneUtils.createDateInTimezone(bookingData.date, "12:00"),
@@ -486,7 +489,8 @@ class WebhookController {
       if (bookingData.dropoffAddress) {
         lines.push(`🏁 Drop-off: ${bookingData.dropoffAddress}`);
       }
-      lines.push("", "Good luck with your driving lesson! 🚗💨");
+      const reminder = ctx.bot.reminders && ctx.bot.reminders !== "off" ? "I'll send you a reminder before the lesson. " : "";
+      lines.push("", `${reminder}If anything changes, just message me here. Good luck! 🚗💨`);
 
       await ctx.send(lines.join("\n"));
       this.clearUserConversationHistoryAndContext(ctx.from, ctx.instructorId);

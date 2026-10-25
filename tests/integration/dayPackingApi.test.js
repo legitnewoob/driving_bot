@@ -115,6 +115,28 @@ describe("packed-mode settings", () => {
     expect(savedDoc.botSettings.lunch).toMatchObject({ enabled: true, durationMin: 30, windowFrom: "12:30", windowTo: "13:30" });
   });
 
+  it("saving the Route section sends back what it loaded, and that's accepted (older settings, learned gap)", async () => {
+    // The popup bug: an older instructor (no longest drive yet) whom Donna has learned a gap for
+    instructor.routeSettings = { bufferMin: 20, maxDriveMin: null, autoBufferMin: 15, autoBufferSamples: 12, autoBufferAt: new Date().toISOString() };
+    const { body: loaded } = await call("GET", "/settings");
+    expect(loaded.data.routeSettings.maxDriveMin).toBe(40);
+    expect(Object.keys(loaded.data.routeSettings)).not.toEqual(expect.arrayContaining(["autoBufferMin"]));
+
+    // Change the service area radius and save the whole route draft, as the dashboard does
+    const route = { ...loaded.data.routeSettings, serviceArea: { ...loaded.data.routeSettings.serviceArea, radius: 15 } };
+    const { status, body } = await call("PATCH", "/settings", { routeSettings: route });
+    expect(body.error).toBeUndefined();
+    expect(status).toBe(200);
+    expect(savedDoc.routeSettings.serviceArea.radius).toBe(15);
+    // The learned gap is kept
+    expect(savedDoc.routeSettings.autoBufferMin).toBe(15);
+  });
+
+  it("an empty longest drive is accepted (Donna works it out from the older setting)", async () => {
+    const { status } = await call("PATCH", "/settings", { routeSettings: { maxDriveMin: null } });
+    expect(status).toBe(200);
+  });
+
   it("saves the longest drive, and sends back the usual gap Donna works out", async () => {
     const { status, body } = await call("PATCH", "/settings", { routeSettings: { maxDriveMin: 50 } });
     expect(status).toBe(200);

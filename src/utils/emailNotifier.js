@@ -14,6 +14,8 @@
 //                           can't connect from there; HTTPS always can.
 //   EMAIL_FROM            - sender for Resend, e.g. "Donna Drive <hello@donnadrive.co.uk>"
 //                           (the domain must be verified in Resend)
+//   EMAIL_REPLY_TO        - where replies go when an email doesn't set its own,
+//                           e.g. a Gmail inbox (otherwise replies go to EMAIL_FROM)
 //
 // Local testing:
 //   EMAIL_OUTBOX=local    - don't send anything: write each email to .outbox/ as an
@@ -84,13 +86,47 @@ function getTransporter() {
   return _transporter;
 }
 
+/**
+ * A plain-text copy of an HTML email. Sending both (instead of HTML only) is
+ * what personal email looks like, and helps keep mail out of Promotions.
+ */
+function htmlToText(html) {
+  return String(html || "")
+    .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, label) => {
+      const text = label.replace(/<[^>]+>/g, "").trim();
+      return !text || text === href ? href : `${text}: ${href}`;
+    })
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** Send through Resend's HTTPS API (works where SMTP ports are blocked). */
 async function sendViaResend({ to, subject, html, replyTo, from = fromWithName(null), headers }) {
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [to], subject, html, ...(replyTo && { reply_to: replyTo }), ...(headers && { headers }) }),
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        html,
+        text: htmlToText(html),
+        ...(replyTo && { reply_to: replyTo }),
+        ...(headers && { headers }),
+      }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) {
@@ -128,6 +164,8 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
 
   const to = toOverride || process.env.NOTIFY_EMAIL_TO || process.env.NOTIFY_EMAIL_USER;
   const from = fromWithName(options.fromName);
+  // Replies go to a real inbox when one is set (people replying helps future emails land in Primary)
+  replyTo = replyTo || process.env.EMAIL_REPLY_TO || null;
 
   if (outboxEnabled()) {
     const kept = writeToOutbox({ to: to || "(team)", subject, html, replyTo, from, headers: options.headers });
@@ -157,6 +195,7 @@ async function sendNotification(subject, html, dedupeKey = null, toOverride = nu
       to,
       subject,
       html,
+      text: htmlToText(html),
       ...(replyTo && { replyTo }),
       ...(options.headers && { headers: options.headers }),
     });
@@ -249,31 +288,16 @@ async function notifyInstructorReauth(instructor) {
   const dashboardUrl = process.env.DASHBOARD_URL || process.env.BASE_URL || "http://localhost:8080";
   const reconnectUrl = `${dashboardUrl}/dashboard`;
 
-  const subject = `⚠️ Action needed — reconnect your Google Calendar`;
+  const subject = "Action needed: reconnect your Google Calendar";
 
   const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #d32f2f;">Your Google Calendar connection has expired</h2>
+    <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1f2937; font-size: 15px; line-height: 1.6;">
       <p>Hi ${escapeHtml(name)},</p>
-      <p>Your Google Calendar authorisation has expired or been revoked. Donna AI can no longer
-         create or update calendar events for your lessons until you reconnect.</p>
-
-      <p style="margin: 24px 0;">
-        <a href="${reconnectUrl}" style="background: #1976d2; color: white; padding: 12px 24px;
-           text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
-          Reconnect Google Calendar
-        </a>
-      </p>
-
-      <p style="color: #555; font-size: 14px;">
-        Once you click the button above, sign in to your dashboard and click
-        <strong>Connect Google Calendar</strong>. The whole process takes about 30 seconds.
-      </p>
-
-      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
-      <p style="color: #999; font-size: 11px;">
-        This email was sent by Donna AI. If you have already reconnected, you can ignore this message.
-      </p>
+      <p>Your Google Calendar connection has expired, so Donna can't add or update your lessons in your calendar until you reconnect.</p>
+      <p>Sign in to your dashboard and click <strong>Connect Google Calendar</strong>. It takes about 30 seconds:<br/>
+        <a href="${reconnectUrl}">${reconnectUrl}</a></p>
+      <p>If you've already reconnected, you can ignore this. Any questions, just reply.</p>
+      <p>Donna Drive</p>
     </div>
   `;
 
@@ -292,7 +316,7 @@ async function notifyInstructorLearnerMessage(instructor, learner, messageText, 
   const escape = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   const off = reason === "off";
-  const subject = off ? `💬 ${who} messaged — Donna is switched off` : `💬 ${who} messaged — Donna is paused for them`;
+  const subject = off ? `${who} messaged you (Donna is switched off)` : `${who} messaged you (Donna is paused for them)`;
   const why = off
     ? "Donna is switched off, so she told them to contact you directly."
     : "You've paused Donna for this learner, so she hasn't replied.";
@@ -324,7 +348,7 @@ async function sendSchoolInvite({ to, schoolName, ownerName, link }) {
       <p>Donna answers your learners on WhatsApp, books lessons around your diary and keeps your calendar up to date.
       Your school covers the cost.</p>
       <p style="margin: 24px 0;">
-        <a href="${escapeHtml(link)}" style="background:#f2584a;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:bold;">Join ${escapeHtml(schoolName)}</a>
+        <a href="${escapeHtml(link)}">Join ${escapeHtml(schoolName)} on Donna Drive</a>
       </p>
       <p style="color: #555; font-size: 13px;">Sign in with the Google account for ${escapeHtml(to)}. This invite expires in 14 days.</p>
     </div>
@@ -392,6 +416,7 @@ function resetTransporter() {
 
 module.exports = {
   OUTBOX_DIR,
+  htmlToText,
   outboxEnabled,
   sendPriceChangeNotice,
   sendNotification,

@@ -264,8 +264,16 @@ describe("sendNotification via Resend", () => {
     expect(url).toBe("https://api.resend.com/emails");
     expect(opts.headers.Authorization).toBe("Bearer re_test");
     expect(JSON.parse(opts.body)).toEqual({
-      from: "Donna Drive <hello@donnadrive.co.uk>", to: ["someone@example.com"], subject: "Hi", html: "<p>x</p>", reply_to: "reply@example.com",
+      from: "Donna Drive <hello@donnadrive.co.uk>", to: ["someone@example.com"], subject: "Hi", html: "<p>x</p>", text: "x", reply_to: "reply@example.com",
     });
+  });
+
+  it("replies go to EMAIL_REPLY_TO when the email doesn't set its own", async () => {
+    process.env.EMAIL_REPLY_TO = "raj@example.com";
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+    await sendNotification("Hi", "<p>x</p>", null, "someone@example.com");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).reply_to).toBe("raj@example.com");
+    delete process.env.EMAIL_REPLY_TO;
   });
 
   it("falls back to Gmail when Resend rejects it", async () => {
@@ -337,5 +345,56 @@ describe("local outbox (EMAIL_OUTBOX=local)", () => {
     await sendNotification("Hi", "<p>x</p>", null, "a@x.com");
     expect(written).toHaveLength(0);
     expect(global.fetch).toHaveBeenCalled();
+  });
+});
+
+describe("plain-text copy (keeps email out of Promotions)", () => {
+  const { htmlToText } = require("../../src/utils/emailNotifier");
+
+  it("keeps paragraphs and line breaks, and spells out links", () => {
+    const html = `<div style="x"><p>Hi Sam,</p><p>You're <strong>#3</strong> &amp; rising.<br/>Next line</p>
+      <p><a href="https://donnadrive.co.uk/w?t=1">See your place</a></p><p><a href="https://x.co">https://x.co</a></p></div>`;
+    expect(htmlToText(html)).toBe("Hi Sam,\n\nYou're #3 & rising.\nNext line\n\nSee your place: https://donnadrive.co.uk/w?t=1\n\nhttps://x.co");
+  });
+});
+
+describe("waitlist emails read like a personal note", () => {
+  const realFetch = global.fetch;
+  const emails = require("../../src/utils/waitlistEmails");
+  const entry = { email: "sam@x.com", name: "Sam Smith", accessToken: "tok", referralCode: "SAM1" };
+  const sent = () => global.fetch.mock.calls.map(([, o]) => JSON.parse(o.body));
+
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.EMAIL_FROM = "Donna Drive <hello@donnadrive.co.uk>";
+    global.fetch = jest.fn().mockResolvedValue({ ok: true });
+  });
+  afterEach(() => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.EMAIL_FROM;
+    global.fetch = realFetch;
+  });
+
+  it("no buttons, no emoji in subjects, a plain-text copy, from a person", async () => {
+    const opts = { joinUrl: "https://d.co/join", promo: { label: "1 month free" }, expiresAt: "2030-01-10" };
+    await emails.sendWaitlistConfirmation(entry, { place: 4 });
+    await emails.sendWaitlistMovedUp(entry, { from: 9, to: 4, friendName: "Jo", referrals: 1 });
+    await emails.sendWaitlistInvite(entry, opts);
+    await emails.sendWaitlistReminder(entry, opts);
+    await emails.sendReferralReward({ to: "sam@x.com", name: "Sam", amountLabel: "£20", asReferrer: true });
+    for (const email of sent()) {
+      expect(email.html).not.toMatch(/background:\s*#f2584a|display:\s*inline-block/);
+      expect(email.subject).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+      expect(email.text.length).toBeGreaterThan(20);
+      expect(email.from).toBe("Raj from Donna Drive <hello@donnadrive.co.uk>");
+      // The bulk-mail header is only for the launch announcement
+      expect(email.headers).toBeUndefined();
+    }
+    expect(sent()[2].subject).toBe("Sam, your Donna Drive invite is ready");
+  });
+
+  it("the launch announcement still has one-click unsubscribe", async () => {
+    await emails.sendLaunchAnnouncement(entry);
+    expect(sent()[0].headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
   });
 });

@@ -1,8 +1,10 @@
 // waitlistEmails.js
 // ─────────────────
 // Emails for the launch waitlist and referrals. Written to feel like a note from
-// a person: plain layout, one clear action each. Everything that isn't a direct
-// answer to something they did carries an unsubscribe link and header.
+// a person: plain layout, one clear action each, no emoji or buttons, so they
+// land in Primary rather than Promotions. Everything that isn't a direct answer
+// to something they did carries an unsubscribe link; only the launch
+// announcement (the one real marketing email) also sends the bulk-mail header.
 
 const { sendNotification, escapeHtml } = require("./emailNotifier");
 
@@ -30,8 +32,9 @@ function layout(body, entry, { unsubscribe = true } = {}) {
     </div>`;
 }
 
-const button = (href, label) =>
-  `<p style="margin: 24px 0;"><a href="${escapeHtml(href)}" style="background:#f2584a;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:600;display:inline-block;">${escapeHtml(label)}</a></p>`;
+// A plain link, not a coloured button: buttons are what newsletters look like,
+// and they push the email into Gmail's Promotions tab
+const button = (href, label) => `<p style="margin: 20px 0;"><a href="${escapeHtml(href)}">${escapeHtml(label)}</a></p>`;
 
 const unsubscribeHeaders = (entry) => ({
   "List-Unsubscribe": `<${unsubscribeUrl(entry)}>`,
@@ -49,8 +52,9 @@ async function sendWaitlistConfirmation(entry, { place, launchDate } = {}) {
     ${launchDate ? `We launch on <strong>${longDate(launchDate)}</strong>, and invites go out from then.` : "We'll email you as soon as it's your turn."}</p>
     <p><strong>Want to get in sooner?</strong> Share your link. Every instructor who joins with it moves you up 10 places,
     and if 3 join you're in the next batch. When a friend you referred starts paying, you both get a month free.</p>
-    <p style="background:#f3f4f6;padding:10px 14px;border-radius:8px;font-family:monospace;">${escapeHtml(shareUrl(entry.referralCode))}</p>
+    <p>Your link: <a href="${escapeHtml(shareUrl(entry.referralCode))}">${escapeHtml(shareUrl(entry.referralCode))}</a></p>
     ${button(statusUrl(entry), "See your place in the queue")}
+    <p>If you have any questions, just reply to this email.</p>
     `,
     entry,
     { unsubscribe: false }
@@ -75,7 +79,7 @@ async function sendWaitlistMovedUp(entry, { from, to, friendName, referrals }) {
     `,
     entry
   );
-  return sendNotification(subject, html, null, entry.email, null, { fromName: fromName(), headers: unsubscribeHeaders(entry) });
+  return sendNotification(subject, html, null, entry.email, null, { fromName: fromName() });
 }
 
 function inviteBody(entry, { joinUrl, promo, expiresAt, reminder }) {
@@ -83,15 +87,16 @@ function inviteBody(entry, { joinUrl, promo, expiresAt, reminder }) {
     <p>Hi ${firstName(entry.name)},</p>
     <p>${reminder ? "Just a reminder: your invite to Donna Drive is waiting." : "<strong>You're in.</strong> Your spot on Donna Drive is ready."}</p>
     <p>Sign in with Google, pick your plan and start your free trial. Donna will be answering your learners on WhatsApp within minutes.</p>
-    ${promo ? `<p>🎁 <strong>${escapeHtml(promo.label)}</strong> is saved for you. It's applied automatically at checkout.</p>` : ""}
+    ${promo ? `<p><strong>${escapeHtml(promo.label)}</strong> is saved for you. It's applied automatically at checkout.</p>` : ""}
     ${button(joinUrl, reminder ? "Claim your spot" : "Start your free trial")}
-    <p style="color:#6b7280;font-size:13px;">This invite is just for you and works until ${longDate(expiresAt)}.</p>
+    <p>This invite is just for you and works until ${longDate(expiresAt)}. Any questions, just reply.</p>
   `;
 }
 
 /** Their turn: a single-use link to sign up. */
 async function sendWaitlistInvite(entry, opts) {
-  const subject = `You're in, ${String(entry.name || "").split(" ")[0] || "welcome"} 🎉 Your Donna Drive invite`;
+  const first = String(entry.name || "").split(" ")[0];
+  const subject = first ? `${first}, your Donna Drive invite is ready` : "Your Donna Drive invite is ready";
   return sendNotification(subject, layout(inviteBody(entry, opts), entry, { unsubscribe: false }), null, entry.email, null, { fromName: fromName() });
 }
 
@@ -100,7 +105,6 @@ async function sendWaitlistReminder(entry, opts) {
   const subject = "Your Donna Drive invite is still waiting";
   return sendNotification(subject, layout(inviteBody(entry, { ...opts, reminder: true }), entry), null, entry.email, null, {
     fromName: fromName(),
-    headers: unsubscribeHeaders(entry),
   });
 }
 
@@ -121,7 +125,7 @@ async function sendLaunchAnnouncement(entry) {
 
 /** "Give a month, get a month": a referral started paying. */
 async function sendReferralReward({ to, name, friendName, amountLabel, asReferrer }) {
-  const subject = asReferrer ? "You've earned a free month of Donna Drive 🎉" : "Your free month of Donna Drive 🎉";
+  const subject = asReferrer ? "You've earned a month of Donna Drive" : "Your month of Donna Drive credit";
   const html = layout(
     `
     <p>Hi ${firstName(name)},</p>

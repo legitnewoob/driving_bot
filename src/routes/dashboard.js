@@ -794,8 +794,15 @@ function plainObj(v) {
   return typeof v.toObject === "function" ? v.toObject() : v;
 }
 
+// Worked out by Donna, never set by the instructor: kept out of the settings the
+// dashboard edits, or saving any section would send them back and be refused
+const ROUTE_READ_ONLY = ["autoBufferMin", "autoBufferSamples", "autoBufferAt"];
+
 function settingsPayload(instructor) {
-  const route = plainObj(instructor.routeSettings);
+  const route = { ...(plainObj(instructor.routeSettings) || {}) };
+  ROUTE_READ_ONLY.forEach((k) => delete route[k]);
+  // Older settings have no longest drive yet: send the one Donna works out
+  route.maxDriveMin = settings.resolveRouteSettings(instructor).maxDriveMin;
   return {
     baseAddress: instructor.baseAddress || "",
     hasBaseLocation: !!routeOptimizer.homePoint(instructor),

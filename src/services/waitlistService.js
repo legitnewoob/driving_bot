@@ -46,7 +46,7 @@ async function join(instructor, phone, { fromDate, toDate, preferredTimes } = {}
  */
 async function offerSlot(instructor, date, time, excludePhone = null) {
   if (!isDbReady() || !instructor) return [];
-  if (!settings.resolveBotSettings(instructor).donnaEnabled || !(await schoolAllowsDonna(instructor))) return [];
+  if (!settings.resolveBotSettings(instructor).donnaEnabled || instructor.calendarTokenExpired || !(await schoolAllowsDonna(instructor))) return [];
   if (settings.isWithinNotice(instructor, date)) return [];
 
   const candidates = (await WaitlistEntry.find({ instructorId: instructor.phoneNumberId, status: "waiting" }).lean())

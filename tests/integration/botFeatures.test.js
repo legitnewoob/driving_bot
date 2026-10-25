@@ -701,6 +701,31 @@ describe("Messages to a number with no instructor", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+describe("Google Calendar access expired", () => {
+  beforeEach(() => {
+    mockInstructor.calendarTokenExpired = true;
+  });
+  afterEach(() => {
+    delete mockInstructor.calendarTokenExpired;
+    webhookController._donnaOffReplies.clear(); // the "once an hour" reply memory
+  });
+
+  it("Donna pauses: tells the learner to contact the instructor and doesn't run the AI or book", async () => {
+    const ai = jest.spyOn(aiService, "getResponse");
+    const replies = await chat("can I book friday at 10?");
+    expect(replies).toEqual(["Sorry, Sam isn't taking bookings through Donna right now. Please contact them directly."]);
+    expect(ai).not.toHaveBeenCalled();
+  });
+
+  it("starts again by herself once the calendar is reconnected", async () => {
+    delete mockInstructor.calendarTokenExpired;
+    const ai = jest.spyOn(aiService, "getResponse").mockResolvedValue("Hi! How can I help?\n[ACTION:NULL]\n{}");
+    await chat("hi, can you help me with a lesson?");
+    expect(ai).toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 describe("Donna switched off by the instructor", () => {
   beforeEach(() => {
     mockInstructor.botSettings = { donnaEnabled: false };

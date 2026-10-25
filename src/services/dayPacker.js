@@ -2,29 +2,37 @@
 // minutes after midnight and every gap comes from a callback, so the route
 // optimiser can feed in real drive times and the dashboard preview can use X.
 //
-// Rules (see SMART-DAY-PACKING-PLAN.md):
+// Rules (see SMART-DAY-PACKING-PLAN.md and DRIVE-RANGE-PLAN.md):
 // - After each lesson the instructor needs a gap to drive to the next one.
-//   The gap is at most X; with a known drive it is drive + variance, rounded
-//   up to 5 minutes. If drive + variance is over X the lesson isn't offered.
+//   X is the usual gap (Donna works it out from past drives); H is the longest
+//   drive the instructor will do between two lessons.
+// - A drive up to X is always fine: the gap is drive + variance, rounded up to
+//   5 minutes, but never more than X (the variance never causes a "no").
+// - A drive between X and H gets drive + variance, and is only offered where
+//   it costs the day no lesson (at most one on a quiet day). A drive over H
+//   is never next to a lesson.
 // - Lunch is a flexible window: a break of B minutes anywhere inside
 //   [from, to]. Driving to the first lesson after lunch comes after it.
 // - Start times are on 5-minute marks.
 
 const NEW = Object.freeze({ isNew: true });
+// A learner who hasn't booked yet, when counting how many lessons still fit
+const UNKNOWN = Object.freeze({ isUnknown: true });
 const MAX_LESSONS = 50;
 
 const roundUp5 = (m) => Math.ceil(m / 5) * 5;
 const roundDown5 = (m) => Math.floor(m / 5) * 5;
 
 /**
- * Minutes to leave between two lessons for a drive, or null if the drive
- * doesn't fit inside X. An unknown drive (no location, API failure) uses X.
+ * Minutes to leave between two lessons for a drive, or null if the drive is
+ * longer than H. An unknown drive (no location, API failure) uses X. Up to X
+ * the variance is only added where it fits under X; past X it's added in full.
  */
-function gapFor(drive, X, variance = 5) {
+function gapFor(drive, X, variance = 5, H = Infinity) {
   if (drive == null || !Number.isFinite(drive)) return X;
-  const need = drive + variance;
-  if (need > X) return null;
-  return Math.min(X, roundUp5(need));
+  if (drive > H) return null;
+  if (drive <= X) return Math.min(X, roundUp5(drive + variance));
+  return roundUp5(drive + variance);
 }
 
 // Back-to-back lessons from `from`, each followed by an X gap, ending by `to`.
@@ -132,22 +140,86 @@ function placeLunch({ start, end, X, lunch, items, gap }) {
 }
 
 /**
+ * The most lessons the day could hold: the lessons already in it plus as many
+ * new ones as still fit, with learners who haven't booked yet X apart and lunch
+ * wherever it costs the fewest. Capped at the daily lesson limit.
+ */
+function capacity({ start, end, d, X, lunch = null, items = [], gap, maxLessons = null }) {
+  const sorted = [...items].sort(byStart);
+  const booked = sorted.filter((it) => it.kind === "lesson" || it.isNew).length;
+  const ranges = [];
+  for (const { prev, next, from, to } of stretches(sorted, start, end)) {
+    const gIn = prev ? gap(prev, UNKNOWN) : 0;
+    const gOut = next ? gap(UNKNOWN, next) : 0;
+    if (gIn == null || gOut == null) continue;
+    const lo = prev ? from + gIn : from;
+    const hi = to - gOut;
+    if (hi - lo >= d) ranges.push({ lo, hi });
+  }
+  const plain = ranges.map((r) => chain(r.lo, r.hi, d, X).length);
+  let extra = plain.reduce((a, b) => a + b, 0);
+  if (lunch) {
+    let cheapest = null;
+    ranges.forEach((r, i) => {
+      const packed = packRange(r.lo, r.hi, d, X, lunch);
+      if (!packed.lunch) return;
+      const cost = plain[i] - packed.starts.length;
+      if (cheapest === null || cost < cheapest) cheapest = cost;
+    });
+    if (cheapest) extra -= cheapest;
+  }
+  const total = booked + extra;
+  return maxLessons ? Math.min(total, maxLessons) : total;
+}
+
+// What finishes last before a lesson at s, and what starts first after it
+function neighbours(sorted, s, d) {
+  let prev = null;
+  for (const it of sorted) if (it.end <= s && (!prev || it.end > prev.end)) prev = it;
+  const next = sorted.find((it) => it.start >= s + d) || null;
+  return { prev, next };
+}
+
+/**
+ * A start that needs a drive longer than X on either side is only allowed if
+ * the day can still hold as many lessons as without it. On a quiet day (fewer
+ * than half the lessons it could hold are booked) it may cost one, since the
+ * day is unlikely to fill up and a booked lesson beats an empty slot.
+ */
+function longDriveAllowed(args, s) {
+  const { d, X, items = [], gap } = args;
+  const sorted = [...items].sort(byStart);
+  const { prev, next } = neighbours(sorted, s, d);
+  const gIn = prev ? gap(prev, NEW) : 0;
+  const gOut = next ? gap(NEW, next) : 0;
+  if (!(gIn > X) && !(gOut > X)) return true;
+  const before = capacity(args);
+  const booked = sorted.filter((it) => it.kind === "lesson").length;
+  const allowance = booked < before / 2 ? 1 : 0;
+  const withIt = [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }];
+  return capacity({ ...args, items: withIt }) >= before - allowance;
+}
+
+/**
  * Start times a new lesson of `d` minutes could take, around what's already
  * in the day.
  *
  * items: [{ start, end, kind: "lesson" | "block", ... }]. Lessons are booked
  *   lessons; blocks are calendar events and fixed breaks.
  * gap(a, b): minutes needed between `a` ending and `b` starting, or null if b
- *   can't be reached from a in time. Either side may be NEW (the lesson being
- *   placed). Not called for the day's start or end: home legs aren't timed.
+ *   can't be reached from a at all. Either side may be NEW (the lesson being
+ *   placed) or UNKNOWN (a learner who hasn't booked, when counting how many
+ *   lessons still fit). Not called for the day's start or end: home legs
+ *   aren't timed.
  *
  * In each free stretch it offers the earliest start that's snug against the
  * lesson before, the packed run from there (worst case X between unknown
  * learners), the best lunch-aware packing, and the start snug against the
  * lesson after. A start that would leave no room for lunch is dropped, unless
- * lunch already didn't fit.
+ * lunch already didn't fit, and so is one with a drive longer than X that
+ * would cost the day a lesson (more than one on a quiet day).
  */
-function candidateStarts({ start, end, d, X, lunch = null, items = [], gap }) {
+function candidateStarts({ start, end, d, X, lunch = null, items = [], gap, maxLessons = null }) {
   const sorted = [...items].sort(byStart);
   const found = new Set();
 
@@ -177,7 +249,9 @@ function candidateStarts({ start, end, d, X, lunch = null, items = [], gap }) {
       lunchFits({ start, end, X, lunch, items: [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }], gap })
     );
   }
-  return starts;
+  // A long drive only where it doesn't cost the day a lesson (one, on a quiet day)
+  const args = { start, end, d, X, lunch, items: sorted, gap, maxLessons };
+  return starts.filter((s) => longDriveAllowed(args, s));
 }
 
 /**
@@ -185,7 +259,7 @@ function candidateStarts({ start, end, d, X, lunch = null, items = [], gap }) {
  * not be one of the offered starts): inside the day, on a 5-minute mark, clear
  * of everything, with the drive gaps either side and room left for lunch.
  */
-function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap }) {
+function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap, maxLessons = null }) {
   if (s % 5 !== 0 || s < start || s + d > end) return false;
   const sorted = [...items].sort(byStart);
   if (sorted.some((it) => s < it.end && s + d > it.start)) return false;
@@ -200,9 +274,9 @@ function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap })
     if (g == null || s + d + g > next.start) return false;
   }
   if (lunch && lunchFits({ start, end, X, lunch, items: sorted, gap })) {
-    return lunchFits({ start, end, X, lunch, items: [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }], gap });
+    if (!lunchFits({ start, end, X, lunch, items: [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }], gap })) return false;
   }
-  return true;
+  return longDriveAllowed({ start, end, d, X, lunch, items: sorted, gap, maxLessons }, s);
 }
 
 /**
@@ -244,6 +318,7 @@ function packEmptyDay({ start, end, d, X, lunch = null, blocks = [] }) {
 
 module.exports = {
   NEW,
+  UNKNOWN,
   roundUp5,
   roundDown5,
   gapFor,
@@ -251,6 +326,9 @@ module.exports = {
   packRange,
   lunchFits,
   placeLunch,
+  capacity,
+  longDriveAllowed,
+  neighbours,
   candidateStarts,
   isStartFeasible,
   packEmptyDay,

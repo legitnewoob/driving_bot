@@ -21,9 +21,15 @@ describe("gapFor", () => {
     expect(p.gapFor(13, 18, 5)).toBe(18);
   });
 
-  it("is null when drive + variance is over X", () => {
-    expect(p.gapFor(15, 18, 5)).toBeNull();
-    expect(p.gapFor(25, 20, 5)).toBeNull();
+  it("never refuses a drive up to X: the variance shrinks to fit under X", () => {
+    expect(p.gapFor(15, 18, 5)).toBe(18);
+    expect(p.gapFor(20, 20, 5)).toBe(20);
+  });
+
+  it("past X adds the variance in full, and is null past the longest drive (H)", () => {
+    expect(p.gapFor(25, 20, 5, 40)).toBe(30);
+    expect(p.gapFor(40, 20, 5, 40)).toBe(45);
+    expect(p.gapFor(41, 20, 5, 40)).toBeNull();
   });
 
   it("uses X when the drive is unknown", () => {
@@ -146,9 +152,9 @@ describe("candidateStarts", () => {
     expect(items.length).toBeGreaterThan(worst);
   });
 
-  it("doesn't offer a start when the drive plus variance is over X", () => {
+  it("doesn't offer a start next to a lesson when the drive is over the longest drive (H)", () => {
     const items = [lesson("09:00", 60, { id: "a" })];
-    const gap = (a, b) => (a.id === "a" && b.isNew ? p.gapFor(15, 18, 5) : 18);
+    const gap = (a, b) => (a.id === "a" && b.isNew ? p.gapFor(35, 18, 5, 30) : 18);
     const starts = p.candidateStarts({ start: hm("08:00"), end: hm("12:00"), d: 60, X: 18, lunch: null, items, gap });
     // Nothing straight after the 09:00 lesson; only before it
     expect(starts.filter((s) => s >= hm("10:00"))).toEqual([]);

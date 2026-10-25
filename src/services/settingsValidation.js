@@ -86,6 +86,7 @@ const ROUTE_SPEC = {
   suggestOtherDays: bool(),
   lookAheadDays: int(5, 20),
   bufferMin: int(12, 45),
+  maxDriveMin: int(12, 60),
   driveVarianceMin: int(0, 15),
 };
 

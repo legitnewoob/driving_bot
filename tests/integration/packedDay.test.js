@@ -118,9 +118,17 @@ describe("planDay in packed mode", () => {
     expect(day.offered).toContain("10:15");
   });
 
-  it("doesn't offer a start straight after a lesson when the drive + variance is over X", async () => {
+  it("a drive just under X is never refused: the variance shrinks to fit", async () => {
     Booking.find.mockResolvedValue([booking("09:00", A)]);
     mockDrives({ [`${key(A)}->${key(B)}`]: 18, [`${key(B)}->${key(A)}`]: 18 });
+    const day = await routeOptimizer.planDay({ date: DATE, instructor: instructor(), availableSlots: null, userLoc: B, durationMin: 60 });
+    expect(day.free).toContain("10:20");
+    expect(day.free).not.toContain("10:15");
+  });
+
+  it("a drive over the longest drive (H) isn't offered next to a lesson", async () => {
+    Booking.find.mockResolvedValue([booking("09:00", A)]);
+    mockDrives({ [`${key(A)}->${key(B)}`]: 50, [`${key(B)}->${key(A)}`]: 50 });
     const day = await routeOptimizer.planDay({ date: DATE, instructor: instructor(), availableSlots: null, userLoc: B, durationMin: 60 });
     expect(day.free).toEqual([]);
   });
@@ -194,8 +202,8 @@ describe("planDay in packed mode", () => {
   it("the drop-off point is used for the drive to the next lesson", async () => {
     const C = { lat: 53.2, long: -2.4 };
     Booking.find.mockResolvedValue([booking("11:00", A)]);
-    // Pickup B is next to A, but the drop-off C is far: can't finish right before 11:00
-    mockDrives({ [`${key(B)}->${key(A)}`]: 2, [`${key(C)}->${key(A)}`]: 40 });
+    // Pickup B is next to A, but the drop-off C is further than the longest drive (40)
+    mockDrives({ [`${key(B)}->${key(A)}`]: 2, [`${key(C)}->${key(A)}`]: 50 });
     const day = await routeOptimizer.planDay({ date: DATE, instructor: instructor(), availableSlots: null, userLoc: B, dropoffLoc: C, durationMin: 60 });
     expect(day.free.some((t) => t >= "09:00" && t < "11:00")).toBe(false);
   });

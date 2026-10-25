@@ -607,7 +607,7 @@ describe("2.8 menus for lesson types, moving and cancelling", () => {
 
     Booking.findOne.mockResolvedValue(lesson("DL-BBB002", 8, "14:00"));
     const [ask] = await chat("pick", { buttonId: "movepick:DL-BBB002" });
-    expect(ask.text).toContain("Moving your lesson");
+    expect(ask.text).toMatch(/Let's sort out your lesson/);
     expect(ask.interactive.rows.map((r) => r.id)).toEqual(expect.arrayContaining(["bf:mv:when", "bf:mv:place"]));
     // Donna knows which lesson is moving
     expect(aiService.pendingContext["4471"].flow.bookingId).toBe("DL-BBB002");

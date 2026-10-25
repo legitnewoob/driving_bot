@@ -35,6 +35,39 @@ function slotTakenError(date, time) {
   );
 }
 
+const toMin = (t) => {
+  const [h, m] = String(t || "").split(":").map(Number);
+  return h * 60 + (m || 0);
+};
+
+/**
+ * Another active lesson on the same day that overlaps this one, if any. The
+ * unique index only stops two lessons at the *same* time; with different
+ * lengths (and packed start times) two learners booking at once could still
+ * claim overlapping times, so each booking checks again after claiming.
+ */
+async function overlappingLesson(booking, instructor) {
+  let others;
+  try {
+    others = await Booking.find({
+      instructorId: booking.instructorId,
+      date: booking.date,
+      status: { $in: ACTIVE_STATUSES },
+      bookingId: { $ne: booking.bookingId },
+    });
+  } catch (err) {
+    logger.warn(`Overlap re-check skipped for ${booking.bookingId}: ${err.message}`);
+    return null;
+  }
+  if (!Array.isArray(others)) return null;
+  const s = toMin(booking.time);
+  const e = s + settings.bookingDuration(booking, instructor);
+  return others.find((o) => {
+    const os = toMin(o.time);
+    return os < e && os + settings.bookingDuration(o, instructor) > s;
+  }) || null;
+}
+
 function hoursUntil(date, time) {
   return (timezoneUtils.createDateInTimezone(date, time).getTime() - Date.now()) / 3600000;
 }
@@ -337,6 +370,17 @@ class BookingService {
       throw err;
     }
 
+    // Someone claimed an overlapping time at the same moment: put this one back
+    if (await overlappingLesson(booking, instructor)) {
+      Object.assign(booking, previous);
+      try {
+        await booking.save();
+      } catch (e) {
+        logger.error(`Undo reschedule failed for ${bookingId}: ${e.message}`);
+      }
+      throw slotTakenError(newDate, newTime);
+    }
+
     try {
       await calendarService.updateEvent(booking.calendarEventId, { ...bookingData, durationMin }, instructor);
     } catch (err) {
@@ -483,6 +527,16 @@ class BookingService {
       }
     }
 
+    // Someone claimed an overlapping time at the same moment: release this one
+    if (await overlappingLesson(newBooking, instructor)) {
+      try {
+        await Booking.deleteOne({ _id: newBooking._id });
+      } catch (e) {
+        logger.error(`Could not release ${newBooking.bookingId}: ${e.message}`);
+      }
+      throw slotTakenError(bookingData.date, bookingData.time);
+    }
+
     let calendarEvent;
     try {
       calendarEvent = await calendarService.createEvent({ ...bookingData, durationMin }, instructor);
@@ -526,3 +580,4 @@ class BookingService {
 }
 
 module.exports = new BookingService();
+module.exports.overlappingLesson = overlappingLesson;

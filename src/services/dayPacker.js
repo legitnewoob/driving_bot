@@ -75,6 +75,27 @@ function packRange(from, to, d, X, lunch) {
 const byStart = (a, b) => a.start - b.start || a.end - b.end;
 
 /**
+ * The free stretches between sorted items: { prev, next, from, to }. `prev` is
+ * whatever finishes last before the stretch, so an item inside a longer one
+ * (a lesson during an all-day event) can't open a stretch that isn't free.
+ * A stretch can be empty (to <= from); callers skip those.
+ */
+function stretches(sorted, start, end) {
+  const out = [];
+  let prev = null;
+  for (const next of [...sorted, null]) {
+    out.push({
+      prev,
+      next,
+      from: prev ? Math.max(prev.end, start) : start,
+      to: next ? Math.min(next.start, end) : end,
+    });
+    if (next && (!prev || next.end > prev.end)) prev = next;
+  }
+  return out;
+}
+
+/**
  * Whether a lunch of B minutes still fits in its window around these items.
  * Lunch can't overlap anything; a lesson after lunch needs its drive gap
  * (from the previous lesson's drop-off, or X when lunch starts the day).
@@ -82,12 +103,8 @@ const byStart = (a, b) => a.start - b.start || a.end - b.end;
 function lunchFits({ start, end, X, lunch, items, gap }) {
   if (!lunch) return true;
   const B = lunch.durationMin;
-  const sorted = [...items].sort(byStart);
-  const bounds = [null, ...sorted, null];
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const prev = bounds[i];
-    const next = bounds[i + 1];
-    const open = Math.max(prev ? prev.end : start, lunch.from);
+  for (const { prev, next, from } of stretches([...items].sort(byStart), start, end)) {
+    const open = Math.max(from, lunch.from);
     let after = 0;
     if (next && next.kind === "lesson") {
       after = prev && prev.kind === "lesson" ? gap(prev, next) ?? X : X;
@@ -102,12 +119,8 @@ function lunchFits({ start, end, X, lunch, items, gap }) {
 function placeLunch({ start, end, X, lunch, items, gap }) {
   if (!lunch) return null;
   const B = lunch.durationMin;
-  const sorted = [...items].sort(byStart);
-  const bounds = [null, ...sorted, null];
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const prev = bounds[i];
-    const next = bounds[i + 1];
-    const open = roundUp5(Math.max(prev ? prev.end : start, lunch.from));
+  for (const { prev, next, from } of stretches([...items].sort(byStart), start, end)) {
+    const open = roundUp5(Math.max(from, lunch.from));
     let after = 0;
     if (next && next.kind === "lesson") {
       after = prev && prev.kind === "lesson" ? gap(prev, next) ?? X : X;
@@ -136,14 +149,9 @@ function placeLunch({ start, end, X, lunch, items, gap }) {
  */
 function candidateStarts({ start, end, d, X, lunch = null, items = [], gap }) {
   const sorted = [...items].sort(byStart);
-  const bounds = [null, ...sorted, null];
   const found = new Set();
 
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const prev = bounds[i];
-    const next = bounds[i + 1];
-    const segStart = prev ? Math.max(prev.end, start) : start;
-    const segEnd = next ? Math.min(next.start, end) : end;
+  for (const { prev, next, from: segStart, to: segEnd } of stretches(sorted, start, end)) {
     if (segEnd - segStart < d) continue;
 
     const gIn = prev ? gap(prev, NEW) : 0;

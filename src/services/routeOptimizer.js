@@ -149,7 +149,11 @@ class RouteOptimizer {
       const from = endOf(a);
       const to = startOf(b);
       if (!travel || !from || !to) return X;
-      return dayPacker.gapFor(travel.exact ? travel.exact(from, to) : travel(from, to), X, V);
+      const drive = travel.exact ? travel.exact(from, to) : travel(from, to);
+      if (drive != null) return dayPacker.gapFor(drive, X, V);
+      // No Routes answer: leave X, unless even the straight-line estimate
+      // says the drive can't fit (so a far learner isn't squeezed in on a guess)
+      return travel(from, to) + V > X ? null : X;
     };
   }
 

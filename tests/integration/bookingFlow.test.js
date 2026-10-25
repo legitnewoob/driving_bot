@@ -128,7 +128,8 @@ async function toTimes() {
   await tap("bf:menu:book");
   await tap("bf:type:t60");
   await tap("bf:pickup:home");
-  const dates = last(await tap("bf:dropoff:same"));
+  await tap("bf:dropoff:same");
+  const dates = last(await tap("bf:date:suggest"));
   const firstDate = ids(dates)[0];
   const times = last(await tap(firstDate));
   return { date: firstDate.split(":")[2], times };
@@ -179,7 +180,13 @@ describe("booking by tapping", () => {
     const dropoff = last(await tap("bf:pickup:home"));
     expect(ids(dropoff)[0]).toBe("bf:dropoff:same");
 
-    const dates = last(await tap("bf:dropoff:same"));
+    // Asks for their own day first, Donna's suggestions a tap away
+    const ask = last(await tap("bf:dropoff:same"));
+    expect(ask.text).toMatch(/^Which day would you like\? You can type it/);
+    expect(ids(ask)).toEqual(["bf:date:suggest"]);
+    expect(routeOptimizer.planDay).not.toHaveBeenCalled();
+
+    const dates = last(await tap("bf:date:suggest"));
     expect(dates.text).toBe("Which day suits you?");
     expect(dates.interactive.rows[0].description).toBe("2 times free");
     expect(ids(dates)[ids(dates).length - 1]).toBe("bf:date:other");
@@ -256,6 +263,21 @@ describe("booking by tapping", () => {
     expect(flow().date).toBe(friday);
   });
 
+  it("a typed day the instructor doesn't work goes straight to Donna's suggestions", async () => {
+    await tap("bf:menu:book");
+    await tap("bf:type:t60");
+    await tap("bf:pickup:home");
+    await tap("bf:dropoff:same");
+    const today = new Date();
+    const sunday = new Date(today.getTime() + ((7 - today.getUTCDay()) % 7 || 7) * 86400000).toISOString().slice(0, 10);
+    jest.spyOn(dateTimeService, "extractDateTimeFromMessage").mockResolvedValue({
+      hasDateTime: true, date: sunday, time: null, explicitDate: true, explicitTime: false,
+    });
+    const replies = await chat("Sunday?");
+    expect(replies[0].text).toMatch(/isn't working on Sun .*Here are the days that work/);
+    expect(last(replies).text).toBe("Which day suits you?");
+  });
+
   it("answers a side question and shows the step again", async () => {
     await toTimes();
     aiService.getResponse.mockResolvedValue("A lesson is £40.\n[ACTION:NULL]\n{}");
@@ -271,7 +293,7 @@ describe("booking by tapping", () => {
     const change = last(await tap("bf:change"));
     expect(ids(change)).toEqual(["bf:chg:type", "bf:chg:pickup", "bf:chg:dropoff", "bf:chg:date", "bf:chg:time"]);
     const dates = last(await tap("bf:chg:date"));
-    expect(dates.text).toBe("Which day suits you?");
+    expect(dates.text).toMatch(/^Which day would you like\?/);
     expect(flow()).toMatchObject({ lessonTypeId: "t60", date: null, time: null });
     expect(flow().pickup.address).toBe("ST5 1AB");
   });
@@ -304,7 +326,8 @@ describe("booking by tapping", () => {
     await tap("bf:menu:book");
     await tap("bf:type:t60");
     await tap("bf:pickup:home");
-    const dates = last(await tap("bf:dropoff:same"));
+    await tap("bf:dropoff:same");
+    const dates = last(await tap("bf:date:suggest"));
     routeOptimizer.planDay.mockResolvedValueOnce({ offered: [], evaluations: [] });
     const replies = await tap(ids(dates)[0]);
     expect(replies[0].text).toMatch(/There's nothing free on .* for a 1h lesson/);
@@ -316,7 +339,8 @@ describe("booking by tapping", () => {
     await tap("bf:menu:book");
     await tap("bf:type:t120");
     await tap("bf:pickup:home");
-    const [none] = await tap("bf:dropoff:same");
+    await tap("bf:dropoff:same");
+    const [none] = await tap("bf:date:suggest");
     expect(none.text).toMatch(/nothing free for a 2h lesson/);
     expect(ids(none)[0]).toBe("bf:wl");
   });
@@ -376,7 +400,8 @@ describe("moving a lesson", () => {
 
   it("Date & time: pick a new day and time, then move it", async () => {
     await tap("movepick:DL-MOV001");
-    const dates = last(await tap("bf:mv:when"));
+    await tap("bf:mv:when");
+    const dates = last(await tap("bf:date:suggest"));
     const date = ids(dates)[0].split(":")[2];
     await tap(`bf:date:${date}`);
     const confirm = last(await tap("bf:time:14:00"));

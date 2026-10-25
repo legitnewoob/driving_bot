@@ -390,7 +390,19 @@ class BookingFlow {
     return times;
   }
 
+  // Asks for the learner's own day first; Donna's list of days is a button away
   async _askDate(ctx, user, flow) {
+    flow.step = "date";
+    flow.awaiting = "date";
+    this._set(ctx.from, flow);
+    return ctx.sendButtons(
+      "Which day would you like? You can type it (e.g. \"next Tuesday\" or \"Friday\"), or I can suggest some.",
+      [{ id: "bf:date:suggest", title: "Suggest days" }]
+    );
+  }
+
+  // Donna's list of days with free times for this lesson, best fit marked
+  async _suggestDates(ctx, user, flow) {
     flow.step = "date";
     flow.awaiting = null;
     this._set(ctx.from, flow);
@@ -452,7 +464,7 @@ class BookingFlow {
       await ctx.send(`${why} Here are the days that work:`);
       flow.date = null;
       this._set(ctx.from, flow);
-      return this._askDate(ctx, user, flow);
+      return this._suggestDates(ctx, user, flow);
     }
 
     const rows = times.map((t) => ({ id: `bf:time:${t}`, title: `${to12h(t)} – ${to12h(addMinutes(t, length))}` }));
@@ -634,12 +646,12 @@ class BookingFlow {
           this._set(ctx.from, flow);
           return ctx.send("Which day would you like? You can say things like \"next Friday\" or \"3 June\".");
         }
-        if (value === "pick") return this._askDate(ctx, user, flow);
+        if (value === "pick" || value === "suggest") return this._suggestDates(ctx, user, flow);
         if (DATE.test(value)) {
           flow.time = null;
           return this._askTime(ctx, user, flow, value);
         }
-        return this._askDate(ctx, user, flow);
+        return this._suggestDates(ctx, user, flow);
       }
       case "time": {
         if (!TIME.test(value)) return this._askTime(ctx, user, flow, flow.date);
@@ -805,8 +817,8 @@ class BookingFlow {
       const today = timezoneUtils.getCurrentDateString();
       if (read.date && read.date > today) {
         if (!settings.isWorkingDay(ctx.instructor, read.date) || settings.isOnHoliday(ctx.instructor, read.date)) {
-          await ctx.send(`${firstName(ctx.instructor.name) || "Your instructor"} isn't working on ${formatDay(read.date)}.`);
-          await this._askDate(ctx, user, flow);
+          await ctx.send(`${firstName(ctx.instructor.name) || "Your instructor"} isn't working on ${formatDay(read.date)}. Here are the days that work:`);
+          await this._suggestDates(ctx, user, flow);
           return true;
         }
         flow.date = read.date;

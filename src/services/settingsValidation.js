@@ -167,13 +167,25 @@ const BOT_SPEC = {
   handover: bool(),
 };
 
+// Worked out by Donna, never set by the instructor. A dashboard can send them
+// back with the rest of its route settings (an older tab, say): ignore them
+// rather than refuse the save, and never let one be overwritten.
+const ROUTE_READ_ONLY = ["autoBufferMin", "autoBufferSamples", "autoBufferAt"];
+
+function withoutReadOnly(route) {
+  if (!route || typeof route !== "object" || Array.isArray(route)) return route;
+  const rest = { ...route };
+  ROUTE_READ_ONLY.forEach((k) => delete rest[k]);
+  return rest;
+}
+
 function validateSettingsUpdate(body) {
   const errors = [];
   const result = check(
     body,
     {
       baseAddress: text(200),
-      routeSettings: (v, label, errs) => ({ value: check(v, ROUTE_SPEC, label, errs) }),
+      routeSettings: (v, label, errs) => ({ value: check(withoutReadOnly(v), ROUTE_SPEC, label, errs) }),
       botSettings: (v, label, errs) => ({ value: check(v, BOT_SPEC, label, errs) }),
     },
     "",

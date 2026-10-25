@@ -138,7 +138,7 @@ async function toTimes() {
 describe("greeting and menu", () => {
   it("hi shows the menu without calling the AI", async () => {
     const [menu] = await chat("hi");
-    expect(menu.text).toBe("Hi Jane! 👋 I'm Donna, Sam Smith's booking assistant. What would you like to do?");
+    expect(menu.text).toMatch(/^Good (morning|afternoon|evening), Jane! 👋 Welcome to Sam's Driving School\. I'm Donna, Sam's assistant.*What can I do for you today\?$/);
     expect(ids(menu)).toEqual(["bf:menu:book", "bf:menu:talk"]);
     expect(aiService.getResponse).not.toHaveBeenCalled();
   });
@@ -166,7 +166,7 @@ describe("greeting and menu", () => {
 describe("booking by tapping", () => {
   it("goes type → pickup → drop-off → day → time → confirm → booked", async () => {
     const types = last(await tap("bf:menu:book"));
-    expect(types.text).toBe("Which lesson would you like?");
+    expect(types.text).toMatch(/Here's what Sam offers\. Which lesson would you like\?$/);
     expect(types.interactive.rows.map((r) => [r.title, r.description])).toEqual([
       ["Beginner", "2h · £80"],
       ["Moderate", "1h 30m · £60"],
@@ -174,7 +174,7 @@ describe("booking by tapping", () => {
     ]);
 
     const pickup = last(await tap("bf:type:t60"));
-    expect(pickup.text).toBe("Where should I pick you up?");
+    expect(pickup.text).toMatch(/Where would you like Sam to pick you up\?$/);
     expect(ids(pickup)).toEqual(["bf:pickup:saved:0", "bf:pickup:home", "bf:pickup:pin", "bf:pickup:type"]);
 
     const dropoff = last(await tap("bf:pickup:home"));
@@ -182,12 +182,12 @@ describe("booking by tapping", () => {
 
     // Asks for their own day first, Donna's suggestions a tap away
     const ask = last(await tap("bf:dropoff:same"));
-    expect(ask.text).toMatch(/^Which day would you like\? You can type it/);
+    expect(ask.text).toMatch(/^Which day would you like your lesson, Jane\? Just tell me a day/);
     expect(ids(ask)).toEqual(["bf:date:suggest"]);
     expect(routeOptimizer.planDay).not.toHaveBeenCalled();
 
     const dates = last(await tap("bf:date:suggest"));
-    expect(dates.text).toBe("Which day suits you?");
+    expect(dates.text).toMatch(/Which day suits you\?$/);
     expect(dates.interactive.rows[0].description).toBe("2 times free");
     expect(ids(dates)[ids(dates).length - 1]).toBe("bf:date:other");
     // Every day was checked for a 1-hour lesson from the learner's postcode
@@ -225,7 +225,7 @@ describe("booking by tapping", () => {
   it("skips the lesson type when there's only one", async () => {
     typesAre([TYPES[2]]);
     const [pickup] = await tap("bf:menu:book");
-    expect(pickup.text).toBe("Where should I pick you up?");
+    expect(pickup.text).toMatch(/Where would you like Sam to pick you up\?$/);
     expect(flow()).toMatchObject({ lessonTypeId: "t60", durationMin: 60 });
   });
 
@@ -233,7 +233,7 @@ describe("booking by tapping", () => {
     await tap("bf:menu:book");
     await tap("bf:type:t60");
     const [dropoff] = await chat("📍 Shared location: Asda car park", { location: { lat: 53.1, long: -2.3, label: "Asda car park" } });
-    expect(dropoff.text).toBe("And where should the lesson finish?");
+    expect(dropoff.text).toMatch(/^Great! And where should the lesson finish\?/);
     expect(flow().pickup).toEqual({ address: "Asda car park", lat: 53.1, long: -2.3 });
   });
 
@@ -245,7 +245,7 @@ describe("booking by tapping", () => {
     const [again] = await chat("somewhere nice");
     expect(again.text).toMatch(/couldn't find that address/);
     const [dropoff] = await chat("ST5 1AB");
-    expect(dropoff.text).toBe("And where should the lesson finish?");
+    expect(dropoff.text).toMatch(/^Great! And where should the lesson finish\?/);
     expect(flow().pickup.address).toBe("1 High St, ST5 1AB");
   });
 
@@ -275,7 +275,7 @@ describe("booking by tapping", () => {
     });
     const replies = await chat("Sunday?");
     expect(replies[0].text).toMatch(/isn't working on Sun .*Here are the days that work/);
-    expect(last(replies).text).toBe("Which day suits you?");
+    expect(last(replies).text).toMatch(/Which day suits you\?$/);
   });
 
   it("answers a side question and shows the step again", async () => {
@@ -293,7 +293,7 @@ describe("booking by tapping", () => {
     const change = last(await tap("bf:change"));
     expect(ids(change)).toEqual(["bf:chg:type", "bf:chg:pickup", "bf:chg:dropoff", "bf:chg:date", "bf:chg:time"]);
     const dates = last(await tap("bf:chg:date"));
-    expect(dates.text).toMatch(/^Which day would you like\?/);
+    expect(dates.text).toMatch(/^Which day would you like your lesson, Jane\?/);
     expect(flow()).toMatchObject({ lessonTypeId: "t60", date: null, time: null });
     expect(flow().pickup.address).toBe("ST5 1AB");
   });
@@ -331,7 +331,7 @@ describe("booking by tapping", () => {
     routeOptimizer.planDay.mockResolvedValueOnce({ offered: [], evaluations: [] });
     const replies = await tap(ids(dates)[0]);
     expect(replies[0].text).toMatch(/There's nothing free on .* for a 1h lesson/);
-    expect(last(replies).text).toBe("Which day suits you?");
+    expect(last(replies).text).toMatch(/Which day suits you\?$/);
   });
 
   it("offers the waiting list when nothing is free at all", async () => {
@@ -341,7 +341,7 @@ describe("booking by tapping", () => {
     await tap("bf:pickup:home");
     await tap("bf:dropoff:same");
     const [none] = await tap("bf:date:suggest");
-    expect(none.text).toMatch(/nothing free for a 2h lesson/);
+    expect(none.text).toMatch(/diary is full for a 2h lesson/);
     expect(ids(none)[0]).toBe("bf:wl");
   });
 
@@ -349,7 +349,7 @@ describe("booking by tapping", () => {
     await toTimes();
     await tap("bf:time:10:00");
     const [bye] = await tap("bf:stop");
-    expect(bye.text).toBe("No problem, nothing's been booked. 👍");
+    expect(bye.text).toMatch(/^No problem at all, nothing's been booked\./);
     expect(flow()).toBeUndefined();
   });
 
@@ -394,7 +394,7 @@ describe("moving a lesson", () => {
 
   it("asks what to change", async () => {
     const [ask] = await tap("movepick:DL-MOV001");
-    expect(ask.text).toContain("Moving your lesson on");
+    expect(ask.text).toMatch(/Let's sort out your lesson on/);
     expect(ids(ask)).toEqual(["bf:mv:when", "bf:mv:place", "bf:mv:type"]);
   });
 
@@ -437,7 +437,7 @@ describe("moving a lesson", () => {
     jest.spyOn(bookingService, "validateBooking").mockResolvedValue(["clashes"]);
     const replies = await tap("bf:type:t120");
     expect(replies[0].text).toBe("10:00 am on Tue 2 Jul doesn't work for this lesson.");
-    expect(last(replies).text).toBe("Here's what's free on Tue 2 Jul:");
+    expect(last(replies).text).toBe("Here's what's free on Tue 2 Jul. Which time works best for you?");
   });
 
   it("Pickup / drop-off: new places, same time if it still works", async () => {

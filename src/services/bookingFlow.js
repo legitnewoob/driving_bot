@@ -47,6 +47,25 @@ function firstName(name) {
   return String(name || "").trim().split(/\s+/)[0] || "";
 }
 
+// ── Donna's voice: a friendly assistant for the instructor's business, not a menu ──
+
+// "Good morning" / "Good afternoon" / "Good evening", by UK time
+function timeOfDayGreeting() {
+  const hour = Number(timezoneUtils.formatDate(new Date(), "H"));
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// The business learners are talking to, e.g. "Sam's Driving School"
+function businessName(instructor) {
+  const first = firstName(instructor?.name);
+  return first ? `${first}'s Driving School` : "your driving school";
+}
+
+// ", Jane" when we know their name, so lines read naturally either way
+const withName = (name) => (name ? `, ${name}` : "");
+
 const place = (address, lat, long) => ({ address, lat, long });
 
 // A place stored on a booking or user, as a flow place (or null)
@@ -126,10 +145,22 @@ class BookingFlow {
     if (ctx.bot.handover) rows.push({ id: "bf:menu:talk", title: `Talk to ${teacher}` });
 
     const name = firstName(user?.name);
-    const intro = greet
-      ? `Hi${name ? ` ${name}` : ""}! 👋 I'm Donna, ${ctx.instructor.name}'s booking assistant. What would you like to do?`
-      : "What would you like to do?";
-    await ctx.sendList(intro, "Choose an option", rows);
+    const returning = upcoming.length > 0 || !!(await this._lastBooking(ctx));
+    const coming = upcoming.length
+      ? ` You've got ${upcoming.length === 1 ? "a lesson" : `${upcoming.length} lessons`} coming up with ${teacher}.`
+      : "";
+    let intro;
+    if (!greet) {
+      intro = `You're all set${withName(name)}! 🙌 How can ${businessName(ctx.instructor)} help you today?`;
+    } else if (returning) {
+      intro = `${timeOfDayGreeting()}${withName(name)}! 👋 Lovely to hear from you again.${coming} How can I help you today?`;
+    } else {
+      intro =
+        `${timeOfDayGreeting()}${withName(name)}! 👋 Welcome to ${businessName(ctx.instructor)}. ` +
+        `I'm Donna, ${teacher}'s assistant, and I can book, move or check your lessons any time, day or night. ` +
+        `What can I do for you today?`;
+    }
+    await ctx.sendList(intro, "See options", rows);
   }
 
   /* ========== START ========== */
@@ -178,7 +209,7 @@ class BookingFlow {
       ...(types.length > 1 ? [{ id: "bf:mv:type", title: "Lesson type", description: "Changes how long it is" }] : []),
     ];
     await ctx.sendList(
-      `Moving your lesson on ${formatDay(flow.orig.date)} at ${to12h(flow.orig.time)} (${flow.bookingId}). What would you like to change?`,
+      `Of course! Let's sort out your lesson on ${formatDay(flow.orig.date)} at ${to12h(flow.orig.time)} (${flow.bookingId}). What would you like to change?`,
       "Choose",
       rows
     );
@@ -299,7 +330,10 @@ class BookingFlow {
         String(t._id) === lastId ? "Same as last time" : t.description || null,
       ].filter(Boolean).join(" · "),
     }));
-    await ctx.sendList("Which lesson would you like?", "Choose a lesson", rows);
+    const intro = lastId
+      ? "Lovely! Would you like the same lesson as last time, or something different?"
+      : `Lovely, let's get you booked in! Here's what ${firstName(ctx.instructor.name) || "your instructor"} offers. Which lesson would you like?`;
+    await ctx.sendList(intro, "Choose a lesson", rows);
   }
 
   async _lastBooking(ctx) {
@@ -349,8 +383,14 @@ class BookingFlow {
     rows.splice(MAX_ROWS - 2);
     rows.push({ id: `bf:${kind}:pin`, title: "📍 Send my location" });
     rows.push({ id: `bf:${kind}:type`, title: "Type an address" });
+    const teacher = firstName(ctx.instructor.name) || "your instructor";
+    const lesson = flow.lessonTypeName
+      ? `a ${formatDuration(this._lessonDuration(ctx, flow))} ${flow.lessonTypeName} lesson`
+      : "your lesson";
     await ctx.sendList(
-      kind === "pickup" ? "Where should I pick you up?" : "And where should the lesson finish?",
+      kind === "pickup"
+        ? `Perfect, ${lesson} it is! 🚗 Where would you like ${teacher} to pick you up?`
+        : "Great! And where should the lesson finish? Most learners finish where they started.",
       kind === "pickup" ? "Choose pickup" : "Choose drop-off",
       rows
     );
@@ -395,8 +435,10 @@ class BookingFlow {
     flow.step = "date";
     flow.awaiting = "date";
     this._set(ctx.from, flow);
+    const name = firstName(user?.name);
     return ctx.sendButtons(
-      "Which day would you like? You can type it (e.g. \"next Tuesday\" or \"Friday\"), or I can suggest some.",
+      `Which day would you like your lesson${withName(name)}? Just tell me a day, like "next Tuesday" or "Friday", ` +
+        `and I'll check ${firstName(ctx.instructor.name) || "your instructor"}'s diary. Or I can suggest the days that suit best.`,
       [{ id: "bf:date:suggest", title: "Suggest days" }]
     );
   }
@@ -430,8 +472,8 @@ class BookingFlow {
       const buttons = [{ id: "bf:wl", title: "Join waiting list" }];
       if (ctx.bot.handover) buttons.push({ id: "bf:menu:talk", title: `Talk to ${firstName(ctx.instructor.name) || "instructor"}` });
       return ctx.sendButtons(
-        `Sorry, there's nothing free for a ${formatDuration(this._lessonDuration(ctx, flow))} lesson in the next few weeks. ` +
-          `I can let you know as soon as something opens up.`,
+        `I'm really sorry, ${firstName(ctx.instructor.name) || "your instructor"}'s diary is full for a ${formatDuration(this._lessonDuration(ctx, flow))} lesson ` +
+          `over the next few weeks. Shall I let you know the moment something opens up? You'd be first to hear.`,
         buttons
       );
     }
@@ -444,7 +486,13 @@ class BookingFlow {
       description: `${d.count} time${d.count === 1 ? "" : "s"} free${d.date === bestDate ? " · ⭐ Best fit" : ""}`,
     }));
     rows.push({ id: "bf:date:other", title: "Another date", description: "Type the day you'd like" });
-    await ctx.sendList("Which day suits you?", "Choose a day", rows);
+    await ctx.sendList(
+      bestDate
+        ? "Here are the days with space for you. ⭐ marks the easiest one to fit you in. Which day suits you?"
+        : "Here are the days with space for you. Which day suits you?",
+      "Choose a day",
+      rows
+    );
   }
 
   async _askTime(ctx, user, flow, date) {
@@ -471,8 +519,8 @@ class BookingFlow {
     rows.push({ id: "bf:date:pick", title: "Another day" });
     // A far learner only fits where the long drive costs the day nothing: say why
     const intro = day.longDrive
-      ? `You're a bit further out, so I can fit you in when there's time for the drive. Here's what's free on ${formatDay(date)}:`
-      : `Here's what's free on ${formatDay(date)}:`;
+      ? `You're a bit further out, so I can fit you in when there's time for the drive. Here's what's free on ${formatDay(date)}. Which time works best for you?`
+      : `Here's what's free on ${formatDay(date)}. Which time works best for you?`;
     await ctx.sendList(intro, "Choose a time", rows);
   }
 
@@ -505,7 +553,7 @@ class BookingFlow {
     this._set(ctx.from, flow);
     const length = this._lessonDuration(ctx, flow);
     const lines = [
-      flow.kind === "move" ? "Here's your lesson after the change:" : "Here's your lesson:",
+      flow.kind === "move" ? "Here's how your lesson will look after the change:" : "Brilliant, here's your lesson. Shall I book it in?",
       "",
       flow.lessonTypeName
         ? `🎯 ${flow.lessonTypeName} · ${formatDuration(length)}${flow.price != null ? ` · £${flow.price}` : ""}`
@@ -532,7 +580,7 @@ class BookingFlow {
       { id: "bf:chg:date", title: "Day" },
       { id: "bf:chg:time", title: "Time" },
     ];
-    await ctx.sendList("What would you like to change?", "Choose", rows);
+    await ctx.sendList("No problem! What would you like to change?", "Choose", rows);
   }
 
   /* ========== FINISH ========== */
@@ -702,7 +750,11 @@ class BookingFlow {
       }
       case "stop":
         this.clear(ctx.from);
-        return ctx.send(flow.kind === "move" ? "No problem, your lesson stays as it was. 👍" : "No problem, nothing's been booked. 👍");
+        return ctx.send(
+          flow.kind === "move"
+            ? "No problem at all, your lesson stays just as it was. 👍"
+            : "No problem at all, nothing's been booked. Just message me whenever you're ready. 😊"
+        );
       default:
         return this.next(ctx, user, controller);
     }
@@ -766,7 +818,11 @@ class BookingFlow {
     }
     if (STOP.test(trimmed)) {
       this.clear(ctx.from);
-      await ctx.send(flow.kind === "move" ? "No problem, your lesson stays as it was. 👍" : "No problem, nothing's been booked. 👍");
+      await ctx.send(
+          flow.kind === "move"
+            ? "No problem at all, your lesson stays just as it was. 👍"
+            : "No problem at all, nothing's been booked. Just message me whenever you're ready. 😊"
+        );
       return true;
     }
 
@@ -817,7 +873,7 @@ class BookingFlow {
       const today = timezoneUtils.getCurrentDateString();
       if (read.date && read.date > today) {
         if (!settings.isWorkingDay(ctx.instructor, read.date) || settings.isOnHoliday(ctx.instructor, read.date)) {
-          await ctx.send(`${firstName(ctx.instructor.name) || "Your instructor"} isn't working on ${formatDay(read.date)}. Here are the days that work:`);
+          await ctx.send(`Sorry, ${firstName(ctx.instructor.name) || "your instructor"} isn't working on ${formatDay(read.date)}. Here are the days that work:`);
           await this._suggestDates(ctx, user, flow);
           return true;
         }

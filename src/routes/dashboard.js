@@ -882,15 +882,18 @@ router.get("/setup-status", async (req, res) => {
   }
 });
 
-// Settings plus setup progress. Donna only counts as on once setup is finished:
-// until then she can't really work, so the switch shows off rather than a false "on".
-// Their driving school can also switch her off for everyone.
+// Settings plus setup progress. Donna only counts as on once she can really
+// work (setup filled in, WhatsApp number, a working Google Calendar): until then
+// the switch shows off rather than a false "on". When Google access expires she
+// pauses until it's reconnected. Their driving school can also switch her off.
 async function withSetup(payload, setup, instructor) {
   const schoolOff = !(await schoolAllowsDonna(instructor));
   return {
     ...payload,
-    botSettings: { ...payload.botSettings, donnaEnabled: payload.botSettings.donnaEnabled && setup.complete && !schoolOff },
+    botSettings: { ...payload.botSettings, donnaEnabled: payload.botSettings.donnaEnabled && setup.ready && !schoolOff },
     donnaOffBySchool: schoolOff,
+    // Switched on, but paused because Google Calendar access expired
+    donnaPausedForCalendar: payload.botSettings.donnaEnabled && setup.calendarExpired,
     setup,
   };
 }
@@ -983,15 +986,17 @@ router.patch("/settings", async (req, res) => {
         error: "Your driving school has switched Donna off for everyone. Ask your school to turn her back on.",
       });
     }
+    // ...and her WhatsApp number and a working Google Calendar
     if (botSettings?.donnaEnabled === true) {
       const setup = await getSetupStatus(doc);
-      if (!setup.complete) {
+      if (!setup.ready) {
         return res.status(409).json({
           success: false,
           code: "SETUP_INCOMPLETE",
-          error: "Finish setting up before turning Donna on.",
+          error: `Before Donna can go on: ${setup.blockers.map((b) => b.label.charAt(0).toLowerCase() + b.label.slice(1)).join(", ")}.`,
           missing: setup.missing,
           required: setup.required,
+          blockers: setup.blockers,
         });
       }
     }

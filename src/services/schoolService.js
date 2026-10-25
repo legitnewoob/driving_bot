@@ -77,8 +77,9 @@ async function memberSummary(instructor) {
     roleLabel: SCHOOL_ROLE_LABELS[instructor.schoolRole] || null,
     phoneNumber: phoneNumberService.isFullyProvisioned(instructor) ? instructor.phone || null : null,
     calendarConnected: !!instructor.googleRefreshToken,
-    // Off until their setup is finished, as on their own dashboard
-    donnaEnabled: settings.resolveBotSettings(instructor).donnaEnabled && setup.complete,
+    // Off until she can really work (setup, number, calendar), as on their own dashboard
+    donnaEnabled: settings.resolveBotSettings(instructor).donnaEnabled && setup.ready,
+    calendarExpired: setup.calendarExpired,
     setup,
     learners,
     lessonsThisWeek,

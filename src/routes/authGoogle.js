@@ -278,7 +278,12 @@ router.post("/calendar/disconnect", jwtAuth, async (req, res) => {
       return res.status(404).json({ success: false, error: "Instructor not found" });
     }
 
+    // Without a calendar Donna can't see the diary or book, so she goes off too
+    // (turning her back on needs a calendar again)
     instructor.googleRefreshToken = null;
+    instructor.calendarTokenExpired = false;
+    if (instructor.botSettings) instructor.botSettings.donnaEnabled = false;
+    else instructor.botSettings = { donnaEnabled: false };
     await instructor.save();
 
     const { invalidateInstructorCache } = require("../models/instructorModel");

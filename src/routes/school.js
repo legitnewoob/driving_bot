@@ -120,6 +120,41 @@ router.put("/seats", async (req, res) => {
   }
 });
 
+// Analytics for the owner and managers: ?from=YYYY-MM-DD&to=YYYY-MM-DD&instructors=id,id
+async function loadAnalytics(req) {
+  const instructor = await me(req);
+  if (!instructor) throw Object.assign(new Error("Instructor not found"), { userFacing: true, status: 401 });
+  const { school } = await schoolService.requireSchool(
+    instructor,
+    "school.viewAll",
+    "Only the school owner or a manager can see the school's analytics"
+  );
+  const instructorIds = String(req.query.instructors || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 100);
+  return require("../services/schoolAnalytics").analytics(school, { from: req.query.from, to: req.query.to, instructorIds });
+}
+
+router.get("/analytics", async (req, res) => {
+  try {
+    res.json({ success: true, data: await loadAnalytics(req) });
+  } catch (err) {
+    fail(res, err, "load the school's analytics");
+  }
+});
+
+// One section as a spreadsheet: ?section=instructors|at-risk|unpaid plus the same filters
+router.get("/analytics.csv", async (req, res) => {
+  try {
+    const data = await loadAnalytics(req);
+    const body = require("../services/schoolAnalytics").csv(data, req.query.section);
+    if (body == null) return res.status(400).json({ success: false, error: "section must be instructors, at-risk or unpaid" });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${req.query.section}-${data.period.from}-to-${data.period.to}.csv"`);
+    res.send(body);
+  } catch (err) {
+    fail(res, err, "export the school's analytics");
+  }
+});
+
 // Every learner across the school's instructors
 router.get("/learners", async (req, res) => {
   try {

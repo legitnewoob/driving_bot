@@ -258,6 +258,18 @@ router.post("/bookings", async (req, res) => {
       }
     }
 
+    // Someone claimed an overlapping time at the same moment: release this one
+    const { overlappingLesson } = require("../services/bookingService");
+    const raced = await overlappingLesson(booking, instructor);
+    if (raced) {
+      await Booking.deleteOne({ _id: booking._id }).catch(() => {});
+      return res.status(409).json({
+        success: false,
+        code: "OVERLAP",
+        error: `That overlaps the ${to12h(raced.time)} lesson on ${date}`,
+      });
+    }
+
     try {
       const calendarEvent = await calendarService.createEvent(
         {

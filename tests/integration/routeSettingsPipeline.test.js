@@ -217,11 +217,26 @@ describe("Route & travel settings", () => {
     expect(info.outsideServiceArea).toBeNull();
   });
 
-  it("existing learners are never turned away by the service area", async () => {
+  it("a learner's own past lesson place isn't turned away by the service area, a new far place is", async () => {
     learnerAt(CHARLIE);
-    Booking.countDocuments = jest.fn().mockResolvedValue(3); // has booked before
-    const { info } = await ask(instructor({ route: { serviceArea: { radius: 1, unit: "miles" } } }), { time: "10:00" });
-    expect(info.outsideServiceArea).toBeNull();
+    const chain = (v) => ({ select: () => ({ lean: async () => v }) });
+    const byDate = Booking.find.getMockImplementation();
+    const withHistory = (past) => (q) => (q.userPhone && !q.date ? chain(past) : byDate(q));
+    const userFind = User.findOne.getMockImplementation();
+    User.findOne.mockImplementation((q) => {
+      const u = { phone: PHONE, instructorId: "inst-1", location: CHARLIE, schedulingPrefs: {} };
+      return Object.assign(Promise.resolve(u), { select: () => ({ lean: async () => u }) });
+    });
+    const inst = instructor({ route: { serviceArea: { radius: 1, unit: "miles" } } });
+
+    Booking.find.mockImplementation(withHistory([{ pickupLocation: { address: "x", latitude: CHARLIE.latitude ?? CHARLIE.lat, longitude: CHARLIE.longitude ?? CHARLIE.long } }]));
+    expect((await ask(inst, { time: "10:00" })).info.outsideServiceArea).toBeNull();
+
+    Booking.find.mockImplementation(withHistory([]));
+    expect((await ask(inst, { time: "10:00" })).info.outsideServiceArea).toMatch(/^pickup about \d+ miles away/);
+
+    Booking.find.mockImplementation(byDate);
+    if (userFind) User.findOne.mockImplementation(userFind);
   });
 
   it("'suggest days that fit your route' adds better days when the asked time doesn't work", async () => {

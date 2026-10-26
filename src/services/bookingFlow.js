@@ -370,7 +370,7 @@ class BookingFlow {
     return out;
   }
 
-  async _askPlace(ctx, user, flow, kind) {
+  async _askPlace(ctx, user, flow, kind, note = null) {
     flow.step = kind;
     flow.awaiting = null;
     this._set(ctx.from, flow);
@@ -387,10 +387,11 @@ class BookingFlow {
     const lesson = flow.lessonTypeName
       ? `a ${formatDuration(this._lessonDuration(ctx, flow))} ${flow.lessonTypeName} lesson`
       : "your lesson";
+    const ask = kind === "pickup"
+      ? `Perfect, ${lesson} it is! 🚗 Where would you like ${teacher} to pick you up?`
+      : "Great! And where should the lesson finish? Most learners finish where they started.";
     await ctx.sendList(
-      kind === "pickup"
-        ? `Perfect, ${lesson} it is! 🚗 Where would you like ${teacher} to pick you up?`
-        : "Great! And where should the lesson finish? Most learners finish where they started.",
+      note || ask,
       kind === "pickup" ? "Choose pickup" : "Choose drop-off",
       rows
     );
@@ -761,6 +762,22 @@ class BookingFlow {
   }
 
   async _setPlace(ctx, user, flow, kind, chosen, controller) {
+    // Saved places can lack coordinates; the area check and routing need them
+    if (chosen.lat == null && chosen.address) {
+      const found = await this._geocode(chosen.address);
+      if (found) chosen = place(chosen.address, found.lat, found.long);
+    }
+    const loc = chosen.lat != null ? { lat: chosen.lat, long: chosen.long } : null;
+    const area = await routeOptimizer.placeAllowed(ctx.instructor, ctx.from, loc, chosen.address);
+    if (!area.inside) {
+      flow.awaiting = null;
+      this._set(ctx.from, flow);
+      const teacher = firstName(ctx.instructor.name) || "your instructor";
+      const which = kind === "pickup" ? "pick up from" : "drop off at";
+      return this._askPlace(ctx, user, flow, kind,
+        `Sorry, ${chosen.address} is ${area.reason || "outside the area"}, so ${teacher} can't ${which} there. ` +
+        `Could you choose somewhere closer?`);
+    }
     flow[kind] = chosen;
     flow.awaiting = null;
     if (flow.kind === "move") flow.recheck = true;

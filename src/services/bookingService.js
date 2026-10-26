@@ -24,6 +24,20 @@ function userFacingError(message, extra = {}) {
   return Object.assign(new Error(message), { userFacing: true }, extra);
 }
 
+// Refuses a pickup or drop-off outside the instructor's service area
+async function checkPlaces(from, instructor, places) {
+  for (const { loc, address, label } of places) {
+    if (!loc && !address) continue;
+    const area = await routeOptimizer.placeAllowed(instructor, from, loc, address);
+    if (!area.inside) {
+      throw userFacingError(
+        `Sorry, that ${label} is ${area.reason || "outside the area"}. Please choose a place inside ${instructor.name || "the instructor"}'s area.`,
+        { code: "outside_area" }
+      );
+    }
+  }
+}
+
 function isDuplicateKey(err, field) {
   return err?.code === 11000 && (!field || Object.keys(err.keyPattern || err.keyValue || {}).includes(field));
 }
@@ -201,6 +215,7 @@ class BookingService {
         userLoc: opts.userLoc || null,
         dropoffLoc: opts.dropoffLoc || null,
         excludeBookingId: opts.excludeBookingId || null,
+        priority: !!opts.priority,
       });
       if (!ok && errors.length === 0) {
         errors.push(`${to12h(bookingData.time)} on ${bookingData.date} isn't free for a lesson that long. Please pick one of the offered times.`);
@@ -316,6 +331,11 @@ class BookingService {
     const startLoc = toLoc(pickupLocation) || toLoc(booking.pickupLocation) || toLoc(booking.location);
     const endLoc = toLoc(dropoffLocation) || toLoc(booking.dropoffLocation);
 
+    await checkPlaces(from, instructor, [
+      pickupLocation && { loc: toLoc(pickupLocation), address: pickupLocation.address, label: "pickup" },
+      dropoffLocation && { loc: toLoc(dropoffLocation), address: dropoffLocation.address, label: "drop-off" },
+    ].filter(Boolean));
+
     const validationErrors = await this.validateBooking({
       ...booking.toObject(),
       date: newDate,
@@ -326,6 +346,7 @@ class BookingService {
       dropoffLoc: endLoc,
       excludeBookingId: booking.bookingId,
       ignoreEventId: booking.calendarEventId,
+      priority: !!user.schedulingPrefs?.priority,
     });
     if (validationErrors.length > 0) throw userFacingError(validationErrors.join(" "));
 
@@ -442,10 +463,16 @@ class BookingService {
       ? { lat: dropoffLocation.latitude, long: dropoffLocation.longitude }
       : null;
 
+    await checkPlaces(from, instructor, [
+      { loc: startLoc, address: pickupLocation.address || user?.postalCode, label: "pickup" },
+      { loc: endLoc, address: dropoffLocation.address, label: "drop-off" },
+    ]);
+
     const validationErrors = await this.validateBooking(bookingData, instructor, {
       durationMin,
       userLoc: startLoc,
       dropoffLoc: endLoc,
+      priority: !!user?.schedulingPrefs?.priority,
     });
     if (validationErrors.length > 0) {
       throw userFacingError(validationErrors.join(" "));

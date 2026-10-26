@@ -744,6 +744,44 @@ describe("checkServiceArea", () => {
   });
 });
 
+describe("placeAllowed", () => {
+  const inst = { ...INST, routeSettings: { serviceArea: { radiusMiles: 5 } } };
+  const chain = (v) => ({ select: () => ({ lean: async () => v }) });
+  const setup = ({ prefs = {}, past = [] } = {}) => {
+    User.findOne.mockReturnValue(chain({ schedulingPrefs: prefs }));
+    Booking.find.mockReturnValue(chain(past));
+  };
+  const far = { latitude: USERS.charlie.lat ?? USERS.charlie.latitude, longitude: USERS.charlie.long ?? USERS.charlie.longitude };
+
+  it("refuses a far place for a learner the instructor hasn't said yes to", async () => {
+    setup();
+    const r = await routeOptimizer.placeAllowed(inst, "447700", USERS.charlie, "1 Far Road");
+    expect(r.inside).toBe(false);
+    expect(r.reason).toMatch(/miles away/);
+  });
+
+  it("lets a priority learner through", async () => {
+    setup({ prefs: { priority: true } });
+    expect((await routeOptimizer.placeAllowed(inst, "447700", USERS.charlie, "1 Far Road")).inside).toBe(true);
+  });
+
+  it("lets a saved place through (the instructor added it)", async () => {
+    setup({ prefs: { savedPlaces: [{ label: "Gran's", address: "1 Far Road", ...far }] } });
+    expect((await routeOptimizer.placeAllowed(inst, "447700", USERS.charlie, "somewhere else")).inside).toBe(true);
+  });
+
+  it("lets a place they've already had a lesson at through", async () => {
+    setup({ past: [{ pickupLocation: { address: "1 Far Road" } }] });
+    expect((await routeOptimizer.placeAllowed(inst, "447700", USERS.charlie, "1 far road ")).inside).toBe(true);
+  });
+
+  it("reads the postcode district out of a full address", () => {
+    const d = { ...INST, routeSettings: { serviceArea: { postcodeDistricts: ["ST5"] } } };
+    expect(routeOptimizer.checkServiceArea(d, null, "12 High Street, Newcastle ST5 1AB").inside).toBe(true);
+    expect(routeOptimizer.checkServiceArea(d, null, "3 Mill Lane, Crewe CW1 2AB").inside).toBe(false);
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Calendar rules across days, earliest slot, clock change, edge locations
 // ═══════════════════════════════════════════════════════════════════════════
@@ -903,7 +941,7 @@ describe("service area edge cases", () => {
 
   it("an unlisted postcode with no location is outside when districts are set", () => {
     const r = routeOptimizer.checkServiceArea(withArea({ postcodeDistricts: ["ST4"] }), null, "CW1 2AB");
-    expect(r).toEqual({ inside: false, reason: "postcode is outside the instructor's area" });
+    expect(r).toEqual({ inside: false, reason: "outside the postcodes covered" });
   });
 
   it("can't measure a radius without the instructor's home, so lets them through", () => {

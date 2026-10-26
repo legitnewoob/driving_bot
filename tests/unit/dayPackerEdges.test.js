@@ -110,6 +110,14 @@ describe("far learners: drive between X and the longest drive (H)", () => {
     expect(starts({ items, gap: farLearner(30) })).toEqual([]);
   });
 
+  it("a priority learner gets the busy day's long-drive times, but never past the longest drive", () => {
+    const items = [L("09:00", "10:00"), L("10:20", "11:20"), L("11:40", "12:40"), L("13:00", "14:00")];
+    const out = starts({ items, gap: farLearner(30), longDriveFree: true });
+    expect(out).toContain("14:35"); // 30 min drive + 5 after the last lesson
+    expect(p.isStartFeasible({ ...DAY, d: 60, X: 20, items, gap: farLearner(30), longDriveFree: true, s: t("14:35") })).toBe(true);
+    expect(starts({ items, gap: farLearner(45), longDriveFree: true })).toEqual([]);
+  });
+
   it("on a busy day they still get a time that costs nothing", () => {
     // Booked solid until 16:40: the far learner at the end of the day loses nobody a slot
     const items = [L("08:00", "09:00"), L("09:20", "10:20"), L("10:40", "11:40"), L("12:00", "13:00"), L("13:20", "14:20"), L("14:40", "15:40")];

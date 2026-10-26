@@ -13,7 +13,9 @@ const ADJACENT_GAP_MIN = 15;
 const FALLBACK_OFFER_COUNT = 3;
 const ACTIVE_STATUSES = ["confirmed", "rescheduled"];
 const KM_PER_MILE = 1.609344;
-const UK_POSTCODE = /^([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}$/i;
+const UK_POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/i;
+// A place this close to one the learner already booked counts as the same place
+const SAME_PLACE_MILES = 0.5;
 
 function pointKey(p) {
   return `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
@@ -520,6 +522,8 @@ class RouteOptimizer {
       items: [...plan, ...blocks],
       gap: this._packedGap(route, travel, userPt, userEndPt, homePt),
       maxLessons: bot.maxLessonsPerDay || null,
+      // Priority learners can have a long drive (up to the longest) even when it costs a lesson
+      longDriveFree: !!prefs?.priority,
     };
     const starts = dayPacker.candidateStarts(packArgs);
     if (requestedTime && /^\d{2}:\d{2}$/.test(requestedTime)) {
@@ -557,12 +561,13 @@ class RouteOptimizer {
    * Packed mode: whether a lesson can start at this exact time for this
    * learner (same rules as the offered starts). Used to validate bookings.
    */
-  async isPackedStartAvailable({ date, time, instructor, durationMin, userLoc = null, dropoffLoc = null, excludeBookingId = null }) {
+  async isPackedStartAvailable({ date, time, instructor, durationMin, userLoc = null, dropoffLoc = null, excludeBookingId = null, priority = false }) {
     const day = await this.planDay({
       date,
       instructor,
       availableSlots: null,
       userLoc,
+      prefs: { priority },
       durationMin,
       dropoffLoc,
       requestedTime: time,
@@ -734,8 +739,46 @@ class RouteOptimizer {
       return { inside: false, reason: `about ${Math.round(away)} ${serviceArea.unit} away (area is ${serviceArea.radius} ${serviceArea.unit})` };
     }
 
-    if (hasDistricts && postcode) return { inside: false, reason: "postcode is outside the instructor's area" };
+    if (hasDistricts && postcode) return { inside: false, reason: "outside the postcodes covered" };
     return { inside: true };
+  }
+
+  /**
+   * Whether Donna may take a lesson at this place (pickup or drop-off).
+   * Inside the service area, or the instructor already said yes to it: a
+   * priority learner, one of the learner's saved places (the instructor adds
+   * those), or a place they've already had a lesson at.
+   */
+  async placeAllowed(instructor, userPhone, loc, address = null) {
+    const area = this.checkServiceArea(instructor, loc, address);
+    if (area.inside) return area;
+    const pt = this._toPoint(loc);
+    try {
+      const [user, past] = await Promise.all([
+        User.findOne({ phone: userPhone, instructorId: instructor.phoneNumberId }).select("schedulingPrefs").lean(),
+        Booking.find({
+          userPhone,
+          instructorId: instructor.phoneNumberId,
+          status: { $in: [...ACTIVE_STATUSES, "completed"] },
+        }).select("pickupLocation dropoffLocation location").lean(),
+      ]);
+      const prefs = user?.schedulingPrefs || {};
+      if (prefs.priority) return { inside: true, priority: true };
+      const key = (a) => (a || "").trim().toLowerCase();
+      const known = [
+        ...(prefs.savedPlaces || []),
+        ...(past || []).flatMap((b) => [b.pickupLocation, b.dropoffLocation, b.location]),
+      ].filter(Boolean);
+      const same = known.some((l) => {
+        if (address && l.address && key(l.address) === key(address)) return true;
+        const p = this._toPoint(l);
+        return pt && p && haversine(pt.lat, pt.lng, p.lat, p.lng) / KM_PER_MILE <= SAME_PLACE_MILES;
+      });
+      if (same) return { inside: true, known: true };
+    } catch (err) {
+      logger.warn(`Service area history check failed for ${userPhone}: ${err.message}`);
+    }
+    return area;
   }
 }
 

@@ -23,6 +23,7 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn().mockResolvedValue(["10:00", "14:00"]),
 }));
 jest.mock("../../src/services/routeOptimizer", () => ({
+  placeAllowed: async () => ({ inside: true }),
   planDay: jest.fn(),
   evaluateSlot: jest.fn().mockResolvedValue(null),
   findEarliestOfferedSlot: jest.fn(),
@@ -247,6 +248,20 @@ describe("booking by tapping", () => {
     const [dropoff] = await chat("ST5 1AB");
     expect(dropoff.text).toMatch(/^Great! And where should the lesson finish\?/);
     expect(flow().pickup.address).toBe("1 High St, ST5 1AB");
+  });
+
+  it("won't take a pickup outside the service area, and asks for another place", async () => {
+    await tap("bf:menu:book");
+    await tap("bf:type:t60");
+    await tap("bf:pickup:type");
+    const spy = jest.spyOn(routeOptimizer, "placeAllowed")
+      .mockResolvedValueOnce({ inside: false, reason: "about 30 miles away (area is 10 miles)" });
+    const [again] = await chat("ST5 1AB");
+    expect(again.text).toMatch(/^Sorry, 1 High St, ST5 1AB is about 30 miles away \(area is 10 miles\), so \w+ can't pick up from there/);
+    expect(flow().pickup).toBeFalsy();
+    const [dropoff] = await chat("ST5 1AB");
+    expect(dropoff.text).toMatch(/^Great! And where should the lesson finish\?/);
+    spy.mockRestore();
   });
 
   it("reads a typed day like \"next Friday\"", async () => {

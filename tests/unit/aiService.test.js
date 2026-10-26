@@ -45,6 +45,7 @@ jest.mock("../../src/services/routeOptimizer", () => ({
   planDay: jest.fn(async ({ availableSlots }) => ({ offered: availableSlots, evaluations: [], preferred: [] })),
   suggestBestDays: jest.fn(async () => []),
   checkServiceArea: jest.fn(() => ({ inside: true })),
+  placeAllowed: jest.fn(async () => ({ inside: true })),
   timeToMinutes: (t) => Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]),
 }));
 
@@ -487,17 +488,15 @@ describe("getAvailabilityInfo – route-aware", () => {
     expect(info.requestedSlotAvailable).toBe(true);
   });
 
-  it("checks the service area for learners with no previous bookings", async () => {
-    const Booking = require("../../src/models/bookingModel");
-    jest.spyOn(Booking, "countDocuments").mockResolvedValueOnce(0);
+  it("checks the pickup against the service area", async () => {
     routeOptimizer.planDay.mockResolvedValueOnce({ offered: ["10:00"], preferred: [], evaluations: [] });
-    routeOptimizer.checkServiceArea.mockReturnValueOnce({ inside: false, reason: "about 30 miles away" });
+    routeOptimizer.placeAllowed.mockResolvedValueOnce({ inside: false, reason: "about 30 miles away" });
 
     const info = await aiService.getAvailabilityInfo(
       "2025-07-15", "10:00", { ...INST, routeSettings: { serviceArea: { radiusMiles: 10 } } }, "4470"
     );
 
-    expect(info.outsideServiceArea).toBe("about 30 miles away");
+    expect(info.outsideServiceArea).toBe("pickup about 30 miles away");
     expect(info.requestedSlotAvailable).toBe(false);
   });
 });

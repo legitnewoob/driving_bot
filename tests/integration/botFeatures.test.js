@@ -22,6 +22,7 @@ jest.mock("../../src/services/calendarService", () => ({
   getAvailableTimeSlotsForDate: jest.fn(),
 }));
 jest.mock("../../src/services/routeOptimizer", () => ({
+  placeAllowed: async () => ({ inside: true }),
   evaluateSlot: jest.fn().mockResolvedValue(null),
   findEarliestOfferedSlot: jest.fn(),
   resolveUserContext: jest.fn(),

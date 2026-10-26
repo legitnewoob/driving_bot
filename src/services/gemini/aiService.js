@@ -621,14 +621,20 @@ class AIService {
       let outsideServiceArea = null;
       const { serviceArea } = settings.resolveRouteSettings(instructor);
       const areaConfigured = !!serviceArea.radiusMiles || serviceArea.postcodeDistricts.length > 0;
-      if (areaConfigured && !(await this._hasPreviousBookings(userPhone, instructor))) {
+      if (areaConfigured) {
+        // Both ends of the lesson must be in the area (or a place they've had lessons at)
         const pending = this.pendingContext[userPhone];
-        const area = routeOptimizer.checkServiceArea(
-          instructor,
-          learner.userLoc,
-          pending?.pickupAddress || learner.user?.postalCode
-        );
-        if (!area.inside) outsideServiceArea = area.reason || "outside the area";
+        const places = [
+          { loc: learner.userLoc, address: pending?.pickupAddress || learner.user?.postalCode, label: "pickup" },
+          dropoffCoords && { loc: dropoffCoords, address: pending?.dropoffAddress, label: "drop-off" },
+        ].filter(Boolean);
+        for (const p of places) {
+          const area = await routeOptimizer.placeAllowed(instructor, userPhone, p.loc, p.address);
+          if (!area.inside) {
+            outsideServiceArea = `${p.label} ${area.reason || "outside the area"}`;
+            break;
+          }
+        }
       }
 
       return {
@@ -649,16 +655,6 @@ class AIService {
     } catch (error) {
       logger.error(`Error getting availability info: ${error.message}`);
       return { error: error.message, isValidRequest: false };
-    }
-  }
-
-  async _hasPreviousBookings(userPhone, instructor) {
-    try {
-      const Booking = require("../../models/bookingModel");
-      const count = await Booking.countDocuments({ userPhone, instructorId: instructor?.phoneNumberId });
-      return count > 0;
-    } catch {
-      return true;
     }
   }
 

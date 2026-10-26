@@ -219,7 +219,7 @@ function longDriveAllowed(args, s) {
  * lunch already didn't fit, and so is one with a drive longer than X that
  * would cost the day a lesson (more than one on a quiet day).
  */
-function candidateStarts({ start, end, d, X, lunch = null, items = [], gap, maxLessons = null }) {
+function candidateStarts({ start, end, d, X, lunch = null, items = [], gap, maxLessons = null, longDriveFree = false }) {
   const sorted = [...items].sort(byStart);
   const found = new Set();
 
@@ -249,7 +249,9 @@ function candidateStarts({ start, end, d, X, lunch = null, items = [], gap, maxL
       lunchFits({ start, end, X, lunch, items: [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }], gap })
     );
   }
-  // A long drive only where it doesn't cost the day a lesson (one, on a quiet day)
+  // A long drive only where it doesn't cost the day a lesson (one, on a quiet
+  // day), unless the instructor made this a priority learner
+  if (longDriveFree) return starts;
   const args = { start, end, d, X, lunch, items: sorted, gap, maxLessons };
   return starts.filter((s) => longDriveAllowed(args, s));
 }
@@ -259,7 +261,7 @@ function candidateStarts({ start, end, d, X, lunch = null, items = [], gap, maxL
  * not be one of the offered starts): inside the day, on a 5-minute mark, clear
  * of everything, with the drive gaps either side and room left for lunch.
  */
-function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap, maxLessons = null }) {
+function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap, maxLessons = null, longDriveFree = false }) {
   if (s % 5 !== 0 || s < start || s + d > end) return false;
   const sorted = [...items].sort(byStart);
   if (sorted.some((it) => s < it.end && s + d > it.start)) return false;
@@ -276,7 +278,7 @@ function isStartFeasible({ s, start, end, d, X, lunch = null, items = [], gap, m
   if (lunch && lunchFits({ start, end, X, lunch, items: sorted, gap })) {
     if (!lunchFits({ start, end, X, lunch, items: [...sorted, { start: s, end: s + d, kind: "lesson", isNew: true }], gap })) return false;
   }
-  return longDriveAllowed({ start, end, d, X, lunch, items: sorted, gap, maxLessons }, s);
+  return longDriveFree || longDriveAllowed({ start, end, d, X, lunch, items: sorted, gap, maxLessons }, s);
 }
 
 /**

@@ -18,23 +18,51 @@ const statusUrl = (entry) => `${site()}/waitlist/me?t=${entry.accessToken}`;
 const shareUrl = (code) => `${site()}/?ref=${code}`;
 const unsubscribeUrl = (entry) => `${api()}/api/waitlist/unsubscribe/${entry.accessToken}`;
 
-function layout(body, entry, { unsubscribe = true } = {}) {
+// Brand colours, matching the site and Portal
+const CORAL = "#F86C4F";
+const CORAL_DARK = "#e8553a";
+// Mail apps don't show SVG, so the logo is a PNG on the live site
+const logoUrl = () => process.env.EMAIL_LOGO_URL || "https://donnadrive.co.uk/brand/donna-drive-logo-email.png?v=1";
+
+// Table layout with inline styles: the only thing every mail app renders the same.
+// One small logo and mostly text, so it still reads as a personal note.
+function layout(body, entry, { unsubscribe = true, preheader = "" } = {}) {
   return `
-    <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1f2937; font-size: 15px; line-height: 1.6;">
-      ${body}
-      <p style="margin-top: 28px;">Raj<br/><span style="color:#6b7280;">Donna Drive</span></p>
+<div style="margin:0; padding:0; background:#fbf3f0;">
+  <span style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">${escapeHtml(preheader)}</span>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fbf3f0;">
+    <tr><td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px; background:#ffffff; border:1px solid #f1ddd6; border-radius:14px; overflow:hidden;">
+        <tr><td style="height:5px; line-height:5px; font-size:0; background:${CORAL}; background-image:linear-gradient(90deg, #ff6c68, ${CORAL}, ${CORAL_DARK});">&nbsp;</td></tr>
+        <tr><td style="padding:28px 36px 4px;">
+          <a href="https://donnadrive.co.uk" style="text-decoration:none;"><img src="${logoUrl()}" width="132" height="52" alt="Donna Drive" style="display:block; border:0; width:132px; height:auto;"></a>
+        </td></tr>
+        <tr><td style="padding:12px 36px 8px; font-family:-apple-system, Segoe UI, Helvetica, Arial, sans-serif; color:#1f2937; font-size:15px; line-height:1.65;">
+          ${body}
+          <p style="margin:28px 0 0;">Raj<br/><span style="color:#6b7280;">Founder, Donna Drive</span></p>
+        </td></tr>
+        <tr><td style="padding:24px 36px 28px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #f1ddd6; padding-top:16px; font-family:-apple-system, Segoe UI, Helvetica, Arial, sans-serif; font-size:12px; line-height:1.6; color:#9ca3af;">
+            <strong style="color:${CORAL_DARK};">Donna Drive</strong> &middot; The AI receptionist for driving instructors<br/>
+            <a href="https://donnadrive.co.uk" style="color:#9ca3af;">donnadrive.co.uk</a>
+          </td></tr></table>
+        </td></tr>
+      </table>
       ${
         unsubscribe && entry
-          ? `<p style="color:#9ca3af; font-size: 12px; margin-top: 28px;">You're getting this because you joined the Donna Drive waitlist.
+          ? `<p style="font-family:-apple-system, Segoe UI, Helvetica, Arial, sans-serif; color:#9ca3af; font-size:12px; margin:16px 0 0;">You're getting this because you joined the Donna Drive waitlist.
              <a href="${unsubscribeUrl(entry)}" style="color:#9ca3af;">Unsubscribe</a></p>`
           : ""
       }
-    </div>`;
+    </td></tr>
+  </table>
+</div>`;
 }
 
 // A plain link, not a coloured button: buttons are what newsletters look like,
 // and they push the email into Gmail's Promotions tab
-const button = (href, label) => `<p style="margin: 20px 0;"><a href="${escapeHtml(href)}">${escapeHtml(label)}</a></p>`;
+const button = (href, label) =>
+  `<p style="margin: 20px 0;"><a href="${escapeHtml(href)}" style="color:${CORAL_DARK}; font-weight:600;">${escapeHtml(label)}</a></p>`;
 
 const unsubscribeHeaders = (entry) => ({
   "List-Unsubscribe": `<${unsubscribeUrl(entry)}>`,
@@ -117,11 +145,11 @@ async function sendInviteApology(entry) {
     <p>Earlier today you got an email inviting you to start using Donna Drive. That was our mistake, and I'm sorry for the mix-up.
     It went out before we were ready, so the link in it won't work.</p>
     <p>You haven't lost anything: you're still on the waitlist, in exactly the same place.</p>
-    <p><strong>Stay tuned.</strong> We're going live very soon, and you'll be among the first to hear when your invite is ready (a real one this time).</p>
+    <p><strong style="color:${CORAL_DARK};">Stay tuned.</strong> We're going live very soon, and you'll be among the first to hear when your invite is ready (a real one this time).</p>
     <p>Thanks for your patience. If you have any questions, just reply to this email.</p>
     `,
     entry,
-    { unsubscribe: false }
+    { unsubscribe: false, preheader: "You're still on the waitlist, in the same place. We go live very soon." }
   );
   return sendNotification(subject, html, null, entry.email, null, { fromName: fromName() });
 }

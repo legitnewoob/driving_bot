@@ -108,6 +108,24 @@ async function sendWaitlistReminder(entry, opts) {
   });
 }
 
+/** An invite went out by mistake and was taken back: say sorry, they keep their place. */
+async function sendInviteApology(entry) {
+  const subject = "Sorry, that Donna Drive invite was sent by mistake";
+  const html = layout(
+    `
+    <p>Hi ${firstName(entry.name)},</p>
+    <p>Earlier today you got an email inviting you to start using Donna Drive. That was our mistake, and I'm sorry for the mix-up.
+    It went out before we were ready, so the link in it won't work.</p>
+    <p>You haven't lost anything: you're still on the waitlist, in exactly the same place.</p>
+    <p><strong>Stay tuned.</strong> We're going live very soon, and you'll be among the first to hear when your invite is ready (a real one this time).</p>
+    <p>Thanks for your patience. If you have any questions, just reply to this email.</p>
+    `,
+    entry,
+    { unsubscribe: false }
+  );
+  return sendNotification(subject, html, null, entry.email, null, { fromName: fromName() });
+}
+
 /** Sign-up is open to everyone (only to people who said yes to product news). */
 async function sendLaunchAnnouncement(entry) {
   const subject = "Donna Drive is live";
@@ -165,6 +183,7 @@ module.exports = {
   sendWaitlistMovedUp,
   sendWaitlistInvite,
   sendWaitlistReminder,
+  sendInviteApology,
   sendLaunchAnnouncement,
   sendReferralReward,
   sendWaitlistDigest,

@@ -441,7 +441,7 @@ describe("Duration precision", () => {
 // getDrivingMatrix – many origins × many destinations
 // ═══════════════════════════════════════════════════════════════════════════
 
-const { getDrivingMatrix } = require("../../src/services/distanceMatrixService");
+const { getDrivingMatrix, getUsage } = require("../../src/services/distanceMatrixService");
 
 function el(originIndex, destinationIndex, seconds) {
   return { originIndex, destinationIndex, duration: `${seconds}s`, condition: "ROUTE_EXISTS" };
@@ -509,11 +509,15 @@ describe("getDrivingMatrix", () => {
     expect(body.departureTime).toBe(FUTURE.toISOString());
   });
 
-  it("skips traffic-aware routing above 100 elements", async () => {
+  it("splits a large traffic-aware matrix into requests of 100 elements or fewer", async () => {
     axios.post.mockResolvedValue({ data: [] });
     const many = Array.from({ length: 11 }, (_, i) => ({ lat: 53 + i / 100, lng: -2 }));
     await getDrivingMatrix(many, many, FUTURE); // 121 elements
-    expect(axios.post.mock.calls[0][1].routingPreference).toBeUndefined();
+    expect(axios.post.mock.calls.length).toBeGreaterThan(1);
+    for (const [, body] of axios.post.mock.calls) {
+      expect(body.routingPreference).toBe("TRAFFIC_AWARE");
+      expect(body.origins.length * body.destinations.length).toBeLessThanOrEqual(100);
+    }
   });
 
   it("skips traffic-aware routing for past departures", async () => {
@@ -522,11 +526,78 @@ describe("getDrivingMatrix", () => {
     expect(axios.post.mock.calls[0][1].routingPreference).toBeUndefined();
   });
 
-  it("caches traffic-aware and plain results separately", async () => {
+  it("reuses one drive time whether or not traffic was asked for", async () => {
     axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
     await getDrivingMatrix([ORIGIN], [DEST_A]);
-    await getDrivingMatrix([ORIGIN], [DEST_A], FUTURE);
-    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(await getDrivingMatrix([ORIGIN], [DEST_A], FUTURE)).toEqual([[1]]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks without traffic for departures more than 36 hours ahead", async () => {
+    axios.post.mockResolvedValue({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A], new Date(Date.now() + 3 * 24 * 3600 * 1000));
+    const body = axios.post.mock.calls[0][1];
+    expect(body.routingPreference).toBeUndefined();
+    expect(body.departureTime).toBeUndefined();
+  });
+
+  it("requests only the missing pairs, not whole rows", async () => {
+    axios.post.mockResolvedValueOnce({ data: [el(0, 0, 60)] });
+    await getDrivingMatrix([ORIGIN], [DEST_A]);
+
+    axios.post.mockResolvedValueOnce({ data: [el(0, 0, 120)] });
+    const m = await getDrivingMatrix([ORIGIN], [DEST_A, DEST_B]);
+
+    expect(m).toEqual([[1, 2]]);
+    const body = axios.post.mock.calls[1][1];
+    expect(body.origins).toHaveLength(1);
+    expect(body.destinations).toHaveLength(1);
+    expect(body.destinations[0].waypoint.location.latLng.latitude).toBe(DEST_B.lat);
+  });
+
+  it("shares one request between parallel checks of the same pairs", async () => {
+    let release;
+    axios.post.mockImplementation(() => new Promise((res) => { release = () => res({ data: [el(0, 0, 60)] }); }));
+    const first = getDrivingMatrix([ORIGIN], [DEST_A]);
+    const second = getDrivingMatrix([ORIGIN], [DEST_A]);
+    await new Promise((r) => setImmediate(r));
+    release();
+    expect(await first).toEqual([[1]]);
+    expect(await second).toEqual([[1]]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("pays once per pair when many days are checked in parallel (Suggest days)", async () => {
+    axios.post.mockImplementation(async (_url, body) => ({
+      data: body.origins.flatMap((_, o) => body.destinations.map((__, d) => el(o, d, 600))),
+    }));
+    const learner = { lat: 53.1, lng: -2.1 };
+    const home = { lat: 53.0, lng: -2.0 };
+    const regulars = Array.from({ length: 5 }, (_, i) => ({ lat: 53.2 + i / 100, lng: -2.3 }));
+    // 15 days, each with 3 of the same 5 regular learners
+    const days = Array.from({ length: 15 }, (_, d) => [0, 1, 2].map((k) => regulars[(d + k) % 5]));
+    await Promise.all(
+      days.map((stops) => getDrivingMatrix([learner, home, ...stops], [learner, home, ...stops], FUTURE))
+    );
+    const unique = 7 * 7; // learner, home and the 5 regulars, every way round
+    const sent = axios.post.mock.calls.reduce((n, [, b]) => n + b.origins.length * b.destinations.length, 0);
+    expect(sent).toBeLessThanOrEqual(unique);
+    expect(getUsage().elements).toBe(sent);
+  });
+
+  it("stops calling Google past the daily element limit", async () => {
+    process.env.MAPS_DAILY_ELEMENT_LIMIT = "3";
+    try {
+      axios.post.mockResolvedValue({ data: [] });
+      await getDrivingMatrix([ORIGIN], [DEST_A, DEST_B]); // 2 elements: allowed
+      const m = await getDrivingMatrix([DEST_C], [DEST_A, DEST_B]); // 2 more: over the limit
+      expect(m).toEqual([[null, null]]);
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(getUsage().elements).toBe(2);
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("daily limit"));
+    } finally {
+      delete process.env.MAPS_DAILY_ELEMENT_LIMIT;
+    }
   });
 
   it("splits requests that exceed 625 elements", async () => {

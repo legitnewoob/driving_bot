@@ -262,11 +262,19 @@ describeE2E(E2E_KEYS.MAPS, "E2E – Donna Settings: route & travel (real drive t
     expect(info.outsideServiceArea).toBeNull();
   }, TIMEOUT);
 
-  it("existing learners are never turned away by the service area", async () => {
+  it("learners are only let in from outside the service area where they've had lessons before", async () => {
+    // Mongoose-style chain (find().select().lean()) over the same fake data
+    const chain = (v) => Object.assign(Promise.resolve(v), { select: () => chain(v), lean: () => chain(v) });
+    const findBookings = (past) => ({ date }) => chain(date ? bookingsByDate[date] || [] : past);
+    const far = instructor({ route: { serviceArea: { radius: 1, unit: "miles" } } });
+
     learnerAt(FAR);
-    Booking.countDocuments.mockResolvedValue(3);
-    const { info } = await ask(instructor({ route: { serviceArea: { radius: 1, unit: "miles" } } }), { time: "10:00" });
-    expect(info.outsideServiceArea).toBeNull();
+    User.findOne.mockImplementation(() => chain({ phone: PHONE, location: FAR, schedulingPrefs: {} }));
+    Booking.find.mockImplementation(findBookings([{ pickupLocation: FAR }]));
+    expect((await ask(far, { time: "10:00" })).info.outsideServiceArea).toBeNull();
+
+    Booking.find.mockImplementation(findBookings([]));
+    expect((await ask(far, { time: "10:00" })).info.outsideServiceArea).toEqual(expect.any(String));
   }, TIMEOUT);
 
   it("'suggest days that fit your route' adds other days when the asked time doesn't work", async () => {

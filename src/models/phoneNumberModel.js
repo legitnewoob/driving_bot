@@ -3,7 +3,6 @@ const mongoose = require("mongoose");
 const phoneNumberSchema = new mongoose.Schema({
   phoneNumber: { type: String, required: true, unique: true, index: true },
   phoneNumberId: { type: String, required: true, unique: true, index: true },
-  whatsappToken: { type: String, default: null },
   status: {
     type: String,
     enum: ["available", "reserved", "assigned"],

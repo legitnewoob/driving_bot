@@ -370,7 +370,7 @@ router.get("/me", jwtAuth, async (req, res) => {
         plan: instructor.plan || "pdi",
         subscriptionStatus: instructor.subscriptionStatus,
         calendarConnected: !!instructor.googleRefreshToken,
-        whatsappConnected: !!instructor.whatsappToken,
+        whatsappConnected: !!process.env.WHATSAPP_TOKEN,
         phoneNumber: instructor.phoneNumberId && !instructor.phoneNumberId.startsWith("signup_") ? instructor.phone : null,
         phoneNumberId: instructor.phoneNumberId,
         timezone: instructor.timezone,

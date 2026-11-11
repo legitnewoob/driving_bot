@@ -44,9 +44,7 @@ async function assignNumber(instructorId, { region = "GB" } = {}) {
     phoneNumberId: phoneNumber.phoneNumberId,
     phone: phoneNumber.phoneNumber,
   };
-  // The weekly refresh keeps the pool's token current; the env token is only a fallback
-  const token = phoneNumber.whatsappToken || process.env.WHATSAPP_TOKEN;
-  if (token) updateFields.whatsappToken = token;
+  if (process.env.WHATSAPP_TOKEN) updateFields.whatsappToken = process.env.WHATSAPP_TOKEN;
 
   await Instructor.findByIdAndUpdate(instructorId, updateFields);
   await moveInstructorData(instructor?.phoneNumberId, phoneNumber.phoneNumberId);
@@ -76,7 +74,6 @@ async function revokeNumber(phoneNumberDocId) {
     const placeholderId = `signup_${new mongoose.Types.ObjectId()}`;
     await Instructor.findByIdAndUpdate(instructorId, {
       phoneNumberId: placeholderId,
-      whatsappToken: null,
     });
     await moveInstructorData(oldPhoneNumberId, placeholderId);
     invalidateInstructorCache(oldPhoneNumberId);
@@ -89,7 +86,6 @@ async function addToPool(numbers) {
   const docs = numbers.map(n => ({
     phoneNumber: n.phoneNumber,
     phoneNumberId: n.phoneNumberId,
-    whatsappToken: n.whatsappToken || null,
     label: n.label || null,
     region: n.region || "GB",
     status: "available",

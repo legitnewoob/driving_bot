@@ -512,7 +512,8 @@ async function createFoundingInvite({ name, email }, actor) {
   let entry = await LaunchSignup.findOne({ email: lower, status: { $ne: "removed" } });
   if (entry?.status === "joined") throw launchError("This person already has an account");
 
-  const position = (await Counter.findOneAndUpdate({ name: "waitlist" }, { $inc: { value: 1 } }, { upsert: true, new: true }))?.value ?? 1;
+  const counter = await Counter.findOneAndUpdate({ _id: "launchSignup" }, { $inc: { seq: 1 } }, { upsert: true, new: true });
+  const position = counter.seq;
   const accessToken = crypto.randomBytes(16).toString("hex");
   const referralCode = crypto.randomBytes(6).toString("hex");
 

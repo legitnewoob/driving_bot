@@ -114,8 +114,8 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const perk = await require("../services/launchService").checkoutPerk(instructor, plan).catch(() => null);
     const isFounding = !!(perk?._foundingTrial);
-    // Founding customers skip the card screen via a 6-month Stripe trial
-    const trialDays = isFounding ? 183 : (planConfig.trialDays > 0 ? planConfig.trialDays : 0);
+    // Founding customers skip the card screen via a 3-month Stripe trial
+    const trialDays = isFounding ? 91 : (planConfig.trialDays > 0 ? planConfig.trialDays : 0);
     // Founding gets no coupon; everyone else gets their invite promo or the active sale
     const discountConfig = isFounding ? {} : (perk || (await pricing.checkoutDiscount(plan)));
 

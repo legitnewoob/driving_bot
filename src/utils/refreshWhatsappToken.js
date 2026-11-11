@@ -51,7 +51,7 @@ async function exchangeForLongLivedToken(currentToken) {
  * Flow:
  *  1. Grab the current token from any active instructor (they all share the same one)
  *  2. Exchange it via Meta Graph API for a fresh long-lived token
- *  3. Update every active instructor's whatsappToken in the database
+ *  3. Update every active instructor's whatsappToken in the database (shared global token)
  *  4. Invalidate the instructor cache so subsequent reads pick up the new token
  */
 async function refreshAndUpdateAll({ sourceToken = null, dryRun = false } = {}) {
@@ -99,10 +99,6 @@ async function refreshAndUpdateAll({ sourceToken = null, dryRun = false } = {}) 
     logger.info(
       `WhatsApp token refresh: updated ${result.modifiedCount} instructor(s) with new token`
     );
-
-    // Keep the phone-number pool's copy fresh too, so newly assigned numbers get a working token
-    const PhoneNumber = require("../models/phoneNumberModel");
-    await PhoneNumber.updateMany({ whatsappToken: { $ne: null } }, { $set: { whatsappToken: newToken } });
 
     // 4. Invalidate cache for every updated instructor
     const instructors = await Instructor.find({ active: true }).select("phoneNumberId").lean();

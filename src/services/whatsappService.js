@@ -8,12 +8,12 @@ class WhatsAppService {
      * Send a message via WhatsApp Cloud API.
      * @param {string} to - Recipient phone number
      * @param {Object} message - WhatsApp message payload
-     * @param {Object} instructor - Instructor record from DB (must have phoneNumberId, whatsappToken)
+     * @param {Object} instructor - Instructor record from DB (must have phoneNumberId)
      */
     async sendMessage(to, message, instructor) {
         try {
             const phoneNumberId = instructor.phoneNumberId;
-            const token = instructor.whatsappToken;
+            const token = instructor.whatsappToken || process.env.WHATSAPP_TOKEN;
             const apiUrl = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
 
             const logged = message.text?.body
@@ -150,7 +150,7 @@ class WhatsAppService {
                     message_id: messageId,
                     typing_indicator: { type: "text" },
                 },
-                { headers: { Authorization: `Bearer ${instructor.whatsappToken}`, "Content-Type": "application/json" } }
+                { headers: { Authorization: `Bearer ${instructor.whatsappToken || process.env.WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
             );
         } catch (error) {
             logger.warn(`WhatsApp read/typing failed: ${error.message}`);

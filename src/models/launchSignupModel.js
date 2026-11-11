@@ -37,6 +37,7 @@ const launchSignupSchema = new mongoose.Schema(
       usedAt: { type: Date, default: null },
       promoCode: { type: String, default: null },
       by: { type: String, default: null },
+      founding: { type: Boolean, default: false },
     },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: "Instructor", default: null },
 

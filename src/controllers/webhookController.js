@@ -150,12 +150,7 @@ class WebhookController {
         if (mockReplyCallback) mockReplyCallback(text);
         return;
       }
-      let token = process.env.WHATSAPP_TOKEN || null;
-      if (isDbReady()) {
-        const PhoneNumber = require("../models/phoneNumberModel");
-        const pooled = await PhoneNumber.findOne({ phoneNumberId }).lean();
-        if (pooled?.whatsappToken) token = pooled.whatsappToken;
-      }
+      const token = process.env.WHATSAPP_TOKEN || null;
       if (!token) {
         logger.warn(`Can't tell ${from} this number isn't linked: no WhatsApp token for ${phoneNumberId}`);
         return;

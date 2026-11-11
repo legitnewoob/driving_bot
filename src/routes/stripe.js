@@ -112,6 +112,13 @@ router.post("/create-checkout-session", async (req, res) => {
     // session_id lets the sign-in step check with Stripe that checkout really finished
     const successUrl = `${frontendUrl}/dashboard?auth_code=${authCode}&session_id={CHECKOUT_SESSION_ID}`;
 
+    const perk = await require("../services/launchService").checkoutPerk(instructor, plan).catch(() => null);
+    const isFounding = !!(perk?._foundingTrial);
+    // Founding customers skip the card screen via a 6-month Stripe trial
+    const trialDays = isFounding ? 183 : (planConfig.trialDays > 0 ? planConfig.trialDays : 0);
+    // Founding gets no coupon; everyone else gets their invite promo or the active sale
+    const discountConfig = isFounding ? {} : (perk || (await pricing.checkoutDiscount(plan)));
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -121,10 +128,9 @@ router.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      // Their waitlist invite's launch perk, else an active sale's coupon, else a box
-      // for promo codes (Stripe allows one discount per checkout)
-      ...((await require("../services/launchService").checkoutPerk(instructor, plan).catch(() => null)) || (await pricing.checkoutDiscount(plan))),
-      subscription_data: planConfig.trialDays > 0 ? { trial_period_days: planConfig.trialDays } : {},
+      ...discountConfig,
+      subscription_data: trialDays > 0 ? { trial_period_days: trialDays } : {},
+      ...(isFounding ? { payment_method_collection: "if_required" } : {}),
       ...(embedded
         ? { ui_mode: "embedded_page", return_url: successUrl }
         : {

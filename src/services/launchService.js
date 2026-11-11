@@ -288,7 +288,14 @@ async function inviteInfo(token) {
   const entry = await validInvite(token);
   if (!entry) return { valid: false };
   const promo = await promoFor(entry.invite.promoCode);
-  return { valid: true, name: entry.name, email: entry.email, expiresAt: entry.invite.expiresAt, promo: promo ? { code: promo.code, label: promoLabel(promo) } : null };
+  return {
+    valid: true,
+    name: entry.name,
+    email: entry.email,
+    expiresAt: entry.invite.expiresAt,
+    founding: !!entry.invite.founding,
+    promo: promo ? { code: promo.code, label: promoLabel(promo) } : null,
+  };
 }
 
 async function validInvite(token) {
@@ -484,10 +491,43 @@ function promoLabel(p) {
 /** The launch perk for someone who came in by invite, applied to their checkout. */
 async function checkoutPerk(instructor, plan) {
   const entry = await LaunchSignup.findOne({ instructorId: instructor._id }).lean();
+  if (entry?.invite?.founding) {
+    return { _foundingTrial: true };
+  }
   const promo = await promoFor(entry?.invite?.promoCode);
   if (!promo) return null;
   if (promo.plans?.length && !promo.plans.includes(plan)) return null;
   return { discounts: [{ promotion_code: promo.stripePromotionCodeId }] };
+}
+
+/**
+ * Create a founding-customer invite for someone not yet on the waitlist.
+ * Returns the full invite URL to copy and send.
+ */
+async function createFoundingInvite({ name, email }, actor) {
+  if (!name || !email) throw launchError("Name and email are required");
+  if (!EMAIL.test(email)) throw launchError("Invalid email address");
+  const lower = email.toLowerCase().trim();
+
+  let entry = await LaunchSignup.findOne({ email: lower, status: { $ne: "removed" } });
+  if (entry?.status === "joined") throw launchError("This person already has an account");
+
+  const position = (await Counter.findOneAndUpdate({ name: "waitlist" }, { $inc: { value: 1 } }, { upsert: true, new: true }))?.value ?? 1;
+  const accessToken = crypto.randomBytes(16).toString("hex");
+  const referralCode = crypto.randomBytes(6).toString("hex");
+
+  if (!entry) {
+    entry = await LaunchSignup.create({ email: lower, name: name.trim(), position, accessToken, referralCode, status: "invited" });
+  }
+
+  const token = crypto.randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + 30 * DAY);
+  entry.status = "invited";
+  entry.invite = { tokenHash: hash(token), sentAt: new Date(), expiresAt, remindedAt: null, usedAt: null, promoCode: null, by: actor, founding: true };
+  await entry.save();
+
+  const site = (process.env.FRONTEND_URL || "http://localhost:8080").replace(/\/$/, "");
+  return { url: `${site}/join?invite=${token}`, email: lower, name: name.trim(), expiresAt };
 }
 
 // ── Admin ───────────────────────────────────────────────────────────────
@@ -769,6 +809,7 @@ module.exports = {
   referralFor,
   rewardReferral,
   checkoutPerk,
+  createFoundingInvite,
   promoLabel,
   adminList,
   stats,

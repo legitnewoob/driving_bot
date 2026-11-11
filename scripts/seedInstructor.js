@@ -125,12 +125,6 @@ async function addInstructor() {
       validate: (input) => input.trim() ? true : "Refresh token is required",
     },
     {
-      type: "password",
-      name: "whatsappToken",
-      message: "WhatsApp Access Token:",
-      validate: (input) => input.trim() ? true : "WhatsApp token is required",
-    },
-    {
       type: "input",
       name: "spreadsheetId",
       message: "Google Spreadsheet ID (optional):",
@@ -202,7 +196,6 @@ async function addInstructor() {
     email: answers.email.trim(),
     googleCalendarId: answers.googleCalendarId.trim(),
     googleRefreshToken: answers.googleRefreshToken.trim(),
-    whatsappToken: answers.whatsappToken.trim(),
     spreadsheetId: answers.spreadsheetId.trim() || undefined,
     baseLocation: {
       latitude: parseFloat(answers.latitude),
@@ -321,13 +314,6 @@ async function updateInstructor() {
       validate: (input) => input.trim() ? true : "Refresh token is required",
     },
     {
-      type: "password",
-      name: "whatsappToken",
-      message: "WhatsApp Access Token:",
-      default: instructor.whatsappToken,
-      validate: (input) => input.trim() ? true : "WhatsApp token is required",
-    },
-    {
       type: "input",
       name: "spreadsheetId",
       message: "Google Spreadsheet ID (optional):",
@@ -399,7 +385,6 @@ async function updateInstructor() {
   instructor.email = answers.email.trim();
   instructor.googleCalendarId = answers.googleCalendarId.trim();
   instructor.googleRefreshToken = answers.googleRefreshToken.trim();
-  instructor.whatsappToken = answers.whatsappToken.trim();
   instructor.spreadsheetId = answers.spreadsheetId.trim() || undefined;
   instructor.baseLocation = {
     latitude: parseFloat(answers.latitude),

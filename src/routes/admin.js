@@ -146,6 +146,11 @@ router.post("/waitlist/invite", requirePermission("admin.waitlist"), wrap("send 
   res.json({ success: true, data: await launch.invite(req.body || {}, actor(req)) });
 }));
 
+router.post("/founding-invite", requirePermission("admin.waitlist"), wrap("create founding invite", async (req, res) => {
+  const { name, email } = req.body || {};
+  res.status(201).json({ success: true, data: await launch.createFoundingInvite({ name, email }, actor(req)) });
+}));
+
 router.post("/waitlist/:id/remove", requirePermission("admin.waitlist"), wrap("remove them", async (req, res) => {
   res.json({ success: true, data: await launch.remove(req.params.id, actor(req)) });
 }));
@@ -180,7 +185,7 @@ router.get("/phone-numbers", async (req, res) => {
     const skip = (page - 1) * limit;
 
     const [data, total] = await Promise.all([
-      PhoneNumber.find(filter).select("-whatsappToken").sort({ createdAt: -1 }).skip(skip).limit(limit).populate("assignedTo", "name email").lean(),
+      PhoneNumber.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("assignedTo", "name email").lean(),
       PhoneNumber.countDocuments(filter),
     ]);
 

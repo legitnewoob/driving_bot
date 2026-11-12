@@ -13,7 +13,7 @@ const bookingSchema = new mongoose.Schema({
     enum: ["confirmed", "cancelled", "rescheduled", "completed"], 
     default: "confirmed" 
   },
-  postalCode: { type: String, required: true },
+  postalCode: { type: String, default: null },
 
   // Fields for location details (legacy – user profile location)
   location: {

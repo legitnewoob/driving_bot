@@ -238,7 +238,7 @@ router.post("/bookings", async (req, res) => {
           date,
           time,
           calendarEventId: null,
-          postalCode: postalCode || user?.postalCode || "",
+          postalCode: postalCode || user?.postalCode || null,
           location: user?.location || undefined,
           pickupLocation: pickupLocation ? { address: pickupLocation } : undefined,
           dropoffLocation: dropoffLocation ? { address: dropoffLocation } : undefined,

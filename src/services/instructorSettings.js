@@ -144,7 +144,7 @@ const BOT_DEFAULTS = {
   aboutLessons: "",
   cancellationNoticeHours: 48,
   lateCancellationFee: null,
-  reminders: "24h",
+  reminders: "48h",
   notifications: { booked: true, cancelled: true, rescheduled: true, email: true },
   handover: true,
 };

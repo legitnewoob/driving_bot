@@ -1,4 +1,4 @@
-// Lesson reminders: ~24h before each lesson (and optionally ~2h before),
+// Lesson reminders: ~48h before each lesson (and optionally ~2h before),
 // with buttons to confirm, reschedule or cancel.
 //
 // WhatsApp only allows free-form messages within 24h of the learner's last
@@ -95,7 +95,7 @@ async function runOnce(now = Date.now()) {
   if (!isDbReady()) return result;
 
   const today = timezoneUtils.getCurrentDateString();
-  const dates = [today, timezoneUtils.addDays(today, 1), timezoneUtils.addDays(today, 2)];
+  const dates = [today, timezoneUtils.addDays(today, 1), timezoneUtils.addDays(today, 2), timezoneUtils.addDays(today, 3)];
   const bookings = await Booking.find({
     status: { $in: ACTIVE_STATUSES },
     date: { $in: dates },
@@ -112,8 +112,8 @@ async function runOnce(now = Date.now()) {
 
     const hours = hoursUntil(booking, now);
     let kind = null;
-    if (!booking.reminderSentAt && hours > 20 && hours <= 25) kind = "long";
-    else if (mode === "24h+2h" && !booking.shortReminderSentAt && hours > 1 && hours <= 2.5) kind = "short";
+    if (!booking.reminderSentAt && hours > 44 && hours <= 50) kind = "long";
+    else if ((mode === "48h+2h" || mode === "24h+2h") && !booking.shortReminderSentAt && hours > 1 && hours <= 2.5) kind = "short";
     if (!kind) continue;
 
     const field = kind === "long" ? "reminderSentAt" : "shortReminderSentAt";

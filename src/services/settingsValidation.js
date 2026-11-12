@@ -160,7 +160,7 @@ const BOT_SPEC = {
       ? { value: Math.round(v * 100) / 100 }
       : { error: `${label} must be an amount from 0 to 500, or empty` };
   },
-  reminders: oneOf(["off", "48h", "48h+2h"]),
+  reminders: oneOf(["off", "24h", "48h"]),
   notifications: (v, label, errors) => ({
     value: check(v, { booked: bool(), cancelled: bool(), rescheduled: bool(), email: bool() }, label, errors),
   }),

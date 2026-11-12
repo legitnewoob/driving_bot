@@ -101,7 +101,7 @@ const instructorSchema = new mongoose.Schema({
     aboutLessons: { type: String, default: "" },
     cancellationNoticeHours: { type: Number, default: 48 },
     lateCancellationFee: { type: Number, default: null },
-    reminders: { type: String, enum: ["off", "24h", "24h+2h"], default: "24h" },
+    reminders: { type: String, enum: ["off", "48h", "48h+2h", "24h", "24h+2h"], default: "48h" },
     notifications: {
       booked: { type: Boolean, default: true },
       cancelled: { type: Boolean, default: true },

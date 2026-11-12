@@ -149,6 +149,13 @@ describe("fixed-mode slots with their own lengths", () => {
     ]);
     expect(s.daySlotsFor(old).tue).toEqual([]);
   });
+
+  it("gives each of a date's slots its own length; none for older start times or packed days", () => {
+    expect(s.slotLengthsForDate(inst, "2025-06-16")).toEqual({ "09:00": 120, "11:15": 90, "13:30": 60, "15:00": 120 });
+    expect(s.slotLengthsForDate(inst, "2025-06-17")).toEqual({});
+    expect(s.slotLengthsForDate({ botSettings: { workingHours: { mon: ["09:00"], ...off } } }, "2025-06-16")).toBeNull();
+    expect(s.slotLengthsForDate({ ...inst, botSettings: { ...inst.botSettings, scheduleMode: "packed" } }, "2025-06-16")).toBeNull();
+  });
 });
 
 describe("dates", () => {

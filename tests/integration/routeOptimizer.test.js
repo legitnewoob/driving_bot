@@ -263,6 +263,21 @@ describe("scoreSlots", () => {
     expect(nine.score).toBeCloseTo(nine.addedDrive + 15, 5);
   });
 
+  it("judges each laid-out slot by its own length, not the lesson being booked", async () => {
+    const far = { lat: 53.2, long: -2.45 };
+    mockMatrix({ [leg(far, A)]: 90, [leg(BASE, far)]: 5, [leg(far, BASE)]: 5 });
+    const day = [makeBooking("12:00", A.lat, A.long)];
+    const score = (slotLengths, durationMin) =>
+      routeOptimizer
+        .scoreSlots(["09:00"], day, far, BASE, ROUTE, null, { durationMin, slotLengths })
+        .then((s) => s[0]);
+
+    // A 30-min 10:00 slot ends 10:30: 110 min of slack for the 90-min drive, still sellable
+    expect((await score({ "09:00": 60, "10:00": 30 }, 60)).newlyStranded).toBe(0);
+    // A 90-min 10:00 slot ends 11:30: 50 min of slack, stranded even when booking a short lesson
+    expect((await score({ "09:00": 60, "10:00": 90 }, 30)).newlyStranded).toBe(1);
+  });
+
   it("gives a small bonus to back-to-back slots so days stay compact", async () => {
     mockMatrix({ [leg(A, U)]: 3 });
     const scored = await routeOptimizer.scoreSlots(

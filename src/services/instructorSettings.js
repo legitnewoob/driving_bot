@@ -298,6 +298,14 @@ function slotsForDay(instructor, day) {
   return rawTimesForDay(instructor, day).map((start) => ({ start, durationMin, exact: false }));
 }
 
+// Fixed mode: a date's slots by start time, each with its own length. Null in
+// packed mode, or before any slots are saved (older start times have no length).
+function slotLengthsForDate(instructor, dateStr) {
+  if (isPacked(instructor)) return null;
+  const slots = storedSlotsForDay(instructor, dayIndex(dateStr));
+  return slots && Object.fromEntries(slots.map((s) => [s.start, s.durationMin]));
+}
+
 function daySlotsFor(instructor) {
   return Object.fromEntries(DAY_KEYS.map((key, day) => [key, slotsForDay(instructor, day)]));
 }
@@ -425,4 +433,5 @@ module.exports = {
   toMinutes,
   workingHoursFor,
   daySlotsFor,
+  slotLengthsForDate,
 };

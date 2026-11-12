@@ -254,7 +254,8 @@ class RouteOptimizer {
       for (const free of freeSlots) {
         if (free === slot) continue;
         const fs = this.timeToMinutes(free);
-        const fe = fs + duration;
+        // A slot the instructor laid out keeps its own length
+        const fe = fs + (opts.slotLengths?.[free] ?? duration);
         if (fs < lo || fe > hi || (fs < e && fe > s)) continue;
         const wasStranded = this._isStranded(fs, fe, before, after, direct, grace);
         const isStranded = fs < s
@@ -301,10 +302,13 @@ class RouteOptimizer {
     const userEndPt = this._toPoint(opts.dropoffLoc) || null;
     const plan = this.buildDayPlan(bookings, route);
     const travel = opts.travel || (await this.buildTravel(plan, userPt, homePt, departureTime, userEndPt));
-    const slotOpts = { durationMin: opts.durationMin, userEndPt };
+    const slotOpts = { durationMin: opts.durationMin, userEndPt, slotLengths: opts.slotLengths };
+    // Fixed mode: every slot of the day can be left hard to fill, including
+    // ones too short for this lesson
+    const freeSlots = opts.slotLengths ? Object.keys(opts.slotLengths) : availableSlots;
 
     return availableSlots
-      .map((slot) => this.scoreSlot(slot, plan, userPt, homePt, route, travel, availableSlots, slotOpts))
+      .map((slot) => this.scoreSlot(slot, plan, userPt, homePt, route, travel, freeSlots, slotOpts))
       .sort((a, b) => {
         if (a.feasible !== b.feasible) return a.feasible ? -1 : 1;
         return a.score - b.score;
@@ -432,7 +436,7 @@ class RouteOptimizer {
       homePt ? { lat: homePt.lat, long: homePt.lng } : null,
       route,
       departure,
-      { durationMin: lessonMin, dropoffLoc }
+      { durationMin: lessonMin, dropoffLoc, slotLengths: settings.slotLengthsForDate(instructor, date) }
     );
 
     return { ...this._chooseOffered(date, evaluations, route, prefs), booked };

@@ -135,6 +135,30 @@ describe("PATCH /settings", () => {
     expect(body.data.botSettings.tone).toBe("professional");
   });
 
+  it("saves lesson slots with their lengths, sorted, and returns them", async () => {
+    const { status, body } = await call("PATCH", "/settings", {
+      botSettings: { daySlots: { mon: [{ start: "11:15", durationMin: 90, exact: true }, { start: "09:00", durationMin: 120 }] } },
+    });
+
+    expect(status).toBe(200);
+    expect(savedDoc.botSettings.daySlots.mon).toEqual([
+      { start: "09:00", durationMin: 120, exact: false },
+      { start: "11:15", durationMin: 90, exact: true },
+    ]);
+    expect(savedDoc.botSettings.daySlots.tue).toEqual([]);
+    expect(body.data.botSettings.daySlots.mon).toHaveLength(2);
+    // The older start-time view follows the slots
+    expect(body.data.botSettings.workingHours.mon).toEqual(["09:00", "11:15"]);
+  });
+
+  it("an older client saving start times clears the slots", async () => {
+    instructor.botSettings = { daySlots: { mon: [{ start: "09:00", durationMin: 120 }] } };
+    const { body } = await call("PATCH", "/settings", { botSettings: { workingHours: { mon: ["10:00"] } } });
+
+    expect(savedDoc.botSettings.daySlots).toBeNull();
+    expect(body.data.botSettings.daySlots.mon).toEqual([{ start: "10:00", durationMin: 60, exact: false }]);
+  });
+
   it.each([
     [{ colour: "blue" }, "Unknown setting: colour"],
     [{ routeSettings: { maxAddedDriveMin: 500 } }, "routeSettings.maxAddedDriveMin must be a whole number from 5 to 60"],
@@ -145,9 +169,13 @@ describe("PATCH /settings", () => {
     [{ botSettings: { breaks: [{ from: "13:00", to: "12:00" }] } }, "before its \"to\" time"],
     [{ botSettings: { workingHours: { mon: ["9am"] } } }, "botSettings.workingHours.mon must be a list"],
     [{ botSettings: { aboutLessons: "x".repeat(1001) } }, "at most 1000 characters"],
+    [{ botSettings: { daySlots: { mon: [{ start: "09:00", durationMin: 120 }, { start: "10:30", durationMin: 60 }] } } }, "the 10:30 slot overlaps the one before it"],
+    [{ botSettings: { daySlots: { mon: [{ start: "09:00", durationMin: 50 }] } } }, "slot length must be a whole number from 30 to 180 in steps of 15"],
+    [{ botSettings: { daySlots: { mon: [{ start: "9am", durationMin: 60 }] } } }, "each slot needs a start time"],
+    [{ botSettings: { daySlots: { funday: [] } } }, "Unknown setting: botSettings.daySlots.funday"],
     [{ botSettings: { holiday: { from: "2030-08-05", to: "2030-08-01" } } }, "must end on or after it starts"],
     [{ botSettings: { secretMode: true } }, "Unknown setting: botSettings.secretMode"],
-    [{ botSettings: { reminders: "hourly" } }, "botSettings.reminders must be one of: off, 24h, 24h+2h"],
+    [{ botSettings: { reminders: "hourly" } }, "botSettings.reminders must be one of: off, 24h, 48h"],
     [{ botSettings: { lateCancellationFee: -5 } }, "botSettings.lateCancellationFee must be an amount"],
     [{ botSettings: { cancellationNoticeHours: 500 } }, "botSettings.cancellationNoticeHours must be a whole number from 0 to 168"],
     [{ botSettings: { notifications: { sms: true } } }, "Unknown setting: botSettings.notifications.sms"],
@@ -332,10 +360,10 @@ describe("POST /route-preview", () => {
 });
 
 describe("Notification settings", () => {
-  it("defaults: 24h reminders, 48h notice, all alerts by email, handover on", async () => {
+  it("defaults: 48h reminders, 48h notice, all alerts by email, handover on", async () => {
     const { body } = await call("GET", "/settings");
     expect(body.data.botSettings).toMatchObject({
-      reminders: "24h",
+      reminders: "48h",
       cancellationNoticeHours: 48,
       lateCancellationFee: null,
       notifications: { booked: true, cancelled: true, rescheduled: true, email: true },

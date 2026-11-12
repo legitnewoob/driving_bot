@@ -123,6 +123,32 @@ const BOT_SPEC = {
     const days = check(v, Object.fromEntries(DAY_KEYS.map((d) => [d, timeList(24)])), label, errors);
     return { value: Object.fromEntries(DAY_KEYS.map((d) => [d, days[d] || []])) };
   },
+  // Fixed mode: each day's lesson slots. A slot is a start and a length; slots
+  // on the same day can't overlap.
+  daySlots: (v, label) => {
+    if (v === null) return { value: null };
+    if (!isObj(v)) return { error: `${label} must be an object` };
+    const out = {};
+    for (const [day, list] of Object.entries(v)) {
+      const l = `${label}.${day}`;
+      if (!DAY_KEYS.includes(day)) return { error: `Unknown setting: ${l}` };
+      if (!Array.isArray(list) || list.length > 24) return { error: `${l} must be a list of up to 24 slots` };
+      const slots = [];
+      for (const s of list) {
+        const length = isObj(s) && int(30, 180, { step: 15 })(s.durationMin, `${l} slot length`);
+        if (!isObj(s) || !TIME.test(s.start || "")) return { error: `${l}: each slot needs a start time like "09:00"` };
+        if (length.error) return { error: length.error };
+        if (s.exact !== undefined && typeof s.exact !== "boolean") return { error: `${l}: exact must be true or false` };
+        if (toMin(s.start) + s.durationMin > 24 * 60) return { error: `${l}: the ${s.start} slot runs past midnight` };
+        slots.push({ start: s.start, durationMin: s.durationMin, exact: !!s.exact });
+      }
+      slots.sort((a, b) => toMin(a.start) - toMin(b.start));
+      const clash = slots.find((s, i) => i > 0 && toMin(s.start) < toMin(slots[i - 1].start) + slots[i - 1].durationMin);
+      if (clash) return { error: `${l}: the ${clash.start} slot overlaps the one before it` };
+      out[day] = slots;
+    }
+    return { value: Object.fromEntries(DAY_KEYS.map((d) => [d, out[d] || []])) };
+  },
   breaks: (v, label) => {
     if (!Array.isArray(v) || v.length > 5) return { error: `${label} must be a list of up to 5 breaks` };
     for (const b of v) {

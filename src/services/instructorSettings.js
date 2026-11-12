@@ -130,6 +130,8 @@ const BOT_DEFAULTS = {
   dayHours: null,
   lunch: LUNCH_DEFAULTS,
   workingHours: null,
+  // Fixed mode: slots with their own lengths; null until the instructor saves some
+  daySlots: null,
   breaks: [],
   maxLessonsPerDay: null,
   minNoticeHours: 24,
@@ -174,9 +176,28 @@ function dayIndex(dateStr) {
   return Number(timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(dateStr, "12:00"), "d"));
 }
 
-// Raw working times for a weekday, before breaks. Without a workingHours
-// setting this is the legacy rule: availableTimes on Mon–Fri, nothing at weekends.
+// Fixed mode: the slots the instructor laid out for a weekday, each
+// { start, durationMin, exact }, or null when they haven't saved any yet.
+function storedSlotsForDay(instructor, day) {
+  const slots = plain(resolveBotSettings(instructor).daySlots);
+  const list = slots && plain(slots[DAY_KEYS[day]]);
+  if (!Array.isArray(list)) return null;
+  return list
+    .map((s) => ({ start: s.start, durationMin: s.durationMin, exact: !!s.exact }))
+    .sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
+}
+
+// A slot takes lessons of its own length or shorter, or only its own length when exact.
+function slotTakes(slot, durationMin) {
+  return slot.exact ? slot.durationMin === durationMin : slot.durationMin >= durationMin;
+}
+
+// Raw working times for a weekday, before breaks: the slot starts, or the older
+// start-time list. With neither it's the legacy rule: availableTimes on Mon–Fri,
+// nothing at weekends.
 function rawTimesForDay(instructor, day) {
+  const slots = storedSlotsForDay(instructor, day);
+  if (slots) return slots.map((s) => s.start);
   const hours = plain(resolveBotSettings(instructor).workingHours);
   if (hours && Array.isArray(hours[DAY_KEYS[day]])) {
     return [...hours[DAY_KEYS[day]]].sort((a, b) => toMinutes(a) - toMinutes(b));
@@ -194,16 +215,16 @@ function toTime(minutes) {
 // modes keeps the same days.
 function dayHoursFor(instructor) {
   const stored = plain(resolveBotSettings(instructor).dayHours);
-  const duration = resolveRouteSettings(instructor).lessonDurationMin;
   return Object.fromEntries(
     DAY_KEYS.map((key, day) => {
       if (stored && key in stored) {
         const h = plain(stored[key]);
         return [key, h && h.start && h.end ? { start: h.start, end: h.end } : null];
       }
-      const times = rawTimesForDay(instructor, day);
-      if (!times.length) return [key, null];
-      return [key, { start: times[0], end: toTime(Math.min(toMinutes(times[times.length - 1]) + duration, 23 * 60 + 55)) }];
+      const slots = slotsForDay(instructor, day);
+      if (!slots.length) return [key, null];
+      const end = Math.max(...slots.map((s) => toMinutes(s.start) + s.durationMin));
+      return [key, { start: slots[0].start, end: toTime(Math.min(end, 23 * 60 + 55)) }];
     })
   );
 }
@@ -256,11 +277,29 @@ function timesForDate(instructor, dateStr, durationMin = null) {
     return packedDay(instructor, dateStr, duration).starts.map(toTime);
   }
   const { breaks } = resolveBotSettings(instructor);
-  return rawTimesForDay(instructor, dayIndex(dateStr)).filter((time) => {
+  const clear = (time) => {
     const start = toMinutes(time);
     const end = start + duration;
     return !breaks.some((b) => b?.from && b?.to && start < toMinutes(b.to) && end > toMinutes(b.from));
-  });
+  };
+  const day = dayIndex(dateStr);
+  const slots = storedSlotsForDay(instructor, day);
+  // Older start-time lists have no lengths: every start is offered for any lesson
+  if (!slots) return rawTimesForDay(instructor, day).filter(clear);
+  return slots.filter((s) => slotTakes(s, duration) && clear(s.start)).map((s) => s.start);
+}
+
+// Fixed mode: a weekday's slots as the instructor would edit them. Before any
+// are saved, each older start time becomes a slot of the default lesson length.
+function slotsForDay(instructor, day) {
+  const stored = storedSlotsForDay(instructor, day);
+  if (stored) return stored;
+  const durationMin = resolveRouteSettings(instructor).lessonDurationMin;
+  return rawTimesForDay(instructor, day).map((start) => ({ start, durationMin, exact: false }));
+}
+
+function daySlotsFor(instructor) {
+  return Object.fromEntries(DAY_KEYS.map((key, day) => [key, slotsForDay(instructor, day)]));
 }
 
 // Every start time the instructor offers. Packed mode has no fixed list.
@@ -385,4 +424,5 @@ module.exports = {
   upcomingBookableDates,
   toMinutes,
   workingHoursFor,
+  daySlotsFor,
 };

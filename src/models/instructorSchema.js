@@ -82,6 +82,20 @@ const instructorSchema = new mongoose.Schema({
       }, { _id: false }),
       default: null,
     },
+    // Fixed mode: lesson slots the instructor laid out, each with its own length.
+    // null: not set yet, so the day comes from workingHours.
+    daySlots: {
+      type: new mongoose.Schema(
+        Object.fromEntries(
+          ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => [
+            d,
+            [{ start: String, durationMin: Number, exact: { type: Boolean, default: false }, _id: false }],
+          ])
+        ),
+        { _id: false }
+      ),
+      default: null,
+    },
     breaks: { type: [{ from: String, to: String, _id: false }], default: [] },
     maxLessonsPerDay: { type: Number, default: null },
     minNoticeHours: { type: Number, default: 24 },

@@ -98,6 +98,59 @@ describe("working days and times", () => {
   });
 });
 
+describe("fixed-mode slots with their own lengths", () => {
+  const off = { tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
+  const inst = {
+    ...LEGACY,
+    botSettings: {
+      daySlots: {
+        mon: [
+          { start: "11:15", durationMin: 90 },
+          { start: "09:00", durationMin: 120 },
+          { start: "13:30", durationMin: 60 },
+          { start: "15:00", durationMin: 120, exact: true },
+        ],
+        ...off,
+      },
+      // Replaced by the slots
+      workingHours: { mon: ["08:00"], tue: ["08:00"], wed: [], thu: [], fri: [], sat: [], sun: [] },
+    },
+  };
+
+  it("offers a slot to lessons of its length or shorter", () => {
+    expect(s.timesForDate(inst, "2025-06-16", 60)).toEqual(["09:00", "11:15", "13:30"]);
+    expect(s.timesForDate(inst, "2025-06-16", 90)).toEqual(["09:00", "11:15"]);
+  });
+
+  it("keeps an exact slot for its own length only", () => {
+    expect(s.timesForDate(inst, "2025-06-16", 120)).toEqual(["09:00", "15:00"]);
+  });
+
+  it("takes working days and times from the slots, not the older start times", () => {
+    expect(s.isWorkingDay(inst, "2025-06-17")).toBe(false);
+    expect(s.describeWorkingDays(inst)).toBe("Monday");
+    expect(s.allWorkingTimes(inst)).toEqual(["09:00", "11:15", "13:30", "15:00"]);
+    expect(s.dayHoursFor(inst).mon).toEqual({ start: "09:00", end: "17:00" });
+  });
+
+  it("checks breaks with the requested length, not the slot's", () => {
+    const withBreak = { ...inst, botSettings: { ...inst.botSettings, breaks: [{ from: "10:00", to: "10:30" }] } };
+    // A 1h lesson in the 09:00 two-hour slot ends as the break starts
+    expect(s.timesForDate(withBreak, "2025-06-16", 60)).toEqual(["09:00", "11:15", "13:30"]);
+    expect(s.timesForDate(withBreak, "2025-06-16", 120)).toEqual(["15:00"]);
+  });
+
+  it("older start times have no length: offered for any lesson, shown as default-length slots", () => {
+    const old = { botSettings: { workingHours: { mon: ["09:00", "10:00"], ...off } } };
+    expect(s.timesForDate(old, "2025-06-16", 120)).toEqual(["09:00", "10:00"]);
+    expect(s.daySlotsFor(old).mon).toEqual([
+      { start: "09:00", durationMin: 60, exact: false },
+      { start: "10:00", durationMin: 60, exact: false },
+    ]);
+    expect(s.daySlotsFor(old).tue).toEqual([]);
+  });
+});
+
 describe("dates", () => {
   it("holiday mode blocks the date range", () => {
     const inst = { botSettings: { holiday: { enabled: true, from: "2025-06-18", to: "2025-06-20" } } };

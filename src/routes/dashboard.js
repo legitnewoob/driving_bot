@@ -820,6 +820,7 @@ function settingsPayload(instructor) {
     botSettings: {
       ...settings.resolveBotSettings(instructor),
       workingHours: settings.workingHoursFor(instructor),
+      daySlots: settings.daySlotsFor(instructor),
       dayHours: settings.dayHoursFor(instructor),
     },
     // Packed mode: the longest drive (set) and the usual gap (Donna works it out)
@@ -973,6 +974,8 @@ router.patch("/settings", async (req, res) => {
       const badLunch = lunchProblem(lunch);
       if (badLunch) return res.status(400).json({ success: false, error: badLunch });
       doc.botSettings = { ...cur, ...botSettings, holiday, notifications, lunch };
+      // An older client saving plain start times replaces any slots laid out since
+      if (botSettings.workingHours && botSettings.daySlots === undefined) doc.botSettings.daySlots = null;
       // Switching to packed mode for the first time: keep the same working days
       // by starting from the hours the start-time chips imply
       if (botSettings.scheduleMode === "packed" && !cur.dayHours && botSettings.dayHours === undefined) {

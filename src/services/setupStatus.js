@@ -19,7 +19,10 @@ const plain = (v) => (v && typeof v.toObject === "function" ? v.toObject() : v);
 async function getSetupStatus(instructor) {
   const bot = plain(instructor?.botSettings) || {};
   const hours = plain(bot.workingHours);
-  const hasTimes = !!hours && Object.values(hours).some((times) => Array.isArray(times) && times.length > 0);
+  const slots = plain(bot.daySlots);
+  // Saved slots replace the older start-time lists
+  const days = slots || hours;
+  const hasTimes = !!days && Object.values(days).some((list) => Array.isArray(list) && list.length > 0);
   const dayHours = plain(bot.dayHours);
   const hasDayHours = !!dayHours && Object.values(dayHours).some(Boolean);
   const hasHours = bot.scheduleMode === "packed" ? hasDayHours || hasTimes : hasTimes;

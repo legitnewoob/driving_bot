@@ -112,8 +112,11 @@ async function runOnce(now = Date.now()) {
 
     const hours = hoursUntil(booking, now);
     let kind = null;
-    if (!booking.reminderSentAt && hours > 44 && hours <= 50) kind = "long";
-    else if ((mode === "48h+2h" || mode === "24h+2h") && !booking.shortReminderSentAt && hours > 1 && hours <= 2.5) kind = "short";
+    if (!booking.reminderSentAt) {
+      if ((mode === "24h" || mode === "24h+2h") && hours > 20 && hours <= 25) kind = "long";
+      else if ((mode === "48h" || mode === "48h+2h") && hours > 44 && hours <= 50) kind = "long";
+    }
+    if (!kind && !booking.shortReminderSentAt && (mode === "24h+2h" || mode === "48h+2h") && hours > 1 && hours <= 2.5) kind = "short";
     if (!kind) continue;
 
     const field = kind === "long" ? "reminderSentAt" : "shortReminderSentAt";

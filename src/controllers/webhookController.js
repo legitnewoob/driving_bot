@@ -87,6 +87,11 @@ class WebhookController {
   // learner::number → how often we've said "this number isn't linked": a few
   // replies straight away, then one every couple of minutes
   _noInstructorReplies = new LeakyBucket({ capacity: 3, leakMs: 2 * 60 * 1000 });
+  // learner::number → messages Donna takes on: a burst of 12, then one every 5s.
+  // Well above how fast a person types, but stops floods running up AI calls
+  _learnerMessages = new LeakyBucket({ capacity: 12, leakMs: 5 * 1000 });
+  // learner::number → the "slow down" note, at most once a minute
+  _slowDownNotes = new LeakyBucket({ capacity: 1, leakMs: 60 * 1000 });
   // learner::instructor → when we last said "Donna is switched off"
   _donnaOffReplies = new Map();
 
@@ -726,6 +731,18 @@ class WebhookController {
     }
 
     const ctx = this._makeContext({ from, instructor, isMock, mockReplyCallback });
+
+    // Too many messages too fast: skip this one, and say so now and then
+    const rateKey = `${from}::${instructorPhoneId}`;
+    if (!isMock && !this._learnerMessages.take(rateKey)) {
+      logger.warn(`Rate limited ${from} on ${instructorPhoneId}; skipped: "${String(messageContent).slice(0, 80)}"`);
+      if (this._slowDownNotes.take(rateKey)) {
+        await ctx
+          .send("You're sending messages faster than I can keep up 😅 Give me a minute, then send me your message again.")
+          .catch(() => {});
+      }
+      return;
+    }
 
     if (extra.messageId && !isMock) {
       whatsappService.markReadAndTyping(extra.messageId, instructor).catch(() => {});

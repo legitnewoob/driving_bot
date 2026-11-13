@@ -27,6 +27,7 @@ const { formatDuration } = require("../services/lessonTypes");
 const { isDbReady } = require("../utils/db");
 const { schoolAllowsDonna } = require("../services/donnaStatus");
 const bookingFlow = require("../services/bookingFlow");
+const LeakyBucket = require("../utils/leakyBucket");
 
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
 const HISTORY_LENGTH = 10;
@@ -83,8 +84,9 @@ function parseIncoming(message) {
 const firstName = (name) => String(name || "").trim().split(/\s+/)[0] || "";
 
 class WebhookController {
-  // learner::number → when we last said "this number isn't linked"
-  _noInstructorReplies = new Map();
+  // learner::number → how often we've said "this number isn't linked": a few
+  // replies straight away, then one every couple of minutes
+  _noInstructorReplies = new LeakyBucket({ capacity: 3, leakMs: 2 * 60 * 1000 });
   // learner::instructor → when we last said "Donna is switched off"
   _donnaOffReplies = new Map();
 
@@ -135,14 +137,12 @@ class WebhookController {
   }
 
   // The number the learner messaged isn't linked to any instructor (e.g. it's in the
-  // pool but nobody has been assigned it yet). Say so instead of going silent, at most
-  // once an hour per learner. There's no instructor token, so use the number's own
+  // pool but nobody has been assigned it yet). Say so instead of going silent, rate
+  // limited per learner. There's no instructor token, so use the number's own
   // token from the pool, or WHATSAPP_TOKEN as a fallback.
   async _replyNoInstructor(from, phoneNumberId, isMock, mockReplyCallback) {
     const key = `${from}::${phoneNumberId}`;
-    const last = this._noInstructorReplies.get(key);
-    if (last && Date.now() - last < NO_INSTRUCTOR_REPLY_GAP_MS) return;
-    this._noInstructorReplies.set(key, Date.now());
+    if (!this._noInstructorReplies.take(key)) return;
 
     const text = NO_INSTRUCTOR_MESSAGE;
     try {

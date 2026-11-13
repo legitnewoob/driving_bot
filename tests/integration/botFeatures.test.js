@@ -687,13 +687,14 @@ describe("Messages to a number with no instructor", () => {
     expect(replies).toEqual([expect.stringContaining("isn't linked to a Donna Drive instructor")]);
   });
 
-  it("says it at most once an hour to the same learner", async () => {
+  it("answers a few messages in a row, then goes quiet until the limit drains", async () => {
     const getInstructor = require("../../src/models/instructorModel").getInstructor;
     getInstructor.mockResolvedValue(null);
     const replies = [];
-    await webhookController.handleIncomingMessage("4478", "hi", "unassigned-2", true, (r) => replies.push(r));
-    await webhookController.handleIncomingMessage("4478", "hello?", "unassigned-2", true, (r) => replies.push(r));
-    expect(replies).toHaveLength(1);
+    for (const text of ["hi", "hello?", "anyone?", "hellooo"]) {
+      await webhookController.handleIncomingMessage("4478", text, "unassigned-2", true, (r) => replies.push(r));
+    }
+    expect(replies).toHaveLength(3);
     getInstructor.mockImplementation(async () => mockInstructor);
   });
 

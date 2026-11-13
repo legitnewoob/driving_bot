@@ -9,6 +9,7 @@ const settings = require("../services/instructorSettings");
 const LessonType = require("../models/lessonTypeModel");
 const { to12h } = require("../utils/timeFormat");
 const logger = require("../utils/logger-advanced");
+const whatsappService = require("../services/whatsappService");
 const { customAlphabet } = require("nanoid");
 
 const newBookingId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
@@ -54,8 +55,44 @@ router.get("/", async (req, res) => {
   }
 });
 
+/** WhatsApp's format, as learners who message in are stored: 07700 900000 → 447700900000 */
+function toWhatsAppNumber(phone) {
+  let digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = `44${digits.slice(1)}`;
+  return digits;
+}
+
+/**
+ * Tells a learner the instructor added them, so they know the number and can
+ * reply. A template, because they haven't messaged yet:
+ *   WHATSAPP_LEARNER_ADDED_TEMPLATE  default learner_added; body {{1}} learner's first name, {{2}} instructor
+ *   WHATSAPP_REMINDER_TEMPLATE_LANG  defaults to en
+ * Returns whether it was sent; never throws.
+ */
+async function sendLearnerWelcome(user, instructor) {
+  const template = process.env.WHATSAPP_LEARNER_ADDED_TEMPLATE ?? "learner_added";
+  // No template, or the instructor hasn't got their own number yet
+  if (!template || !instructor?.phoneNumberId || instructor.phoneNumberId.startsWith("signup_")) return false;
+  try {
+    await whatsappService.sendTemplate(
+      user.phone,
+      template,
+      process.env.WHATSAPP_REMINDER_TEMPLATE_LANG || "en",
+      [String(user.name || "").trim().split(/\s+/)[0] || "there", instructor.name || "your instructor"],
+      [],
+      instructor
+    );
+    return true;
+  } catch (err) {
+    logger.warn(`Welcome message to new learner failed: ${err.message}`);
+    return false;
+  }
+}
+
 // ─── POST /api/learners ───────────────────────────────────────────────────
-// Creates or updates a user/learner for the instructor.
+// Creates or updates a user/learner for the instructor. A new learner gets a
+// WhatsApp welcome unless `notify` is false.
 
 router.post("/", async (req, res) => {
   try {
@@ -66,11 +103,14 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ success: false, error: "Phone number is required" });
     }
 
-    // Normalize: strip spaces
-    const normalizedPhone = phone.replace(/\s+/g, "");
+    const normalizedPhone = toWhatsAppNumber(phone);
+    if (normalizedPhone.length < 10) {
+      return res.status(400).json({ success: false, error: "That doesn't look like a phone number" });
+    }
 
-    // Check if this learner already exists for this instructor
-    let user = await User.findOne({ phone: normalizedPhone, instructorId });
+    // Check if this learner already exists for this instructor (older portal
+    // adds were saved as typed, e.g. 07700900000)
+    let user = await User.findOne({ phone: { $in: [normalizedPhone, phone.replace(/\s+/g, "")] }, instructorId });
 
     if (user) {
       // Update existing
@@ -114,7 +154,8 @@ router.post("/", async (req, res) => {
       currentStep: "start",
     });
 
-    res.status(201).json({ success: true, data: user.toObject(), created: true });
+    const welcomeSent = req.body.notify === false ? false : await sendLearnerWelcome(user, req.instructor);
+    res.status(201).json({ success: true, data: user.toObject(), created: true, welcomeSent });
   } catch (err) {
     logger.error(`POST /api/learners error: ${err.message}`);
     res.status(500).json({ success: false, error: "Failed to create learner" });
@@ -566,3 +607,4 @@ router.patch("/bookings/:bookingId/complete", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.toWhatsAppNumber = toWhatsAppNumber;

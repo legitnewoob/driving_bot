@@ -139,6 +139,7 @@ describe("2.1 reminders", () => {
   });
 
   it("sends buttons when the learner messaged in the last 24h", async () => {
+    mockInstructor.botSettings = { reminders: "24h" };
     Booking.find.mockReturnValue({ lean: () => Promise.resolve([booking()]) });
     ConversationSession.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.resolve({ lastActivity: new Date() }) }) });
 
@@ -152,26 +153,38 @@ describe("2.1 reminders", () => {
     expect(buttons.map((b) => b.id)).toEqual(["rem:confirm:DL-REM001", "rem:move:DL-REM001", "rem:cancel:DL-REM001"]);
   });
 
-  it("uses the approved template outside the 24h window", async () => {
-    process.env.WHATSAPP_REMINDER_TEMPLATE = "lesson_reminder";
+  it("uses the approved 24h template outside the 24h window", async () => {
+    mockInstructor.botSettings = { reminders: "24h" };
     Booking.find.mockReturnValue({ lean: () => Promise.resolve([booking()]) });
     ConversationSession.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.resolve(null) }) });
 
     await reminders.runOnce();
-    delete process.env.WHATSAPP_REMINDER_TEMPLATE;
 
     const [to, name, lang, params, payloads] = whatsappService.sendTemplate.mock.calls[0];
-    expect([to, name, lang]).toEqual(["4471", "lesson_reminder", "en_GB"]);
+    expect([to, name, lang]).toEqual(["4471", "lesson_reminder_24h", "en"]);
     expect(params[0]).toBe("Sam");
     expect(params[3]).toBe("ST5 1AB");
-    expect(payloads).toEqual(["rem:confirm:DL-REM001", "rem:move:DL-REM001", "rem:cancel:DL-REM001"]);
+    expect(payloads).toEqual([]);
   });
 
-  it("skips (and releases the claim) when there's no template and no recent message", async () => {
+  it("uses the 48h template for the 48h reminder", async () => {
+    mockInstructor.botSettings = { reminders: "48h" };
+    Booking.find.mockReturnValue({ lean: () => Promise.resolve([booking(inHours(47))]) });
+    ConversationSession.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.resolve(null) }) });
+
+    await reminders.runOnce();
+
+    expect(whatsappService.sendTemplate.mock.calls[0][1]).toBe("lesson_reminder_48h");
+  });
+
+  it("skips (and releases the claim) when the template is turned off and there's no recent message", async () => {
+    process.env.WHATSAPP_REMINDER_24H_TEMPLATE = "";
+    mockInstructor.botSettings = { reminders: "24h" };
     Booking.find.mockReturnValue({ lean: () => Promise.resolve([booking()]) });
     ConversationSession.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.resolve(null) }) });
 
     const result = await reminders.runOnce();
+    delete process.env.WHATSAPP_REMINDER_24H_TEMPLATE;
 
     expect(result.skippedNoTemplate).toBe(1);
     expect(Booking.updateOne).toHaveBeenCalledWith({ _id: "b1" }, { reminderSentAt: null });

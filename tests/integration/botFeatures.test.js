@@ -678,6 +678,28 @@ describe("Handover to the instructor", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+describe("Learner sending messages too fast", () => {
+  afterEach(() => {
+    delete mockInstructor.botSettings;
+    webhookController._learnerMessages.clear();
+    webhookController._slowDownNotes.clear();
+    webhookController._donnaOffReplies.clear();
+  });
+
+  it("takes a burst of 12, then skips the rest and says so once", async () => {
+    // Switched off keeps each message cheap; the limit runs before that check
+    mockInstructor.botSettings = { donnaEnabled: false };
+    for (let i = 0; i < 15; i++) await webhookController.handleIncomingMessage("4476", `msg ${i}`, mockInstructor.phoneNumberId);
+
+    const sent = whatsappService.sendTextMessage.mock.calls.filter(([to]) => to === "4476").map(([, text]) => text);
+    expect(sent).toEqual([
+      expect.stringContaining("isn't taking bookings through Donna"),
+      expect.stringContaining("faster than I can keep up"),
+    ]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 describe("Messages to a number with no instructor", () => {
   it("tells the learner the number isn't linked, instead of going silent", async () => {
     const getInstructor = require("../../src/models/instructorModel").getInstructor;

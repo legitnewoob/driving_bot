@@ -119,6 +119,7 @@ const REGISTERED_USER = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  webhookController._learnerMessages.clear(); // lots of messages from one learner here
   User.findOne.mockResolvedValue(REGISTERED_USER);
   global.__lastAiResponse = "";
 });

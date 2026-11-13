@@ -21,6 +21,8 @@ const PLACES_PER_REFERRAL = 10;
 const REFERRALS_FOR_PRIORITY = 3;
 const INVITE_DAYS = 14;
 const REMIND_AFTER_DAYS = 5;
+// A founding customer's paid plan is free for about 3 months, with no card
+const FOUNDING_TRIAL_DAYS = 91;
 const TYPES = ["adi", "pdi", "school"];
 const SCHOOL_SIZES = ["2-5", "6-15", "16+"];
 const TOOLS = ["whatsapp", "phone", "app", "other"];
@@ -294,6 +296,7 @@ async function inviteInfo(token) {
     email: entry.email,
     expiresAt: entry.invite.expiresAt,
     founding: !!entry.invite.founding,
+    foundingTrialDays: entry.invite.founding ? FOUNDING_TRIAL_DAYS : null,
     promo: promo ? { code: promo.code, label: promoLabel(promo) } : null,
   };
 }
@@ -498,6 +501,12 @@ async function checkoutPerk(instructor, plan) {
   if (!promo) return null;
   if (promo.plans?.length && !promo.plans.includes(plan)) return null;
   return { discounts: [{ promotion_code: promo.stripePromotionCodeId }] };
+}
+
+/** Their founding-customer offer, if they came in on a founding invite: { trialDays } or null. */
+async function foundingOffer(instructor) {
+  const entry = await LaunchSignup.findOne({ instructorId: instructor._id }, { "invite.founding": 1 }).lean();
+  return entry?.invite?.founding ? { trialDays: FOUNDING_TRIAL_DAYS } : null;
 }
 
 /**
@@ -811,6 +820,8 @@ module.exports = {
   rewardReferral,
   checkoutPerk,
   createFoundingInvite,
+  foundingOffer,
+  FOUNDING_TRIAL_DAYS,
   promoLabel,
   adminList,
   stats,

@@ -218,6 +218,8 @@ router.post("/google-signup", async (req, res) => {
       // Staff land on the admin panel instead of the instructor dashboard
       access: accessInfo(instructor),
       needsPlan: needsPlan(instructor),
+      // Came in on a founding invite: the plan picker shows their free months, not the usual trial
+      founding: needsPlan(instructor) ? await require("../services/launchService").foundingOffer(instructor).catch(() => null) : null,
       // Their driving school, so the website opens the right home straight away
       school: isNew ? null : await schoolInfo(instructor).catch(() => null),
       isNew,
@@ -383,6 +385,11 @@ router.get("/me", jwtAuth, async (req, res) => {
         // Picked a paid plan but didn't finish paying: offer to resume it
         pendingPlan: needsPlan(instructor) && instructor.pendingPlan ? instructor.pendingPlan : null,
         comp: instructor.comp?.plan ? { plan: instructor.comp.plan, until: instructor.comp.until } : null,
+        // Picking a plan or in the free months: what the website shows instead of the usual trial
+        founding:
+          needsPlan(instructor) || instructor.subscriptionStatus === "trialing"
+            ? await require("../services/launchService").foundingOffer(instructor).catch(() => null)
+            : null,
       },
     });
   } catch (err) {

@@ -112,10 +112,11 @@ router.post("/create-checkout-session", async (req, res) => {
     // session_id lets the sign-in step check with Stripe that checkout really finished
     const successUrl = `${frontendUrl}/dashboard?auth_code=${authCode}&session_id={CHECKOUT_SESSION_ID}`;
 
-    const perk = await require("../services/launchService").checkoutPerk(instructor, plan).catch(() => null);
+    const launch = require("../services/launchService");
+    const perk = await launch.checkoutPerk(instructor, plan).catch(() => null);
     const isFounding = !!(perk?._foundingTrial);
     // Founding customers skip the card screen via a 3-month Stripe trial
-    const trialDays = isFounding ? 91 : (planConfig.trialDays > 0 ? planConfig.trialDays : 0);
+    const trialDays = isFounding ? launch.FOUNDING_TRIAL_DAYS : (planConfig.trialDays > 0 ? planConfig.trialDays : 0);
     // Founding gets no coupon; everyone else gets their invite promo or the active sale
     const discountConfig = isFounding ? {} : (perk || (await pricing.checkoutDiscount(plan)));
 

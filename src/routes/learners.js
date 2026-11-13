@@ -10,6 +10,7 @@ const LessonType = require("../models/lessonTypeModel");
 const { to12h } = require("../utils/timeFormat");
 const logger = require("../utils/logger-advanced");
 const whatsappService = require("../services/whatsappService");
+const { parseName, parseAge, parsePostcode } = require("../utils/learnerDetails");
 const { customAlphabet } = require("nanoid");
 
 const newBookingId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
@@ -97,7 +98,7 @@ async function sendLearnerWelcome(user, instructor) {
 router.post("/", async (req, res) => {
   try {
     const instructorId = req.instructor.phoneNumberId;
-    const { name, phone, age, dob, postalCode } = req.body;
+    const { phone } = req.body;
 
     if (!phone) {
       return res.status(400).json({ success: false, error: "Phone number is required" });
@@ -108,6 +109,26 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ success: false, error: "That doesn't look like a phone number" });
     }
 
+    // Same checks as WhatsApp sign-up, a little looser on names (the instructor typed it)
+    let name = null;
+    if (req.body.name != null && String(req.body.name).trim()) {
+      const parsed = parseName(req.body.name);
+      if (["empty", "length", "characters"].includes(parsed.error)) {
+        return res.status(400).json({ success: false, error: "Please enter the learner's name using letters only" });
+      }
+      name = parsed.value || String(req.body.name).trim().replace(/\s+/g, " ");
+    }
+    let age = null;
+    if (req.body.age != null && req.body.age !== "") {
+      age = parseAge(String(req.body.age)).value ?? null;
+      if (age == null) return res.status(400).json({ success: false, error: "Age must be between 16 and 99" });
+    }
+    let postalCode = null;
+    if (req.body.postalCode != null && String(req.body.postalCode).trim()) {
+      postalCode = parsePostcode(req.body.postalCode).value;
+      if (!postalCode) return res.status(400).json({ success: false, error: "That postcode doesn't look right (e.g. ST5 1AB)" });
+    }
+
     // Check if this learner already exists for this instructor (older portal
     // adds were saved as typed, e.g. 07700900000)
     let user = await User.findOne({ phone: { $in: [normalizedPhone, phone.replace(/\s+/g, "")] }, instructorId });
@@ -116,7 +137,6 @@ router.post("/", async (req, res) => {
       // Update existing
       if (name) user.name = name;
       if (age != null) user.age = age;
-      if (dob) user.dob = dob;
       if (postalCode && postalCode !== user.postalCode) {
         user.postalCode = postalCode;
         try {
@@ -147,7 +167,6 @@ router.post("/", async (req, res) => {
       instructorId,
       name: name || null,
       age: age || null,
-      dob: dob || null,
       postalCode: postalCode || null,
       location: location || undefined,
       detailsCompleted: Boolean(name && phone),

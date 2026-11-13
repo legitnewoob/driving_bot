@@ -5,10 +5,12 @@ const userSchema = new mongoose.Schema({
   instructorId: { type: String, required: true },
   name: String,
   age: Number,
-  dob: String,
+  dob: String, // no longer asked; kept for older learners
   postalCode: String,
   detailsCompleted: { type: Boolean, default: false },
   currentStep: { type: String, default: null },
+  // Set when the learner asks to delete their data; they confirm with YES
+  deleteRequestedAt: { type: Date, default: null },
   location: {
     latitude: { type: Number },
     longitude: { type: Number }

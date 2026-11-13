@@ -3,10 +3,13 @@
 //
 // WhatsApp only allows free-form messages within 24h of the learner's last
 // message. Outside that window we must use Meta-approved templates, named by:
-//   WHATSAPP_REMINDER_TEMPLATE        body {{1}} instructor, {{2}} day, {{3}} time, {{4}} pickup;
-//                                     3 quick-reply buttons (confirm, reschedule, cancel)
+//   WHATSAPP_REMINDER_48H_TEMPLATE    default lesson_reminder_48h
+//   WHATSAPP_REMINDER_24H_TEMPLATE    default lesson_reminder_24h
+//                                     both: body {{1}} instructor, {{2}} day, {{3}} time, {{4}} pickup; no buttons
+//   WHATSAPP_REMINDER_TEMPLATE_LANG   language of those two, defaults to en
 //   WHATSAPP_SHORT_REMINDER_TEMPLATE  body {{1}} instructor, {{2}} time, {{3}} pickup
 //   WHATSAPP_TEMPLATE_LANG            defaults to en_GB
+// Set a template's variable to an empty value to turn it off.
 // See docs/whatsapp-templates.md for the wording to submit.
 const Booking = require("../models/bookingModel");
 const { to12h } = require("../utils/timeFormat");
@@ -22,6 +25,12 @@ const { schoolAllowsDonna } = require("../services/donnaStatus");
 const ACTIVE_STATUSES = ["confirmed", "rescheduled"];
 const RUN_EVERY_MS = 15 * 60 * 1000;
 
+// Read when sending, so a deploy's env (or a test) can change them
+const reminderTemplate = (kind) =>
+  kind === "48h"
+    ? process.env.WHATSAPP_REMINDER_48H_TEMPLATE ?? "lesson_reminder_48h"
+    : process.env.WHATSAPP_REMINDER_24H_TEMPLATE ?? "lesson_reminder_24h";
+
 const formatDay = (date) =>
   timezoneUtils.formatDate(timezoneUtils.createDateInTimezone(date, "12:00"), "dddd D MMMM");
 
@@ -29,6 +38,7 @@ function hoursUntil(booking, now) {
   return (timezoneUtils.createDateInTimezone(booking.date, booking.time).getTime() - now) / 3600000;
 }
 
+/** kind: "48h" | "24h" (the main reminder) or "short" (~2h before) */
 async function sendReminder(booking, instructor, kind) {
   const name = instructor.name || "your instructor";
   const day = formatDay(booking.date);
@@ -37,7 +47,7 @@ async function sendReminder(booking, instructor, kind) {
   const lang = process.env.WHATSAPP_TEMPLATE_LANG || "en_GB";
   const inWindow = await sessionStore.inServiceWindow(booking.userPhone, booking.instructorId);
 
-  if (kind === "long") {
+  if (kind !== "short") {
     if (inWindow) {
       await whatsappService.sendButtons(
         booking.userPhone,
@@ -52,14 +62,15 @@ async function sendReminder(booking, instructor, kind) {
       );
       return true;
     }
-    const template = process.env.WHATSAPP_REMINDER_TEMPLATE;
+    // No buttons on these templates: the learner replies in their own words
+    const template = reminderTemplate(kind);
     if (!template) return false;
     await whatsappService.sendTemplate(
       booking.userPhone,
       template,
-      lang,
+      process.env.WHATSAPP_REMINDER_TEMPLATE_LANG || "en",
       [name, day, to12h(booking.time), pickup || "your usual pickup"],
-      [`rem:confirm:${id}`, `rem:move:${id}`, `rem:cancel:${id}`],
+      [],
       instructor
     );
     return true;
@@ -113,13 +124,13 @@ async function runOnce(now = Date.now()) {
     const hours = hoursUntil(booking, now);
     let kind = null;
     if (!booking.reminderSentAt) {
-      if ((mode === "24h" || mode === "24h+2h") && hours > 20 && hours <= 25) kind = "long";
-      else if ((mode === "48h" || mode === "48h+2h") && hours > 44 && hours <= 50) kind = "long";
+      if ((mode === "24h" || mode === "24h+2h") && hours > 20 && hours <= 25) kind = "24h";
+      else if ((mode === "48h" || mode === "48h+2h") && hours > 44 && hours <= 50) kind = "48h";
     }
     if (!kind && !booking.shortReminderSentAt && (mode === "24h+2h" || mode === "48h+2h") && hours > 1 && hours <= 2.5) kind = "short";
     if (!kind) continue;
 
-    const field = kind === "long" ? "reminderSentAt" : "shortReminderSentAt";
+    const field = kind === "short" ? "shortReminderSentAt" : "reminderSentAt";
     const claimed = await Booking.findOneAndUpdate({ _id: booking._id, [field]: null }, { [field]: new Date() });
     if (!claimed) continue;
 

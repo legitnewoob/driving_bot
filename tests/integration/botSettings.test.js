@@ -135,7 +135,7 @@ describe("Custom greeting", () => {
 
     const replies = await send("hello", "447700000077");
 
-    expect(replies[0]).toBe("Welcome to Sam's School of Motoring!\nPlease tell me your *name*:");
+    expect(replies[0]).toBe("Welcome to Sam's School of Motoring!\nI just need 3 quick details to get you set up.\n\nWhat's your *full name*?");
   });
 });
 

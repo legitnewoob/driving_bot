@@ -559,7 +559,7 @@ describe("Flow – New User Signup", () => {
 
     const replies = await sendMockMessage("447800000002", "25", "inst-flow");
 
-    expect(replies[0]).toContain("dob");
+    expect(replies[0]).toContain("postcode");
   });
 
   it("completed user reaches AI flow", async () => {
@@ -582,12 +582,16 @@ describe("Flow – Data Deletion", () => {
   beforeEach(() => jest.clearAllMocks());
   afterEach(() => jest.restoreAllMocks());
 
-  it("'delete my data' removes user and responds", async () => {
-    User.findOne.mockResolvedValue(null);
+  it("'delete my data' asks first, then removes the user on YES", async () => {
+    const user = { phone: "447800000003", detailsCompleted: true, save: jest.fn().mockResolvedValue(true) };
+    User.findOne.mockResolvedValue(user);
     User.deleteOne.mockResolvedValue({ deletedCount: 1 });
 
-    const replies = await sendMockMessage("447800000003", "delete my data", "inst-flow");
+    const ask = await sendMockMessage("447800000003", "delete my data", "inst-flow");
+    expect(ask[0]).toContain("Reply *YES*");
+    expect(User.deleteOne).not.toHaveBeenCalled();
 
+    const replies = await sendMockMessage("447800000003", "YES", "inst-flow");
     expect(User.deleteOne).toHaveBeenCalledWith({ phone: "447800000003", instructorId: "inst-flow" });
     expect(replies[0]).toContain("deleted");
   });

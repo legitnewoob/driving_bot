@@ -487,6 +487,16 @@ describe("launch perk at checkout", () => {
   it("nothing for someone who didn't come in by invite", async () => {
     expect(await launch.checkoutPerk({ _id: "i1" }, "adi")).toBeNull();
   });
+
+  it("a founding invite gives free months with no card instead of a promo", async () => {
+    LaunchSignup.findOne.mockReturnValue(q({ invite: { founding: true, promoCode: null } }));
+    expect(await launch.checkoutPerk({ _id: "i1" }, "adi")).toEqual({ _foundingTrial: true });
+    expect(await launch.foundingOffer({ _id: "i1" })).toEqual({ trialDays: launch.FOUNDING_TRIAL_DAYS });
+    LaunchSignup.findOne.mockReturnValue(q({ invite: { founding: false, promoCode: null } }));
+    expect(await launch.foundingOffer({ _id: "i1" })).toBeNull();
+    LaunchSignup.findOne.mockReturnValue(q(null));
+    expect(await launch.foundingOffer({ _id: "i1" })).toBeNull();
+  });
 });
 
 describe("give a month, get a month", () => {

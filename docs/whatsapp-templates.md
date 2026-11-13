@@ -11,6 +11,7 @@ Until then, the bot still sends reminders and offers to learners who messaged in
 | `WHATSAPP_REMINDER_48H_TEMPLATE` | Reminder ~48h before a lesson. Default `lesson_reminder_48h` |
 | `WHATSAPP_REMINDER_24H_TEMPLATE` | Reminder ~24h before a lesson. Default `lesson_reminder_24h` |
 | `WHATSAPP_REMINDER_TEMPLATE_LANG` | Language of the two reminders above, default `en` |
+| `WHATSAPP_LEARNER_ADDED_TEMPLATE` | Welcome when an instructor adds a learner in the Portal. Default `learner_added`, language `en` |
 | `WHATSAPP_SHORT_REMINDER_TEMPLATE` | Reminder ~2h before (only if the instructor picks "24h + 2h") |
 | `WHATSAPP_SLOT_OFFER_TEMPLATE` | Offering a cancelled slot to someone on the waiting list |
 | `WHATSAPP_TEMPLATE_LANG` | Language of the other templates, default `en_GB` |
@@ -37,6 +38,17 @@ Keep the variables (`{{1}}`, `{{2}}`, …) and the button order exactly as below
 
   Values: instructor name · `Tuesday 14 October` · `10am` · pickup address
 - **Buttons:** none. Learners reply in their own words and Donna handles it.
+
+## 1b. `learner_added`
+
+- **Category:** Utility
+- **Language:** English (`en`)
+- **Body:**
+
+  > Hi {{1}}, {{2}} has added you as a learner. This is their WhatsApp booking line, run by their assistant Donna. Reply here any time to book, move or check your driving lessons.
+
+  Values: learner's first name (or `there`) · instructor name
+- **Buttons:** none
 
 ## 2. `lesson_reminder_short`
 

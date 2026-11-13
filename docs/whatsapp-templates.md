@@ -48,6 +48,7 @@ Keep the variables (`{{1}}`, `{{2}}`, …) and the button order exactly as below
   > Hi {{1}}, {{2}} has added you as a learner. This is their WhatsApp booking line, run by their assistant Donna. Reply here any time to book, move or check your driving lessons.
 
   Values: learner's first name (or `there`) · instructor name
+- **Footer:** `Powered by Donna Drive · donnadrive.co.uk`
 - **Buttons:** none
 
 ## 2. `lesson_reminder_short`

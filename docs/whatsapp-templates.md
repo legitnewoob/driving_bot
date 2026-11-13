@@ -27,7 +27,7 @@ Keep the variables (`{{1}}`, `{{2}}`, …) and the button order exactly as below
 - **Language:** English (`en`)
 - **48h body:**
 
-  > Hiya! Just checking in to remind you for your driving lesson with {{1}}. Your scheduled in for {{2}} at {{3}}.
+  > Hiya! Just checking in to remind you about your driving lesson with {{1}}. You're scheduled in for {{2}} at {{3}}.
   > Pickup: {{4}}. Let me know if you need to reschedule or make any changes.
 
 - **24h body:**

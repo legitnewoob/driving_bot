@@ -50,10 +50,16 @@ describe("new number", () => {
   });
 
   it("stays quiet when two first messages arrive at once", async () => {
-    User.findOne.mockResolvedValue(null);
+    User.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ phone: PHONE });
     User.mockImplementation((data) => ({ ...data, save: jest.fn().mockRejectedValue(Object.assign(new Error("dup"), { code: 11000 })) }));
     expect(await ensureUserDetails(PHONE, "Hi", sendFn, "inst-1")).toEqual({ inProgress: true });
     expect(sendFn).not.toHaveBeenCalled();
+  });
+
+  it("doesn't hide a duplicate error when no learner was actually created", async () => {
+    User.findOne.mockResolvedValue(null);
+    User.mockImplementation((data) => ({ ...data, save: jest.fn().mockRejectedValue(Object.assign(new Error("E11000 phone_1"), { code: 11000 })) }));
+    await expect(ensureUserDetails(PHONE, "Hi", sendFn, "inst-1")).rejects.toThrow("E11000");
   });
 });
 

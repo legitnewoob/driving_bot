@@ -66,8 +66,10 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
     try {
       await user.save();
     } catch (err) {
-      // Two messages at once: the other one already started sign-up
-      if (err.code === 11000) return { inProgress: true };
+      // Two messages at once: the other one already started sign-up. Anything
+      // else refused as a duplicate is a real problem, so don't hide it
+      if (err.code === 11000 && (await User.findOne(query))) return { inProgress: true };
+      logger.error(`Couldn't create learner ${from} for ${instructorId}: ${err.message}`);
       throw err;
     }
     const intro = greeting?.trim() ? greeting.trim() : "👋 Hi! Let's get started.";

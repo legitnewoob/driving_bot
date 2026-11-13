@@ -40,6 +40,7 @@ describe("new number", () => {
     expect(User).toHaveBeenCalledWith(expect.objectContaining({ phone: PHONE, instructorId: "inst-1", currentStep: "name" }));
     expect(save).toHaveBeenCalled();
     expect(lastReply()).toContain("*full name*");
+    expect(lastReply()).toMatch(/Powered by Donna Drive · donnadrive\.co\.uk_$/);
   });
 
   it("uses the instructor's greeting", async () => {

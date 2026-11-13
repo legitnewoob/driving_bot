@@ -22,6 +22,9 @@ const UNDER_AGE =
 const SIXTEEN_NOTE =
   "Just so you know, lessons on the road start at 17 unless you get the enhanced rate of PIP mobility. Your instructor can talk it through with you.";
 
+// Under the first message, so learners know who runs the service
+const POWERED_BY = "_Powered by Donna Drive · donnadrive.co.uk_";
+
 const nextMissing = (user) => steps.find((s) => user[s] == null || user[s] === "") || null;
 
 // sendFn defaults to real WhatsApp — in mock mode, pass this._send.bind(this)
@@ -73,7 +76,7 @@ async function ensureUserDetails(from, messageContent, sendFn = null, instructor
       throw err;
     }
     const intro = greeting?.trim() ? greeting.trim() : "👋 Hi! Let's get started.";
-    await send(from, `${intro}\nI just need 3 quick details to get you set up.\n\n${questions.name(user)}`);
+    await send(from, `${intro}\nI just need 3 quick details to get you set up.\n\n${questions.name(user)}\n\n${POWERED_BY}`);
     return { inProgress: true };
   }
 

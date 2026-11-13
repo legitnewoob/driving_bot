@@ -2,7 +2,7 @@
  * User Details Collection – E2E Tests (Real Geocoding API)
  * ─────────────────────────────────────────────────────────
  * Tests the userDetailsService flow which collects user info
- * step by step: name → age → dob → postalCode → geocode.
+ * step by step: name → age → postalCode → geocode.
  *
  * The service itself doesn't call Gemini — it's a deterministic
  * state machine. But the final step calls the REAL Maps Geocoding API
@@ -30,10 +30,10 @@ describeE2E(E2E_KEYS.MAPS, "E2E – User Details Collection", () => {
   afterEach(async () => { await cleanupTestDB(); });
   afterAll(async () => { await disconnectTestDB(); });
 
-  const steps = ["name", "age", "dob", "postalCode"];
+  const steps = ["name", "age", "postalCode"];
 
-  it("step order is name → age → dob → postalCode", () => {
-    expect(steps).toEqual(["name", "age", "dob", "postalCode"]);
+  it("step order is name → age → postalCode", () => {
+    expect(steps).toEqual(["name", "age", "postalCode"]);
   });
 
   it(
